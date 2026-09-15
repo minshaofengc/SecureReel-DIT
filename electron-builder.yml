@@ -27,10 +27,14 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: node_modules/electron/LICENSE
     to: LICENSES/electron.txt
-  # 随包分发的 ffmpeg / ffprobe 静态二进制（universal 包两套架构都带上，
-  # 运行时由 src/main/media/probe.ts 按 process.arch 选用）。
+  # 随包分发的 ffmpeg / ffprobe 静态二进制。
+  # vendor/ffmpeg/<arch>/ 按 ${arch} 宏选取：arm64 构建带 arm64 二进制、
+  # x64 构建带 x64 二进制，universal 合并时 @electron/universal 会把它们
+  # lipo 成真正的通用二进制（名字统一为 ffmpeg / ffprobe）。
+  # 注意：两个架构不能放同一套同名同内容的文件，否则 universal 合并会报
+  # "same in both x64 and arm64 builds" 而失败。
   # 来源与许可见 THIRD_PARTY_NOTICES.md；获取脚本：scripts/fetch-ffmpeg.sh
-  - from: vendor/ffmpeg
+  - from: vendor/ffmpeg/${arch}
     to: bin
 
 mac:

@@ -26,7 +26,8 @@ SecureReel DIT 本体以 **GPL-3.0-only** 发布，许可证正文见 [`LICENSE`
 
 ### 关于随包分发的 FFmpeg
 
-安装包内包含 FFmpeg 6.0 的 **静态编译二进制**（`ffmpeg` 与 `ffprobe`，Apple 芯片与 Intel 芯片各一份），
+安装包内包含 FFmpeg 6.0 的 **静态编译二进制**（`ffmpeg` 与 `ffprobe`，
+打包时由 Apple 芯片与 Intel 芯片两个构建合并为通用二进制），
 用于读取素材元数据（拍摄时间、时长、时码、编码）与提取首尾帧。
 
 - **来源**：https://github.com/eugeneware/ffmpeg-static （FFmpeg 6.0 静态构建）
