@@ -1,0 +1,232 @@
+/**
+ * 主题令牌。
+ *
+ * 三套配色：
+ *   · 竹林「清和」—— 青绿为主，低饱和，适合长时间盯进度条
+ *   · 粉蓝「雾光」—— 冷蓝配暖粉，弱光环境下的观感更柔和
+ *   · 奶酪「熟成」—— 奶油底配琥珀金，暖色系，长时间看不刺眼
+ *
+ * 每套都有 light / dark 两组值，由 <html data-theme data-mode> 切换。
+ * 界面里任何颜色都必须走这里的变量 —— 不允许在组件里写死色值，
+ * 否则换主题时一定会漏掉某处。
+ *
+ * 每套配色有**主 / 辅两个强调色**：--accent 是主色（按钮、焦点环、徽标），
+ * --accent-2 是辅色（进度条渐变的另一端、选中态的浅底与竖条）。
+ * 辅色的用法是「点缀」，所以它只出现在渐变、浅底与竖条上，从不单独承载文字。
+ * 主按钮**不用**辅色：它是实心的主色块（曾经做过主→辅渐变，已按需求去掉）。
+ *
+ * ⚠️ 六个主题块必须**全部**定义 --accent-2 系列，一个都不能少：
+ * 进度条写的是 linear-gradient(90deg, var(--accent), var(--accent-2))，
+ * 若某个主题漏配 --accent-2，整条 background 会在计算值阶段变成
+ * "invalid at computed-value time" 并被当成 unset —— 进度条会直接失去背景色。
+ * 这种错 type-check 和 lint 都抓不到，只有截图能发现。
+ *
+ * --accent-2-bar 是「选中态竖条」的宽度。
+ * 单色主题（竹林、奶酪）沿等主色，渐变能自然退化成平色，
+ * 但**竖条是离散元素，退化不了** —— 给它们留个 0px，选中态就完全维持原样：
+ * 浅底 + 加粗，没有竖条。只有雾光吃得到这根 2px 的线。
+ */
+
+:root {
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ---------------- 竹林「清和」 ---------------- */
+
+html[data-theme='qinghe'][data-mode='light'] {
+  --bg: #f5f5f0;
+  --bg-elevated: #fbfbf8;
+  --surface: #ffffff;
+  --surface-2: #f1f2ec;
+  --border: #dfe1d8;
+  --border-strong: #c7cabf;
+  --text: #1b2a23;
+  --text-muted: #62736a;
+  --text-faint: #8b9a91;
+  --accent: #3d7a58;
+  --accent-hover: #336a4b;
+  --accent-soft: #e4f0e8;
+  --accent-contrast: #ffffff;
+  /* 竹林不配第二色：辅色沿等同主色，渐变退化成平色，观感与从前完全一致 */
+  --accent-2: var(--accent);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
+  --ok: #2c7a52;
+  --ok-soft: #e6f3eb;
+  --warn: #9a6b1f;
+  --warn-soft: #fbf2df;
+  --danger: #b03a33;
+  --danger-soft: #fbeceb;
+  --info: #35657f;
+  --info-soft: #e7f0f5;
+  --shadow-sm: 0 1px 2px rgba(27, 42, 35, 0.06);
+  --shadow-md: 0 6px 20px rgba(27, 42, 35, 0.09);
+  --grid-line: rgba(61, 122, 88, 0.08);
+}
+
+html[data-theme='qinghe'][data-mode='dark'] {
+  --bg: #131a16;
+  --bg-elevated: #182220;
+  --surface: #1c2723;
+  --surface-2: #212e29;
+  --border: #2e3d36;
+  --border-strong: #3d5047;
+  --text: #e6efe9;
+  --text-muted: #9aada3;
+  --text-faint: #75877d;
+  --accent: #74bf95;
+  --accent-hover: #8ad0a8;
+  --accent-soft: #22352c;
+  --accent-contrast: #10201a;
+  --accent-2: var(--accent);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
+  --ok: #74bf95;
+  --ok-soft: #1f3229;
+  --warn: #dcb464;
+  --warn-soft: #342c1c;
+  --danger: #e08279;
+  --danger-soft: #3a2421;
+  --info: #7fb2cc;
+  --info-soft: #1e2f38;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --grid-line: rgba(116, 191, 149, 0.1);
+}
+
+/* ---------------- 粉蓝「雾光」 ---------------- */
+
+html[data-theme='wuguang'][data-mode='light'] {
+  --bg: #f6f6fa;
+  --bg-elevated: #fcfcfe;
+  --surface: #ffffff;
+  --surface-2: #f0f1f8;
+  --border: #dedff0;
+  --border-strong: #c4c7e2;
+  --text: #232538;
+  --text-muted: #676b8b;
+  --text-faint: #8f93b0;
+  --accent: #586ec4;
+  --accent-hover: #4a5eb3;
+  --accent-soft: #e8ebf9;
+  --accent-contrast: #ffffff;
+  /* 暖粉。L* 48.1 与蓝的 48.5 几乎相等 —— 等明度、约 113° 纯色相差，
+     比「拉开明度」更好辨认，渐变也不会一头亮一头暗。
+     对比度：4.80:1 vs 白（蓝是 4.73:1）。 */
+  --accent-2: #c2456f;
+  --accent-2-soft: #fbeaf1;
+  --accent-2-bar: 2px;
+  --ok: #3a7a68;
+  --ok-soft: #e5f1ed;
+  --warn: #a0701f;
+  --warn-soft: #fbf1de;
+  --danger: #bb4436;
+  --danger-soft: #fbeae7;
+  --info: #5c74c9;
+  --info-soft: #e9ecfa;
+  --shadow-sm: 0 1px 2px rgba(35, 37, 56, 0.06);
+  --shadow-md: 0 6px 20px rgba(35, 37, 56, 0.1);
+  --grid-line: rgba(88, 110, 196, 0.08);
+}
+
+html[data-theme='wuguang'][data-mode='dark'] {
+  --bg: #14151d;
+  --bg-elevated: #1a1b26;
+  --surface: #1e1f2b;
+  --surface-2: #24263a;
+  --border: #31334a;
+  --border-strong: #43466a;
+  --text: #e8e9f3;
+  --text-muted: #a0a3c0;
+  --text-faint: #7a7d99;
+  --accent: #8fa3e8;
+  --accent-hover: #a3b4f0;
+  --accent-soft: #262a45;
+  --accent-contrast: #14151d;
+  /* 深色下必须提亮，8.65:1 vs #14151d（蓝是 7.42:1） */
+  --accent-2: #ef9ab8;
+  --accent-2-soft: #3a2431;
+  --accent-2-bar: 2px;
+  --ok: #7cc4ab;
+  --ok-soft: #1f312c;
+  --warn: #e0bc74;
+  --warn-soft: #33291a;
+  --danger: #f29589;
+  --danger-soft: #3a2320;
+  --info: #9db2ee;
+  --info-soft: #232840;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --grid-line: rgba(143, 163, 232, 0.1);
+}
+
+/* ---------------- 奶酪「熟成」 ---------------- */
+
+html[data-theme='cheese'][data-mode='light'] {
+  --bg: #f8f3e6;
+  --bg-elevated: #fdfaf1;
+  --surface: #ffffff;
+  --surface-2: #f2ead6;
+  --border: #e2d6b8;
+  --border-strong: #c9b98f;
+  --text: #362c18;
+  --text-muted: #756543;
+  --text-faint: #a2916a;
+  --accent: #c2860f;
+  --accent-hover: #a8730a;
+  --accent-soft: #fbeecb;
+  --accent-contrast: #ffffff;
+  /* 奶酪不配第二色，同竹林 */
+  --accent-2: var(--accent);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
+  --ok: #4f7a33;
+  --ok-soft: #eaf2dd;
+  --warn: #a86a0d;
+  --warn-soft: #fbefd6;
+  --danger: #b2452c;
+  --danger-soft: #fbe9e4;
+  --info: #7d6428;
+  --info-soft: #f3ecda;
+  --shadow-sm: 0 1px 2px rgba(54, 44, 24, 0.07);
+  --shadow-md: 0 6px 20px rgba(54, 44, 24, 0.11);
+  --grid-line: rgba(194, 134, 15, 0.09);
+}
+
+html[data-theme='cheese'][data-mode='dark'] {
+  --bg: #1c1710;
+  --bg-elevated: #231d13;
+  --surface: #292218;
+  --surface-2: #332a1c;
+  --border: #453921;
+  --border-strong: #5e4e2d;
+  --text: #f3e9d6;
+  --text-muted: #c0ae8c;
+  --text-faint: #94856a;
+  --accent: #e6b23c;
+  --accent-hover: #f0c45c;
+  --accent-soft: #3b2f16;
+  --accent-contrast: #1c1710;
+  --accent-2: var(--accent);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
+  --ok: #93c47d;
+  --ok-soft: #26301f;
+  --warn: #e6b23c;
+  --warn-soft: #382d18;
+  --danger: #e88a72;
+  --danger-soft: #3a251e;
+  --info: #d8c390;
+  --info-soft: #302a1c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --grid-line: rgba(230, 178, 60, 0.1);
+}

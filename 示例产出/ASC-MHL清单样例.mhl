@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">
+  <creatorinfo>
+    <creationdate>2026-09-14T17:55:47Z</creationdate>
+    <hostname>verify.local</hostname>
+    <tool version="1.0.0">SecureReel DIT</tool>
+    <author role="DIT">张三</author>
+    <author role="摄影助理">李四</author>
+    <location>BackupA, BackupB</location>
+    <comment>项目：端到端验证 / 拍摄日：2026-09-14 / 机型：ALEXA 35 / 卡号：A002 / 来源：/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/A002R2EC / 修订：R001</comment>
+  </creatorinfo>
+  <processinfo>
+    <process>transfer</process>
+    <ignore>
+      <pattern>.DS_Store</pattern>
+      <pattern>ascmhl</pattern>
+      <pattern>ascmhl/</pattern>
+      <pattern>*.securereel-partial</pattern>
+    </ignore>
+  </processinfo>
+  <hashes>
+    <hash>
+      <path size="16">Sidecar.txt</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">d335175550f1c897</xxh64>
+    </hash>
+    <hash>
+      <path size="18">Audio/A002_001.wav</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">b43741a2826a130d</xxh64>
+    </hash>
+    <hash>
+      <path size="1003494">Clips/A002C001_prores422hq.mov</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">0356fc932893f6e7</xxh64>
+    </hash>
+    <hash>
+      <path size="594088">Clips/A003C001.R3D</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">8f5609f3c9d440b6</xxh64>
+    </hash>
+    <hash>
+      <path size="331944">Clips/A004C001.braw</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">c9c736863bb59587</xxh64>
+    </hash>
+    <hash>
+      <path size="9441505">Clips/big_generic.mov</path>
+      <xxh64 action="original" hashdate="2026-09-14T17:55:47Z">4da80054195ada3d</xxh64>
+    </hash>
+  </hashes>
+</hashlist>

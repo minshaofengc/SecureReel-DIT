@@ -1,0 +1,379 @@
+{
+  "summary":   {
+    "jobId": "job_verify0001",
+    "jobName": "端到端验证任务",
+    "revision": "R001",
+    "createdAt": "2026-09-14T17:55:47.606Z",
+    "jobState": "completed",
+    "sourcePath": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/A002R2EC",
+    "sourceLabel": "A002R2EC",
+    "hashAlgorithm": "xxhash64",
+    "manifestFormat": "asc-mhl-2.0",
+    "totalFiles": 6,
+    "totalBytes": 11371065,
+    "verifiedFiles": 6,
+    "failedFiles": 0,
+    "durationSeconds": 0.495,
+    "targets": [
+      {
+        "targetId": "tgt_1",
+        "label": "BackupA",
+        "path": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupA",
+        "filesCopied": 6,
+        "filesFailed": 0,
+        "bytesCopied": 11371065
+      },
+      {
+        "targetId": "tgt_2",
+        "label": "BackupB",
+        "path": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupB",
+        "filesCopied": 6,
+        "filesFailed": 0,
+        "bytesCopied": 11371065
+      }
+    ],
+    "project": {
+      "projectName": "端到端验证",
+      "shootDay": "2026-09-14",
+      "camera": "ALEXA 35",
+      "cardLabel": "A002",
+      "notes": "由 verify:pipeline 自动生成，用于验证报告链路。",
+      "crew": [
+        {
+          "role": "DIT",
+          "name": "张三"
+        },
+        {
+          "role": "摄影助理",
+          "name": "李四"
+        }
+      ],
+      "updatedAt": "2026-09-14T17:55:47.606Z"
+    }
+  },
+  "project":   {
+    "projectName": "端到端验证",
+    "shootDay": "2026-09-14",
+    "camera": "ALEXA 35",
+    "cardLabel": "A002",
+    "notes": "由 verify:pipeline 自动生成，用于验证报告链路。",
+    "crew": [
+      {
+        "role": "DIT",
+        "name": "张三"
+      },
+      {
+        "role": "摄影助理",
+        "name": "李四"
+      }
+    ],
+    "updatedAt": "2026-09-14T17:55:47.606Z"
+  },
+  "job":   {
+    "id": "job_verify0001",
+    "name": "端到端验证任务",
+    "sourcePath": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/A002R2EC",
+    "sourceKind": "generic",
+    "isCodExVfs": false,
+    "targets": [
+      {
+        "id": "tgt_1",
+        "path": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupA",
+        "label": "BackupA",
+        "enabled": true,
+        "freeBytes": null,
+        "writable": true
+      },
+      {
+        "id": "tgt_2",
+        "path": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupB",
+        "label": "BackupB",
+        "enabled": true,
+        "freeBytes": null,
+        "writable": true
+      }
+    ],
+    "hashAlgorithm": "xxhash64",
+    "manifestFormat": "asc-mhl-2.0",
+    "verifyAfterWrite": true,
+    "state": "completed",
+    "totalFiles": 6,
+    "totalBytes": 11371065,
+    "filesDone": 6,
+    "filesFailed": 0,
+    "bytesDone": 11371065,
+    "createdAt": "2026-09-14T17:55:47.073Z",
+    "startedAt": "2026-09-14T17:55:47.074Z",
+    "finishedAt": "2026-09-14T17:55:47.569Z",
+    "degradationNotice": null
+  },
+  "manifest":   {
+    "path": "/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/userData/reports/job_verify0001/R001/manifest/ascmhl/0001_A002R2EC_2026-09-14_175547Z.mhl",
+    "c4": "c4463LghQ2eexFaFsBLC1AHPSL2zDEfToUwc3ammWPym14tWNdnYNFktdLBLeKAqBG7dbqU2J8bc4kENXtEDf3TbQS",
+    "entries": 6
+  },
+  "notes":   [],
+  "files": [
+    {
+      "relPath": "Sidecar.txt",
+      "sizeBytes": 16,
+      "state": "verified",
+      "sourceHash": "d335175550f1c897",
+      "error": null,
+      "probe": {
+        "available": false,
+        "reason": "该文件类型不做媒体元数据探测，仅记录文件级哈希。",
+        "capturedAt": null,
+        "durationSeconds": null,
+        "timecode": null,
+        "codec": null,
+        "width": null,
+        "height": null,
+        "frameRate": null,
+        "firstFrame": null,
+        "lastFrame": null,
+        "format": "普通文件",
+        "formatFamily": "generic",
+        "frameSource": "none",
+        "vendorTool": null,
+        "note": null
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "d335175550f1c897",
+          "hashMatch": true,
+          "bytesCopied": 16,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "d335175550f1c897",
+          "hashMatch": true,
+          "bytesCopied": 16,
+          "error": null
+        }
+      ]
+    },
+    {
+      "relPath": "Audio/A002_001.wav",
+      "sizeBytes": 18,
+      "state": "verified",
+      "sourceHash": "b43741a2826a130d",
+      "error": null,
+      "probe": {
+        "available": false,
+        "reason": "该素材没有可读取的元数据，也没有可用于提取首帧的内嵌预览图。",
+        "capturedAt": null,
+        "durationSeconds": null,
+        "timecode": null,
+        "codec": null,
+        "width": null,
+        "height": null,
+        "frameRate": null,
+        "firstFrame": null,
+        "lastFrame": null,
+        "format": "WAV 音频",
+        "formatFamily": "audio",
+        "frameSource": "none",
+        "vendorTool": null,
+        "note": null
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "b43741a2826a130d",
+          "hashMatch": true,
+          "bytesCopied": 18,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "b43741a2826a130d",
+          "hashMatch": true,
+          "bytesCopied": 18,
+          "error": null
+        }
+      ]
+    },
+    {
+      "relPath": "Clips/A002C001_prores422hq.mov",
+      "sizeBytes": 1003494,
+      "state": "verified",
+      "sourceHash": "0356fc932893f6e7",
+      "error": null,
+      "probe": {
+        "available": true,
+        "reason": null,
+        "capturedAt": null,
+        "durationSeconds": 1,
+        "timecode": null,
+        "codec": "prores",
+        "width": 640,
+        "height": 360,
+        "frameRate": "25 fps",
+        "firstFrame": "A002C001_prores422hq.mov-first.jpg",
+        "lastFrame": "A002C001_prores422hq.mov-last.jpg",
+        "format": "ProRes 422 HQ",
+        "formatFamily": "prores",
+        "frameSource": "decoded",
+        "vendorTool": null,
+        "note": null
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "0356fc932893f6e7",
+          "hashMatch": true,
+          "bytesCopied": 1003494,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "0356fc932893f6e7",
+          "hashMatch": true,
+          "bytesCopied": 1003494,
+          "error": null
+        }
+      ]
+    },
+    {
+      "relPath": "Clips/A003C001.R3D",
+      "sizeBytes": 594088,
+      "state": "verified",
+      "sourceHash": "8f5609f3c9d440b6",
+      "error": null,
+      "probe": {
+        "available": true,
+        "reason": null,
+        "capturedAt": null,
+        "durationSeconds": null,
+        "timecode": null,
+        "codec": null,
+        "width": 512,
+        "height": 288,
+        "frameRate": null,
+        "firstFrame": "A003C001.R3D-first.jpg",
+        "lastFrame": null,
+        "format": "R3D（REDCODE RAW）",
+        "formatFamily": "r3d",
+        "frameSource": "embedded-preview",
+        "vendorTool": "REDCINE-X PRO / REDline",
+        "note": "R3D（REDCODE RAW） 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。 首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，通常低于实际记录分辨率，请以原件参数为准。 如需完整技术参数与逐帧提取，请使用官方工具：REDCINE-X PRO / REDline。"
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "8f5609f3c9d440b6",
+          "hashMatch": true,
+          "bytesCopied": 594088,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "8f5609f3c9d440b6",
+          "hashMatch": true,
+          "bytesCopied": 594088,
+          "error": null
+        }
+      ]
+    },
+    {
+      "relPath": "Clips/A004C001.braw",
+      "sizeBytes": 331944,
+      "state": "verified",
+      "sourceHash": "c9c736863bb59587",
+      "error": null,
+      "probe": {
+        "available": true,
+        "reason": null,
+        "capturedAt": null,
+        "durationSeconds": null,
+        "timecode": null,
+        "codec": null,
+        "width": 512,
+        "height": 288,
+        "frameRate": null,
+        "firstFrame": "A004C001.braw-first.jpg",
+        "lastFrame": null,
+        "format": "BRAW（Blackmagic RAW）",
+        "formatFamily": "braw",
+        "frameSource": "embedded-preview",
+        "vendorTool": "Blackmagic RAW SDK / DaVinci Resolve",
+        "note": "BRAW（Blackmagic RAW） 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。 首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，通常低于实际记录分辨率，请以原件参数为准。 如需完整技术参数与逐帧提取，请使用官方工具：Blackmagic RAW SDK / DaVinci Resolve。"
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "c9c736863bb59587",
+          "hashMatch": true,
+          "bytesCopied": 331944,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "c9c736863bb59587",
+          "hashMatch": true,
+          "bytesCopied": 331944,
+          "error": null
+        }
+      ]
+    },
+    {
+      "relPath": "Clips/big_generic.mov",
+      "sizeBytes": 9441505,
+      "state": "verified",
+      "sourceHash": "4da80054195ada3d",
+      "error": null,
+      "probe": {
+        "available": false,
+        "reason": "该素材没有可读取的元数据，也没有可用于提取首帧的内嵌预览图。",
+        "capturedAt": null,
+        "durationSeconds": null,
+        "timecode": null,
+        "codec": null,
+        "width": null,
+        "height": null,
+        "frameRate": null,
+        "firstFrame": null,
+        "lastFrame": null,
+        "format": "QuickTime 素材（编码未识别）",
+        "formatFamily": "prores",
+        "frameSource": "none",
+        "vendorTool": null,
+        "note": "本次未能取到首帧画面，该文件仅记录哈希与体积。"
+      },
+      "targets": [
+        {
+          "targetId": "tgt_1",
+          "state": "verified",
+          "hash": "4da80054195ada3d",
+          "hashMatch": true,
+          "bytesCopied": 9441505,
+          "error": null
+        },
+        {
+          "targetId": "tgt_2",
+          "state": "verified",
+          "hash": "4da80054195ada3d",
+          "hashMatch": true,
+          "bytesCopied": 9441505,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "failures": [
+
+  ]
+}

@@ -1,0 +1,1021 @@
+/* 全局样式与基础组件。所有颜色一律走 tokens.css 里的变量。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* ---------------- 布局 ---------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 216px 1fr;
+  height: 100%;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+  padding-top: 40px;
+  -webkit-app-region: drag;
+}
+
+.sidebar-brand {
+  padding: 0 18px 18px;
+}
+
+.sidebar-brand h1 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-brand p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px;
+  -webkit-app-region: no-drag;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/*
+ * 当前页：辅色（粉 / 各主题的辅色）只出现在"浅底 + 左侧竖条"上，
+ * 文字仍用 --text。理由：把文字直接染成辅色，在奶酪这种浅底主题上
+ * 会掉到 WCAG AA 以下（#c2860f on #fbeecb 只有 2.71:1）；
+ * 竖条 + 浅底既让辅色有存在感，对比度又天然由文字色兜住。
+ *
+ * 竖条宽度走 --accent-2-bar：渐变、浅底这类连续的东西能在单色主题上
+ * 自然退化成平色，但竖条是个真元素，退不了 —— 只能让单色主题把它配成
+ * 0px，才能保证清和 / 奶酪的外观跟以前一模一样。
+ */
+.nav-item[aria-current='page'] {
+  background: var(--accent-2-soft);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2);
+}
+
+.nav-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 14px;
+  flex: 0 0 16px;
+}
+
+.nav-badge {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 12px 14px 14px;
+  font-size: 11px;
+  color: var(--text-faint);
+  -webkit-app-region: no-drag;
+}
+
+.main {
+  overflow-y: auto;
+  padding: 40px 32px 64px;
+}
+
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.page-head {
+  margin-bottom: 22px;
+}
+
+.page-head h2 {
+  margin: 0 0 4px;
+  font-size: 21px;
+  letter-spacing: 0.01em;
+}
+
+.page-head p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* ---------------- 卡片 ---------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.card-head .hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+/* ---------------- 表单 ---------------- */
+
+.field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row .input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.path-row .btn {
+  flex: 0 0 auto;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.crew-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/*
+ * 网格项的 min-width 默认是 auto，一列里放个长文本的输入框就能把这一列撑宽、
+ * 把同一行的「所属人」和「移除」挤出可视区。职务可以自由输入，尤其容易踩到。
+ * 镜头行同理，一起兜住。
+ */
+.crew-row > * {
+  min-width: 0;
+}
+
+/*
+ * 任务列表里的母项目分组标题行。
+ * 贴在表头上一点、比普通行更暗，扫一眼就能看出"下面这几条是同一部戏的"。
+ */
+.group-row td {
+  background: var(--surface-2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  position: sticky;
+  top: 0;
+}
+
+.sub-title {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.info-pane table {
+  margin-top: 6px;
+}
+
+.info-pane table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: none;
+}
+
+.info-pane table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+/*
+ * 字段组（镜头列表、剧组人员列表）。
+ * 用一条细细的分隔线把它们和上面的基础字段分开，避免出现
+ * "一行输入框紧贴下一行输入框"、看不出哪些属于一组的糊状排版。
+ */
+.sub-block {
+  margin: 14px 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.counter {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.counter.over {
+  color: var(--danger);
+}
+
+/* ---------------- 自研下拉 ---------------- */
+
+/*
+ * 为什么要自己写：原生 <select> / <datalist> 的弹层由操作系统绘制，
+ * 不在 DOM 里，CSS 一行都够不着 —— 换主题时它永远是系统那一套灰。
+ *
+ * 浮层用 position: fixed 而不是 absolute：.main 是 overflow-y: auto 的滚动容器，
+ * 用 absolute 的话靠近窗口底部的下拉会被裁掉。fixed + 打开时测量同时解决了
+ * 「被裁剪」和「该向上还是向下弹」两件事。
+ *
+ * 状态一律用属性选择器表达（和现有的 [aria-current] / [aria-pressed] 一个路子），
+ * 不用 .is-open 这类额外 class —— 少一套需要手动同步的状态。
+ */
+
+.combo {
+  position: relative;
+  /*
+   * width: 100% 是为了在 .path-row 里跟 .input 表现一致：
+   * .path-row 是 flex 行，原来那枚 <select class="select"> 就带 width: 100%，
+   * 靠 flex-shrink 让位给旁边的按钮。少了这一条，触发器会缩成内容宽。
+   */
+  width: 100%;
+  min-width: 0; /* 作为网格项时不许被内容撑爆列宽 */
+}
+
+.combo-trigger {
+  /* 外观全部复用 .input，这里只补箭头要占的位置 */
+  padding-right: 26px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.combo-trigger[aria-expanded='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/*
+ * 箭头用 Unicode 字符而不是图标：App.tsx 的侧栏图标也是这么做的，
+ * 项目里没有图标库，也没必要为一个小三角引入一个。
+ */
+.combo-caret {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 24px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.combo-trigger[aria-expanded='true'] + .combo-caret {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.combo-panel {
+  position: fixed;
+  z-index: 50; /* 高于表头的 1，低于 .toasts 的 60 */
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* 滚到头别把 .main 一起滚走 */
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  animation: combo-in var(--dur-fast) var(--ease);
+}
+
+@keyframes combo-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combo-panel {
+    animation: none;
+  }
+}
+
+.combo-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 悬停和键盘共用同一个高亮，避免"鼠标一格、键盘一格"两个高亮打架 */
+.combo-option[data-active='true'] {
+  background: var(--surface-2);
+}
+
+/*
+ * 选中项：辅色只用在"浅底 + 左侧竖条"上，值文字保持 --text。
+ * 理由同侧栏当前页：把文字直接染成辅色，在浅底主题上会掉到 WCAG AA 以下。
+ * 竖条宽度同样走 --accent-2-bar，单色主题下为 0px。
+ */
+.combo-option[aria-selected='true'] {
+  background: var(--accent-2-soft);
+  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2);
+  font-weight: 600;
+}
+
+.combo-option[aria-selected='true'][data-active='true'] {
+  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2), inset 0 0 0 1px var(--accent-2-soft);
+}
+
+.combo-option[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/*
+ * 动作项：「+ 新建母项目…」这类不是值的选项。
+ * 用分隔线拉开距离 + 辅色，免得和真实母项目混成一片。
+ */
+.combo-option[data-tone='action'] {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 4px 4px;
+  color: var(--accent-2);
+}
+
+.combo-group-label {
+  position: sticky; /* 长列表滚动时组标题常驻 */
+  top: 0;
+  z-index: 1;
+  padding: 6px 9px 3px;
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+}
+
+.combo-empty {
+  padding: 10px 9px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* Electron 就是 Chromium，::-webkit-scrollbar 一定生效 */
+.combo-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.combo-panel::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+.combo-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.combo[data-disabled='true'] .combo-trigger,
+.combo[data-disabled='true'] .combo-caret {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------- 主题选择 ---------------- */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 10px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.theme-card:hover {
+  border-color: var(--accent);
+}
+
+.theme-card[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.theme-swatch {
+  display: flex;
+  height: 30px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.theme-swatch > span {
+  flex: 1;
+}
+
+.theme-swatch > span:first-child {
+  flex: 1.6;
+}
+
+.theme-name {
+  font-size: 12px;
+}
+
+/* ---------------- 按钮 ---------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+ * 主按钮用**纯主色**，不做渐变。
+ *
+ * 曾经这里写的是 linear-gradient(..., var(--accent), var(--accent-2))
+ * —— 主色到辅色的对角微渐变。对竹林 / 奶酪来说那等于平色（它们的辅色
+ * 就是主色），但雾光会渲染成明显的蓝→粉斜纹，观感偏"网页模板"，
+ * 所以按需求去掉了渐变，三套主题统一成实心块。
+ */
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* ---------------- 分段控件 ---------------- */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 6px 13px;
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------- 徽标 ---------------- */
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.badge.ok {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.badge.danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge.info {
+  border-color: var(--info);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.badge.accent {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------------- 进度条 ---------------- */
+
+.progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+/* 进度条：主色 → 辅色。DIT 会长时间盯着它，渐变让"还在走"更容易被余光捕捉到 */
+.progress > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width var(--dur-base) var(--ease);
+}
+
+.progress.warn > span {
+  background: var(--warn);
+}
+
+.progress.danger > span {
+  background: var(--danger);
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.meter .item .label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.meter .item .value {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 表格 ---------------- */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+table.data th,
+table.data td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+table.data th {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11.5px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+table.data tr:last-child td {
+  border-bottom: none;
+}
+
+table.data td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+/* 首帧缩略图：固定尺寸，避免加载前后表格行高跳动 */
+.thumb {
+  display: block;
+  width: 84px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+/* ---------------- 空态与提示 ---------------- */
+
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-faint);
+}
+
+.note {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+
+.note.warn {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--text);
+}
+
+.note.danger {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--text);
+}
+
+.note pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-sans);
+}
+
+/* ---------------- Toast ---------------- */
+
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 60;
+  max-width: 380px;
+}
+
+.toast {
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  font-size: 12.5px;
+  animation: toast-in var(--dur-base) var(--ease);
+}
+
+.toast.ok {
+  border-color: var(--ok);
+}
+.toast.warn {
+  border-color: var(--warn);
+}
+.toast.error {
+  border-color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------- 日志面板 ---------------- */
+
+.log {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+/* ---------------- 目标列表 ---------------- */
+
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.target-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.target-item .target-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- 媒体区 ---------------- */
+
+.frames {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.frames img {
+  width: 148px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 4px 12px;
+  font-size: 12.5px;
+}
+
+.kv dt {
+  color: var(--text-faint);
+}
+
+.kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.scroll-area {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.help section {
+  margin-bottom: 22px;
+}
+
+.help h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.help p,
+.help li {
+  color: var(--text-muted);
+  font-size: 12.8px;
+}
+
+.help ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}

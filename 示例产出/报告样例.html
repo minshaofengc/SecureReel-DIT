@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SecureReel DIT 报告 R001 — 端到端验证任务</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 40px 32px 64px; max-width: 1040px;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    color: #1c2b26; background: #ffffff; line-height: 1.65; font-size: 14px;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: .01em; }
+  h2 { font-size: 16px; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #dcd9d0; }
+  .sub { color: #5f6d66; margin: 0 0 28px; }
+  .banner { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 28px; }
+  .pill { padding: 6px 12px; border-radius: 999px; font-size: 12px; border: 1px solid #dcd9d0; background: #f7f6f1; }
+  .pill.ok { border-color: #9dcfb6; background: #eef7f1; color: #1e6b45; }
+  .pill.bad { border-color: #e2b0ad; background: #fdf0ef; color: #a0322c; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .card { border: 1px solid #dcd9d0; border-radius: 10px; padding: 14px 16px; background: #fbfaf7; }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: #6b7a72; }
+  .card .value { font-size: 17px; margin-top: 4px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eae7e0; vertical-align: top; }
+  th { font-weight: 600; color: #4c5a53; background: #f7f6f1; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.bad, .bad { color: #a0322c; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .hash { color: #4c5a53; }
+  .muted { color: #7d8a83; }
+  .small { font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid; }
+  .badge.verified { color: #1e6b45; border-color: #9dcfb6; background: #eef7f1; }
+  .badge.failed { color: #a0322c; border-color: #e2b0ad; background: #fdf0ef; }
+  .badge.copying { color: #7a5a1e; border-color: #ddc48a; background: #fdf6e6; }
+  .badge.pending { color: #4c5a53; border-color: #dcd9d0; background: #f7f6f1; }
+  .note { border-left: 3px solid #9dcfb6; background: #f4f8f5; padding: 10px 14px; margin: 12px 0; font-size: 13px; }
+  .bad-note { border-left-color: #c8564e; background: #fdf0ef; color: #7d2b26; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 12px; }
+  .frame { margin: 0; border: 1px solid #dcd9d0; border-radius: 8px; overflow: hidden; background: #fbfaf7; }
+  .frame img { display: block; width: 100%; height: auto; background: #000; }
+  .frame figcaption { padding: 8px 10px; }
+  .frame .fname { font-size: 11.5px; word-break: break-all; }
+  .frame .fmeta { font-size: 11px; color: #6b7a72; margin-top: 3px; }
+  .fmt { display: inline-block; padding: 1px 7px; border-radius: 999px; border: 1px solid #c9d8ce; background: #f1f7f3; font-size: 11.5px; white-space: nowrap; }
+  .src-decoded { color: #1e6b45; }
+  .src-preview { color: #8a6a1f; }
+  .src-none { color: #7d8a83; }
+  @media print { .frame { page-break-inside: avoid; } }
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #dcd9d0; color: #7d8a83; font-size: 12px; }
+  .truncated { font-size: 12px; color: #7d8a83; margin-top: 8px; }
+  @media print { body { padding: 0; max-width: none; } h2 { page-break-after: avoid; } tr { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<h1>端到端验证任务</h1>
+<p class="sub">
+  SecureReel DIT 拷贝报告 · 修订 R001 ·
+  生成于 2026-09-14T17:55:47.606Z · 主机 verify.local
+</p>
+
+<div class="banner">
+  <span class="pill ok">
+    全部文件通过校验
+  </span>
+  <span class="pill">任务状态 已完成</span>
+  <span class="pill">校验算法 xxhash64</span>
+  <span class="pill">清单格式 asc-mhl-2.0</span>
+  <span class="pill">目标 2 个</span>
+</div>
+
+
+
+<h2>总体情况</h2>
+<div class="grid">
+  <div class="card"><div class="label">来源</div><div class="value">A002R2EC</div>
+    <div class="small muted mono">/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/A002R2EC</div></div>
+  <div class="card"><div class="label">文件总数</div><div class="value">6</div></div>
+  <div class="card"><div class="label">总体积</div><div class="value">10.84 MB</div></div>
+  <div class="card"><div class="label">已校验</div><div class="value">6</div>
+    <div class="small muted">占 100%</div></div>
+  <div class="card"><div class="label">未通过</div><div class="value ">0</div></div>
+  <div class="card"><div class="label">耗时</div><div class="value">0 秒</div></div>
+</div>
+
+<h2>各目标盘结果</h2>
+<table>
+  <thead><tr><th>目标</th><th class="num">已写入</th><th class="num">成功</th><th class="num">失败</th><th>状态</th></tr></thead>
+  <tbody>
+<tr>
+        <td>BackupA</td>
+        <td class="num">10.84 MB</td>
+        <td class="num">6</td>
+        <td class="num ">0</td>
+        <td><span class="badge verified">已校验</span></td>
+      </tr>
+<tr>
+        <td>BackupB</td>
+        <td class="num">10.84 MB</td>
+        <td class="num">6</td>
+        <td class="num ">0</td>
+        <td><span class="badge verified">已校验</span></td>
+      </tr>
+  </tbody>
+</table>
+
+<h2>项目信息</h2>
+<table>
+  <tbody>
+    <tr><th style="width:150px">项目名称</th><td>端到端验证</td></tr>
+    <tr><th>拍摄日</th><td>2026-09-14</td></tr>
+    <tr><th>摄影机</th><td>ALEXA 35</td></tr>
+    <tr><th>卡号 / 卷号</th><td>A002</td></tr>
+  </tbody>
+</table>
+
+<h2>职务与所属人</h2>
+<table>
+  <thead><tr><th style="width:220px">职务</th><th>所属人</th></tr></thead>
+  <tbody>
+<tr><td>DIT</td><td>张三</td></tr>
+<tr><td>摄影助理</td><td>李四</td></tr>
+  </tbody>
+</table>
+
+<h2>项目备注</h2>
+<div class="note">由 verify:pipeline 自动生成，用于验证报告链路。</div>
+
+<h2>失败清单</h2>
+<div class="note">没有任何文件校验失败。所有已写入的目标副本都与源盘逐字节一致。</div>
+
+<h2>文件明细（6 / 6）</h2>
+<table>
+  <thead><tr><th>相对路径</th><th class="num">大小</th><th>状态</th><th>校验值（源侧读取时计算）</th></tr></thead>
+  <tbody>
+<tr>
+          <td class="mono">Sidecar.txt</td>
+          <td class="num">16 B</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">d335175550f1c897</td>
+        </tr>
+<tr>
+          <td class="mono">Audio/A002_001.wav</td>
+          <td class="num">18 B</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">b43741a2826a130d</td>
+        </tr>
+<tr>
+          <td class="mono">Clips/A002C001_prores422hq.mov</td>
+          <td class="num">979.97 KB</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">0356fc932893f6e7</td>
+        </tr>
+<tr>
+          <td class="mono">Clips/A003C001.R3D</td>
+          <td class="num">580.16 KB</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">8f5609f3c9d440b6</td>
+        </tr>
+<tr>
+          <td class="mono">Clips/A004C001.braw</td>
+          <td class="num">324.16 KB</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">c9c736863bb59587</td>
+        </tr>
+<tr>
+          <td class="mono">Clips/big_generic.mov</td>
+          <td class="num">9.00 MB</td>
+          <td><span class="badge verified">已校验</span></td>
+          <td class="mono hash">4da80054195ada3d</td>
+        </tr>
+  </tbody>
+</table>
+
+
+<h2>首帧画面（3 条）</h2>
+<p class="small muted">
+  每张图是该条素材的第一帧。下方标注了画面来源：
+  「解码」表示由 FFmpeg 实际解码得到；「内嵌预览」表示该格式为厂商私有编码、
+  FFmpeg 无法解码，画面取自摄影机写在文件内部的预览图，分辨率通常低于实际记录分辨率。
+</p>
+<div class="gallery">
+<figure class="frame">
+            <img src="首帧图/A002C001_prores422hq.mov-first.jpg" alt="Clips/A002C001_prores422hq.mov" width="320">
+            <figcaption>
+              <div class="fname mono">Clips/A002C001_prores422hq.mov</div>
+              <div class="fmeta">ProRes 422 HQ · <span class="src-decoded">解码</span></div>
+            </figcaption>
+          </figure>
+<figure class="frame">
+            <img src="首帧图/A003C001.R3D-first.jpg" alt="Clips/A003C001.R3D" width="320">
+            <figcaption>
+              <div class="fname mono">Clips/A003C001.R3D</div>
+              <div class="fmeta">R3D（REDCODE RAW） · <span class="src-preview">内嵌预览</span></div>
+            </figcaption>
+          </figure>
+<figure class="frame">
+            <img src="首帧图/A004C001.braw-first.jpg" alt="Clips/A004C001.braw" width="320">
+            <figcaption>
+              <div class="fname mono">Clips/A004C001.braw</div>
+              <div class="fmeta">BRAW（Blackmagic RAW） · <span class="src-preview">内嵌预览</span></div>
+            </figcaption>
+          </figure>
+</div>
+
+<h2>媒体元数据</h2>
+<table>
+  <thead><tr><th>文件</th><th>格式</th><th>分辨率</th><th>帧率</th><th class="num">时长</th><th>时码</th><th>拍摄时间</th><th>首帧来源</th></tr></thead>
+  <tbody>
+<tr>
+          <td class="mono">Clips/A002C001_prores422hq.mov</td>
+          <td><span class="fmt">ProRes 422 HQ</span></td>
+          <td>640×360</td>
+          <td>25 fps</td>
+          <td class="num">00:00:01</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td><span class="src-decoded">解码</span></td>
+        </tr>
+<tr>
+          <td class="mono">Clips/A003C001.R3D</td>
+          <td><span class="fmt">R3D（REDCODE RAW）</span></td>
+          <td>512×288</td>
+          <td>—</td>
+          <td class="num">—</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td><span class="src-preview">内嵌预览</span></td>
+        </tr>
+<tr>
+          <td class="mono">Clips/A004C001.braw</td>
+          <td><span class="fmt">BRAW（Blackmagic RAW）</span></td>
+          <td>512×288</td>
+          <td>—</td>
+          <td class="num">—</td>
+          <td class="mono">—</td>
+          <td class="mono">—</td>
+          <td><span class="src-preview">内嵌预览</span></td>
+        </tr>
+  </tbody>
+</table>
+
+<h2>素材格式说明</h2>
+<ul class="small">
+<li>R3D（REDCODE RAW） 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。 首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，通常低于实际记录分辨率，请以原件参数为准。 如需完整技术参数与逐帧提取，请使用官方工具：REDCINE-X PRO / REDline。</li>
+<li>BRAW（Blackmagic RAW） 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。 首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，通常低于实际记录分辨率，请以原件参数为准。 如需完整技术参数与逐帧提取，请使用官方工具：Blackmagic RAW SDK / DaVinci Resolve。</li>
+</ul>
+
+<h2>清单文件</h2>
+<ul class="small">
+<li class="mono">/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupA/ascmhl/0001_A002R2EC_2026-09-14_175547Z.mhl</li>
+<li class="mono">/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/BackupB/ascmhl/0001_A002R2EC_2026-09-14_175547Z.mhl</li>
+<li class="mono">/var/folders/m8/23h3ch2n3nb20frnwrlbwr2r0000gp/T/securereel-verify-CUSFsF/userData/reports/job_verify0001/R001/manifest/ascmhl/0001_A002R2EC_2026-09-14_175547Z.mhl</li>
+</ul>
+
+
+
+<div class="footer">
+  <div>由 SecureReel DIT 1.0.0 生成。本报告为不可变归档，同一任务的后续修订会使用新的修订号，不会覆盖本文件。</div>
+  <div>校验值算法 xxhash64；目标副本的校验值由写入完成后**独立重读**目标文件得出，与源侧值逐字节比对通过后才会改名为最终文件名。</div>
+  <div>报告生成时间 2026-09-14T17:55:47.606Z。</div>
+</div>
+
+</body>
+</html>

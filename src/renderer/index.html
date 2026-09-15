@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="qinghe" data-mode="light">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SecureReel DIT</title>
+    <!--
+      渲染进程的内容安全策略：
+      不允许任何远程资源、不允许远程脚本，只允许自身的样式与脚本，
+      以及本地首帧缩略图走的受控协议 securereel-frame:。
+      这与「离线可用、不上传遥测」的承诺是一致的。
+
+      script-src 里的占位符由构建插件按环境替换：
+      开发模式下 Vite + React 快速刷新需要内联脚本，生产构建则收紧为 'self'。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src __CSP_SCRIPT_SRC__; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: securereel-frame:; font-src 'self'; connect-src 'self' ws://localhost:* http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
