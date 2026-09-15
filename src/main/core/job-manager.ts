@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { AppSettings, CopyJob, CopyJobFile, CopyTarget, MainEvent, ProjectInfo, ReportSummary, ScanResult } from '@shared/types'
+import { msg, type MsgKey } from '@shared/messages'
 import type { CreateJobRequest } from '@shared/ipc'
 import { APP_NAME, APP_VERSION } from '@shared/version'
 import { emptyProjectDraft, emptyProjectInfo } from '@shared/project'
@@ -50,6 +51,11 @@ export class JobManager {
 
   constructor(private readonly deps: JobManagerDeps) {}
 
+  /** 按当前设置的语言取引擎文案。 */
+  private m(key: MsgKey, params: Record<string, string | number> = {}): string {
+    return msg(this.deps.getSettings().language, key, params)
+  }
+
   isRunning(jobId: string): boolean {
     return this.runs.has(jobId)
   }
@@ -58,16 +64,16 @@ export class JobManager {
   async addTarget(jobId: string, targetPath: string): Promise<CopyTarget[]> {
     const { store } = this.deps
     if (this.runs.has(jobId)) {
-      throw new Error('任务正在运行，不能修改目标。请先取消任务。')
+      throw new Error(this.m('job.addTargetWhileRunning'))
     }
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
-    if (job.targets.length >= 8) throw new Error('最多支持 8 个目标。')
+    if (job === null) throw new Error(this.m('job.notFound'))
+    if (job.targets.length >= 8) throw new Error(this.m('job.maxTargets'))
     if (job.targets.some((target) => target.path === targetPath)) {
-      throw new Error('该目标已经在列表里了。')
+      throw new Error(this.m('job.targetAlreadyInList'))
     }
     if (await isNestedPath(targetPath, job.sourcePath)) {
-      throw new Error('目标与来源路径相互包含，已拒绝。')
+      throw new Error(this.m('job.nestedPathShort'))
     }
 
     await mkdir(targetPath, { recursive: true })
@@ -100,12 +106,12 @@ export class JobManager {
     const verifyOnly = request.mode === 'verify'
 
     if (!(await pathExists(request.sourcePath))) {
-      throw new Error(`来源路径不存在：${request.sourcePath}`)
+      throw new Error(this.m('job.sourceMissing', { path: request.sourcePath }))
     }
 
     const scan = await scanSource(request.sourcePath)
     if (scan.fileCount === 0) {
-      throw new Error('该来源路径下没有找到任何可校验的文件。')
+      throw new Error(this.m('job.sourceEmpty'))
     }
 
     // 目标校验：存在；拷贝模式还要求可写、不与源相互嵌套
@@ -114,9 +120,7 @@ export class JobManager {
       const targetPath = item.path
 
       if (await isNestedPath(targetPath, request.sourcePath)) {
-        throw new Error(
-          `目标「${targetPath}」与来源路径相互包含。把素材拷进自己里面会造成无限递归，已拒绝。`
-        )
+        throw new Error(this.m('job.nestedPath', { path: targetPath }))
       }
 
       // 同卷限制只针对拷贝：拷贝的意义在于产生跨盘副本。
@@ -130,9 +134,7 @@ export class JobManager {
         sourceDevice.device === targetDevice.device &&
         sourceDevice.mountPoint === targetDevice.mountPoint
       ) {
-        throw new Error(
-          `目标「${targetPath}」与来源在同一个卷上。为了保证校验有效，源与目标必须在不同的物理卷。`
-        )
+        throw new Error(this.m('job.sameVolume', { path: targetPath }))
       }
 
       if (verifyOnly) {
@@ -141,17 +143,17 @@ export class JobManager {
         try {
           info = await stat(targetPath)
         } catch {
-          throw new Error(`目标「${targetPath}」不存在。仅校验模式不会创建目录，请选择已有的拷贝目录。`)
+          throw new Error(this.m('job.verifyTargetMissing', { path: targetPath }))
         }
         if (!info.isDirectory()) {
-          throw new Error(`目标「${targetPath}」不是目录。`)
+          throw new Error(this.m('job.targetNotDirectory', { path: targetPath }))
         }
       } else {
         try {
           await mkdir(targetPath, { recursive: true })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          throw new Error(`目标「${targetPath}」无法创建或不可写：${message}`)
+          throw new Error(this.m('job.targetNotWritable', { path: targetPath, reason: message }))
         }
       }
 
@@ -162,7 +164,11 @@ export class JobManager {
       if (!verifyOnly && info?.sufficient === false) {
         logger.warn(
           'job',
-          `目标「${label}」剩余空间 ${info.freeBytes} 字节，可能放不下 ${scan.totalBytes} 字节的素材。`
+          this.m('job.spaceWarning', {
+            label,
+            free: info.freeBytes ?? 0,
+            total: scan.totalBytes
+          })
         )
       }
 
@@ -182,7 +188,7 @@ export class JobManager {
     const parent = request.parentProjectId ?? null
     const parentProject = parent === null ? null : store.getParentProject(parent)
     if (parent !== null && parentProject === null) {
-      throw new Error('选择的母项目不存在，可能已被删除。')
+      throw new Error(this.m('job.parentMissing'))
     }
 
     const job: CopyJob = {
@@ -238,8 +244,16 @@ export class JobManager {
 
     logger.info(
       'job',
-      `已创建${verifyOnly ? '仅校验' : '拷贝'}任务「${job.name}」：${scan.fileCount} 个文件 / ${scan.totalBytes} 字节，${targets.length} 个目标` +
-        (parentProject === null ? '，未归入母项目。' : `，归入母项目「${parentProject.name}」。`)
+      this.m('job.created', {
+        name: job.name,
+        files: scan.fileCount,
+        bytes: scan.totalBytes,
+        targets: targets.length
+      }) +
+        this.m('job.createdMode', { mode: verifyOnly ? this.m('queueMode.verify') : this.m('queueMode.copy') }) +
+        (parentProject === null
+          ? this.m('job.createdNoParent')
+          : this.m('job.createdWithParent', { name: parentProject.name }))
     )
 
     return { job, scan }
@@ -257,7 +271,7 @@ export class JobManager {
   async start(jobId: string): Promise<CopyJob> {
     const { store } = this.deps
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(this.m('job.notFound'))
     if (this.runs.has(jobId)) throw new Error('该任务正在运行中。')
 
     const settings = this.deps.getSettings()
@@ -302,7 +316,7 @@ export class JobManager {
         terminalState = result.state
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        this.deps.logger.error('job', `任务执行异常：${message}`)
+        this.deps.logger.error('job', this.m('job.runError', { reason: message }))
         store.updateJob(jobId, { state: 'failed', finishedAt: new Date().toISOString() })
         terminalState = 'failed'
       } finally {
@@ -315,10 +329,10 @@ export class JobManager {
         await this.generateReports(jobId, terminalState)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        this.deps.logger.error('job', `报告生成失败：${message}`)
+        this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
         this.deps.emit({
           type: 'toast',
-          payload: { level: 'warn', message: `报告生成失败：${message}` }
+          payload: { level: 'warn', message: this.m('job.reportGenFail', { reason: message }) }
         })
       }
 
@@ -337,7 +351,7 @@ export class JobManager {
 
   pause(jobId: string): CopyJob {
     const handle = this.runs.get(jobId)
-    if (handle === undefined) throw new Error('该任务当前没有在运行。')
+    if (handle === undefined) throw new Error(this.m('job.notRunning'))
     handle.gate.pause()
     this.deps.store.updateJob(jobId, { state: 'paused' })
     this.emitState(jobId)
@@ -346,7 +360,7 @@ export class JobManager {
 
   resume(jobId: string): CopyJob {
     const handle = this.runs.get(jobId)
-    if (handle === undefined) throw new Error('该任务当前没有在运行。')
+    if (handle === undefined) throw new Error(this.m('job.notRunning'))
     handle.gate.resume()
     this.deps.store.updateJob(jobId, { state: 'running' })
     this.emitState(jobId)
@@ -376,7 +390,7 @@ export class JobManager {
 
   private requireJob(jobId: string): CopyJob {
     const job = this.deps.store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(this.m('job.notFound'))
     return job
   }
 
@@ -393,7 +407,7 @@ export class JobManager {
   async generateReports(jobId: string, terminalState?: CopyJob['state']): Promise<ReportSummary> {
     const { store, reportStore, logger } = this.deps
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(this.m('job.notFound'))
 
     const project = store.getProjectInfo(jobId) ?? emptyProjectInfo()
 
@@ -419,15 +433,11 @@ export class JobManager {
     })
 
     if (!completedCleanly) {
-      extraNotes.push(
-        `本次任务未正常结束（状态：${state}），因此没有把清单写入目标盘。报告仍然完整记录了当时的实际结果。`
-      )
+      extraNotes.push(this.m('job.reportNotCleanNote', { state }))
     }
 
     if (job.mode === 'verify') {
-      extraNotes.push(
-        '本任务为「仅校验」模式：只读取并比对两侧的校验值，未向目标盘写入或删除任何数据。'
-      )
+      extraNotes.push(this.m('job.verifyModeNote'))
     }
 
     // PDF 需要 Chromium，失败也不影响 JSON / HTML
@@ -440,9 +450,7 @@ export class JobManager {
       }
       if (pdf.ok && pdf.imageTotal > 0 && pdf.imageLoaded < pdf.imageTotal) {
         const missing = pdf.imageTotal - pdf.imageLoaded
-        extraNotes.push(
-          `PDF 中有 ${missing} 张首帧图未能载入（共 ${pdf.imageTotal} 张）；网页版报告不受影响。`
-        )
+        extraNotes.push(this.m('job.pdfMissingFrames', { missing, total: pdf.imageTotal }))
       }
 
       // PDF 生成完才内联首帧图：内联后的单文件 HTML 不再依赖 frames/ 目录，
@@ -453,9 +461,7 @@ export class JobManager {
           logger.info('job', `已将 ${inlined} 张首帧图内联进 HTML 报告（单文件自包含）。`)
         }
         if (skipped > 0) {
-          extraNotes.push(
-            `有 ${skipped} 张首帧图因超出单文件体积预算未内联，网页版报告需连同 frames/ 目录一起发送。`
-          )
+          extraNotes.push(this.m('job.inlineSkippedNote', { count: skipped }))
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -474,9 +480,9 @@ export class JobManager {
       if (description === null) continue
       const result = await ejectVolume(description.mountPoint)
       if (result.ok) {
-        this.deps.logger.info('job', `已弹出目标盘「${target.label}」。`)
+        this.deps.logger.info('job', this.m('job.ejected', { label: target.label }))
       } else {
-        this.deps.logger.warn('job', `弹出目标盘「${target.label}」失败：${result.message}`)
+        this.deps.logger.warn('job', this.m('job.ejectFail', { label: target.label, reason: result.message }))
       }
     }
   }

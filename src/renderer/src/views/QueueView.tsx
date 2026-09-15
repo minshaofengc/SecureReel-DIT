@@ -329,7 +329,15 @@ export function QueueView({
                           aria-selected={job.id === selectedId}
                         >
                           <td>
-                            <div>{job.name}</div>
+                            <div>
+                              {job.name}
+                              {/* 仅校验任务单独标注 —— 否则隔天分不清哪个是复核哪个是拷贝 */}
+                              {job.mode === 'verify' && (
+                                <span className="badge accent" style={{ marginLeft: 8 }}>
+                                  {t('queue.mode.verify')}
+                                </span>
+                              )}
+                            </div>
                             <div className="mono faint">{job.sourcePath}</div>
                           </td>
                           <td>
@@ -359,7 +367,11 @@ export function QueueView({
           {selected !== null && (
             <Card
               title={selected.name}
-              hint={`${HASH_ALGORITHM_LABELS[selected.hashAlgorithm]} · ${selected.manifestFormat}`}
+              hint={
+                selected.mode === 'verify'
+                  ? `${t('queue.mode.verify')} · ${HASH_ALGORITHM_LABELS[selected.hashAlgorithm]}`
+                  : `${HASH_ALGORITHM_LABELS[selected.hashAlgorithm]} · ${selected.manifestFormat}`
+              }
               actions={
                 <>
                   {(selected.state === 'draft' || selected.state === 'cancelled' || selected.state === 'failed') && (

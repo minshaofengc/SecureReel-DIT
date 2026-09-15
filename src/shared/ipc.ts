@@ -70,6 +70,7 @@ export const IPC = {
 
   logsTail: 'logs:tail',
   logsReveal: 'logs:reveal',
+  logsExportDiagnostics: 'logs:export-diagnostics',
 
   event: 'main:event'
 } as const
@@ -176,6 +177,11 @@ export interface SecureReelApi {
   logs: {
     tail(lines?: number): Promise<IpcResult<string[]>>
     reveal(): Promise<IpcResult<boolean>>
+    /**
+     * 导出诊断包：当天日志 + 版本/系统信息打成一个 zip，位置由用户选择。
+     * 返回 zip 的绝对路径；用户取消保存对话框时返回 null。
+     */
+    exportDiagnostics(): Promise<IpcResult<string | null>>
   }
   onEvent(handler: (event: unknown) => void): () => void
 }

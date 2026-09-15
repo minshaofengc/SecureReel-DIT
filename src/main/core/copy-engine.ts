@@ -35,6 +35,7 @@ import type {
   MediaProbe,
   TargetProgress
 } from '@shared/types'
+import { NAME_CONFLICT_PREFIXES, msg, type MsgKey } from '@shared/messages'
 import type { PendingFile, Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
 import { createStreamingHasher, type StreamingHasher } from '@main/hashing'
@@ -137,18 +138,20 @@ interface FileOutcome {
 }
 
 /**
- * 命名冲突的固定前缀。
+ * 命名冲突错误信息的前缀按语言存在 `NAME_CONFLICT_PREFIXES`（见 `@shared/messages`）。
  *
  * 关键区分：**命名冲突不是介质故障**。
  * 目标盘上碰巧躺着一个同名文件，重读校验自然对不上；
  * 若照 I/O 故障处理，整块好盘会被判死、后续文件全部不写 ——
  * 现场看到的是"这个盘拷到一半就不拷了"，而盘其实好得很。
  */
-const NAME_CONFLICT_PREFIX = '目标上已存在同名文件'
 
-/** 判断一条失败原因是不是"目标已有同名文件"这一类。 */
+/** 判断一条失败原因是不是"目标已有同名文件"这一类（兼容两种语言的文案）。 */
 export function isNameConflictReason(error: string | null): boolean {
-  return error !== null && error.startsWith(NAME_CONFLICT_PREFIX)
+  return (
+    error !== null &&
+    Object.values(NAME_CONFLICT_PREFIXES).some((prefix) => error.startsWith(prefix))
+  )
 }
 
 /**
@@ -191,7 +194,7 @@ export class CopyEngine {
         target,
         enabled: target.enabled,
         failed: false,
-        error: target.enabled ? null : '已停用',
+        error: target.enabled ? null : this.m('engine.targetDisabled'),
         conflictCount: 0
       })
     }
@@ -199,6 +202,11 @@ export class CopyEngine {
 
   cancel(): void {
     this.cancelled = true
+  }
+
+  /** 按当前设置的语言取引擎文案。 */
+  private m(key: MsgKey, params: Record<string, string | number> = {}): string {
+    return msg(this.deps.settings.language, key, params)
   }
 
   /** 仅校验模式：两侧只算校验值并比对，绝不写入、绝不删除目标盘上的任何字节。 */
@@ -212,7 +220,7 @@ export class CopyEngine {
     store.updateJob(job.id, { state: 'running', startedAt: new Date().toISOString() })
     const resetCount = store.resetInFlightFiles(job.id)
     if (resetCount > 0) {
-      this.log('warn', `有 ${resetCount} 个文件上次未处理完，已回到待处理状态并将自动断点续传。`)
+      this.log('warn', this.m('engine.resumeReset', { count: resetCount }))
     }
 
     await this.prepareSlots()
@@ -221,7 +229,7 @@ export class CopyEngine {
     // 只要还有启用的目标可用，任务就能继续 —— 被停用的目标不算"不可用"
     if (this.slots.filter((slot) => slot.enabled).every((slot) => slot.failed)) {
       store.updateJob(job.id, { state: 'failed', finishedAt: new Date().toISOString() })
-      this.log('error', '所有启用的目标盘都不可用，任务无法开始。')
+      this.log('error', this.m('engine.allTargetsUnavailable'))
       return { state: 'failed', filesDone: 0, filesFailed: job.totalFiles, bytesDone: 0, processed: 0 }
     }
 
@@ -263,7 +271,7 @@ export class CopyEngine {
       const cancelled = this.cancelled || this.deps.signal.aborted
       this.log(
         cancelled ? 'warn' : 'error',
-        cancelled ? '任务已取消，已写入的分片会保留以便续传。' : `任务中断：${describeError(error)}`
+        cancelled ? this.m('engine.cancelledResume') : this.m('engine.jobInterrupted', { reason: describeError(error) })
       )
       store.updateJob(job.id, {
         state: cancelled ? 'cancelled' : 'failed',
@@ -298,10 +306,7 @@ export class CopyEngine {
     // 冲突单独汇报：这些文件没拷成，但盘是好的 —— 别让用户以为盘出了问题。
     const conflictTotal = this.slots.reduce((sum, slot) => sum + slot.conflictCount, 0)
     if (conflictTotal > 0) {
-      this.log(
-        'warn',
-        `另有 ${conflictTotal} 个文件因目标上已存在同名文件而未拷贝（原文件已保留，目标盘本身正常）。请查看各目标的失败清单后人工核对。`
-      )
+      this.log('warn', this.m('engine.conflictSummary', { count: conflictTotal }))
     }
 
     store.updateJob(job.id, { state, finishedAt: new Date().toISOString() })
@@ -309,9 +314,9 @@ export class CopyEngine {
     this.emitProgress(true)
 
     if (filesFailed > 0) {
-      this.log('warn', `任务结束：${filesFailed} 个文件未通过校验，请查看失败清单与报告。`)
+      this.log('warn', this.m('engine.jobDoneWithFailures', { count: filesFailed }))
     } else {
-      this.log('info', '任务结束：全部文件已拷贝并通过独立重读校验。')
+      this.log('info', this.m('engine.jobDoneClean'))
     }
 
     return {
@@ -339,18 +344,21 @@ export class CopyEngine {
           // 仅校验模式不创建任何目录：目标不存在说明盘上没有这份拷贝，
           // 直接隔离该目标并如实报告，而不是替它把目录建出来。
           const info = await stat(slot.target.path)
-          if (!info.isDirectory()) throw new Error('目标路径不是目录')
+          if (!info.isDirectory()) throw new Error(this.m('engine.notDirectory'))
         } else {
           await ensureDir(slot.target.path)
           const info = await stat(slot.target.path)
-          if (!info.isDirectory()) throw new Error('目标路径不是目录')
+          if (!info.isDirectory()) throw new Error(this.m('engine.notDirectory'))
         }
         store.updateTargetProgress(job.id, slot.target.id, { state: 'running', error: null })
       } catch (error) {
         slot.failed = true
-        slot.error = `目标盘不可用：${describeError(error)}`
+        slot.error = this.m('engine.targetUnavailable', { reason: describeError(error) })
         store.updateTargetProgress(job.id, slot.target.id, { state: 'failed', error: slot.error })
-        this.log('error', `目标「${slot.target.label}」不可用，本次任务已隔离该盘：${slot.error}`)
+        this.log(
+          'error',
+          this.m('engine.targetQuarantined', { label: slot.target.label, reason: slot.error })
+        )
       }
     }
   }
@@ -371,7 +379,7 @@ export class CopyEngine {
       // CODEX VFS 上的 HDE 素材在 Finder 里显示 0 字节，这个值只作参考
       sourceSize = info.size
     } catch (error) {
-      await this.failFile(file, `无法读取源文件：${describeError(error)}`)
+      await this.failFile(file, this.m('engine.sourceReadFail', { reason: describeError(error) }))
       return
     }
 
@@ -382,12 +390,12 @@ export class CopyEngine {
       const enabled = this.slots.filter((slot) => slot.enabled)
       const reason =
         enabled.length === 0
-          ? '没有启用的目标盘。'
+          ? this.m('engine.noEnabledTargets')
           : enabled.every((slot) => slot.failed)
-            ? '所有启用的目标盘都已不可用。'
+            ? this.m('engine.allTargetsBroken')
             : this.verifyOnly
-              ? '所有目标上都不存在该文件（或文件大小与源不一致）。'
-              : '所有目标都无法写入该文件（多为目标上已存在同名但内容不同的文件）。'
+              ? this.m('engine.verifyNoFileOnAnyTarget')
+              : this.m('engine.copyBlockedOnAllTargets')
       await this.failFile(file, reason, works)
       return
     }
@@ -417,7 +425,7 @@ export class CopyEngine {
       if (file.sizeBytes === 0 && outcome.actualBytes > 0) {
         this.log(
           'info',
-          `${file.relPath} 扫描记录为 0 字节、实际读出 ${outcome.actualBytes} 字节 —— CODEX Device Manager 虚拟文件系统的正常表现，已按实际值记录。`
+          this.m('engine.codexZeroByte', { relPath: file.relPath, bytes: outcome.actualBytes })
         )
       }
     }
@@ -464,9 +472,10 @@ export class CopyEngine {
           if (await pathExists(finalPath)) {
             const info = await stat(finalPath)
             if (sourceSize > 0 && info.size !== sourceSize) {
-              work.fatalError =
-                `仅校验：目标上该文件大小与源不一致（现有 ${info.size} 字节，源 ${sourceSize} 字节）。` +
-                '该文件可能不完整或不是同一素材；目标文件未做任何改动。'
+              work.fatalError = this.m('engine.verifySizeMismatch', {
+                actual: info.size,
+                expected: sourceSize
+              })
             } else {
               work.adopted = true
               work.completeBeforeWrite = true
@@ -474,10 +483,10 @@ export class CopyEngine {
               work.bytesWritten = 0
             }
           } else {
-            work.fatalError = '仅校验：目标上不存在该文件。'
+            work.fatalError = this.m('engine.verifyFileMissing')
           }
         } catch (error) {
-          work.fatalError = `仅校验：无法读取目标文件：${describeError(error)}`
+          work.fatalError = this.m('engine.verifyTargetReadFail', { reason: describeError(error) })
         }
         works.push(work)
         continue
@@ -499,16 +508,18 @@ export class CopyEngine {
           }
           // 命名冲突：只让这一个文件在此目标上失败，盘继续用。
           // 若按 I/O 故障隔离整盘，一块好盘会因为一个撞名的旧文件整批停摆。
-          work.fatalError =
-            `${NAME_CONFLICT_PREFIX}且大小不同（现有 ${info.size} 字节，源 ${sourceSize} 字节）。` +
-            '为避免覆盖素材，已保留原文件；该文件在此目标上未拷贝，其余文件照常写入。'
+          work.fatalError = this.m('engine.conflictSizeDiff', {
+            prefix: NAME_CONFLICT_PREFIXES[this.deps.settings.language],
+            actual: info.size,
+            expected: sourceSize
+          })
           work.nameConflict = true
           slot.conflictCount++
           store.incrementTargetCounters(job.id, slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, slot.target.id, { error: work.fatalError })
           this.log(
             'warn',
-            `「${slot.target.label}」上已存在同名不同大小的文件，已跳过该文件（目标盘继续使用）：${file.relPath}`
+            this.m('engine.conflictSizeDiffLog', { label: slot.target.label, relPath: file.relPath })
           )
           works.push(work)
           continue
@@ -534,7 +545,14 @@ export class CopyEngine {
         if (resumeOffset > 0) {
           // 截掉可能多出来的尾巴，避免残留脏字节
           await handle.truncate(resumeOffset)
-          this.log('info', `从 ${resumeOffset} 字节处续传：${file.relPath} → ${slot.target.label}`)
+          this.log(
+            'info',
+            this.m('engine.resumeFrom', {
+              offset: resumeOffset,
+              relPath: file.relPath,
+              label: slot.target.label
+            })
+          )
         }
         work.handle = handle
         work.writeOffset = resumeOffset
@@ -542,7 +560,7 @@ export class CopyEngine {
         this.openWorks.add(work)
         works.push(work)
       } catch (error) {
-        work.fatalError = `无法准备写入：${describeError(error)}`
+        work.fatalError = this.m('engine.prepareWriteFail', { reason: describeError(error) })
         slot.failed = true
         slot.error = work.fatalError
         store.incrementTargetCounters(job.id, slot.target.id, { filesFailed: 1 })
@@ -550,7 +568,10 @@ export class CopyEngine {
           state: 'failed',
           error: work.fatalError
         })
-        this.log('error', `目标「${slot.target.label}」准备写入失败，该盘已隔离：${work.fatalError}`)
+        this.log(
+          'error',
+          this.m('engine.prepareWriteQuarantined', { label: slot.target.label, reason: work.fatalError })
+        )
         works.push(work)
       }
     }
@@ -609,14 +630,14 @@ export class CopyEngine {
             work.writeOffset = from + length
             store.incrementTargetCounters(job.id, work.slot.target.id, { bytesCopied: length })
           } catch (error) {
-            work.fatalError = `写入失败：${describeError(error)}`
+            work.fatalError = this.m('engine.writeFail', { reason: describeError(error) })
             work.slot.failed = true
             work.slot.error = work.fatalError
             store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: work.fatalError })
             this.log(
               'error',
-              `目标「${work.slot.target.label}」写入中断，该盘已隔离，其余目标继续：${work.fatalError}`
+              this.m('engine.writeInterrupted', { label: work.slot.target.label, reason: work.fatalError })
             )
             await this.closeHandle(work)
           }
@@ -625,7 +646,7 @@ export class CopyEngine {
         position += bytesRead
       }
     } catch (error) {
-      sourceError = `读取源文件失败：${describeError(error)}`
+      sourceError = this.m('engine.sourceReadFailShort', { reason: describeError(error) })
     } finally {
       if (sourceHandle !== null) {
         try {
@@ -660,7 +681,7 @@ export class CopyEngine {
         this.openWorks.delete(work)
         work.verifyPath = work.partialPath
       } catch (error) {
-        work.fatalError = `收尾失败：${describeError(error)}`
+        work.fatalError = this.m('engine.finalizeFail', { reason: describeError(error) })
         work.slot.failed = true
         work.slot.error = work.fatalError
         store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
@@ -686,7 +707,7 @@ export class CopyEngine {
       return {
         sourceHash: '',
         actualBytes: 0,
-        sourceError: `无法读取源文件：${describeError(error)}`
+        sourceError: this.m('engine.sourceReadFail', { reason: describeError(error) })
       }
     }
   }
@@ -755,13 +776,12 @@ export class CopyEngine {
           // 校验的意义恰恰是把所有差异都查出来，所以只记失败、不隔离目标，
           // 后续文件照常比对；也绝不动目标上的原文件。
           if (this.verifyOnly) {
-            const message =
-              '仅校验：目标文件的校验值与源不一致（内容不同或已损坏）。目标文件未做任何改动。'
+            const message = this.m('engine.verifyMismatch')
             store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
             this.log(
               'error',
-              `校验不一致：${file.relPath} @ ${work.slot.target.label} —— 目标内容与源不符，请人工复核。`
+              this.m('engine.verifyMismatchLog', { relPath: file.relPath, label: work.slot.target.label })
             )
             return {
               targetId: work.slot.target.id,
@@ -778,14 +798,17 @@ export class CopyEngine {
           if (work.adopted) {
             work.nameConflict = true
             work.slot.conflictCount++
-            const conflictError =
-              `${NAME_CONFLICT_PREFIX}（同名同尺寸，但内容与源不一致）。` +
-              '为避免覆盖素材，已保留原文件；该文件在此目标上未拷贝。请人工核对该文件是否为别的素材。'
+            const conflictError = this.m('engine.conflictSameSize', {
+              prefix: NAME_CONFLICT_PREFIXES[this.deps.settings.language]
+            })
             store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: conflictError })
             this.log(
               'warn',
-              `「${work.slot.target.label}」上已存在同名同尺寸但内容不同的文件，已跳过该文件（目标盘继续使用）：${file.relPath}`
+              this.m('engine.conflictSameSizeLog', {
+                label: work.slot.target.label,
+                relPath: file.relPath
+              })
             )
             return {
               targetId: work.slot.target.id,
@@ -801,12 +824,15 @@ export class CopyEngine {
           // 宁可停手也不能让不可信的数据以最终文件名留在盘上。
           await removeQuietly(work.partialPath)
           work.slot.failed = true
-          work.slot.error = '目标侧重读校验值与源侧不一致'
+          work.slot.error = this.m('engine.verifyMismatchTargetError')
           store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, work.slot.target.id, { error: work.slot.error })
           this.log(
             'error',
-            `校验不一致：${file.relPath} @ ${work.slot.target.label} —— 该目标已标记为不可信，建议更换介质后重跑。`
+            this.m('engine.verifyMismatchQuarantineLog', {
+              relPath: file.relPath,
+              label: work.slot.target.label
+            })
           )
           return {
             targetId: work.slot.target.id,
@@ -814,7 +840,7 @@ export class CopyEngine {
             hash: targetHash,
             hashMatch: false,
             bytesCopied: work.bytesWritten,
-            error: '目标侧重读校验值与源侧不一致（文件可能损坏，请更换目标介质后重跑）。'
+            error: this.m('engine.verifyMismatchResult')
           }
         }
 
@@ -837,10 +863,17 @@ export class CopyEngine {
         // 仅校验模式不隔离目标：复核要覆盖全部文件，读不动哪一个就记哪一个，
         // 其余文件照常比对。隔离是拷贝时的保护动作，复核时只会掩盖问题。
         if (this.verifyOnly) {
-          const message = `仅校验：无法读取目标文件：${describeError(error)}`
+          const message = this.m('engine.verifyTargetReadFail', { reason: describeError(error) })
           store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
-          this.log('error', `读取失败：${file.relPath} @ ${work.slot.target.label} —— ${message}`)
+          this.log(
+            'error',
+            this.m('engine.verifyReadFailLog', {
+              relPath: file.relPath,
+              label: work.slot.target.label,
+              reason: message
+            })
+          )
           return {
             targetId: work.slot.target.id,
             state: 'failed',
@@ -851,7 +884,7 @@ export class CopyEngine {
           }
         }
         work.slot.failed = true
-        work.slot.error = `校验失败：${describeError(error)}`
+        work.slot.error = this.m('engine.verifyHashFail', { reason: describeError(error) })
         store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
         store.updateTargetProgress(job.id, work.slot.target.id, { error: work.slot.error })
         return {
@@ -1058,7 +1091,7 @@ export class CopyEngine {
 
   private throwIfCancelled(): void {
     if (this.cancelled || this.deps.signal.aborted) {
-      throw new Error('任务已取消')
+      throw new Error(this.m('engine.cancelled'))
     }
   }
 

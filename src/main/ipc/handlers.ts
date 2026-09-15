@@ -39,6 +39,7 @@ import type { HdeAdapter } from '@main/adapters/hde'
 import { inspectSource, scanSource } from '@main/core/source-scan'
 import { describeVolume, ejectVolume } from '@main/fs-utils'
 import { usageForTargets } from '@main/core/source-scan'
+import { createDiagnosticsZip } from '@main/diagnostics'
 
 export interface Services {
   store: Store
@@ -443,6 +444,30 @@ export function registerIpcHandlers(services: Services): void {
     const error = await shell.openPath(paths.logsDir)
     if (error !== '') throw new Error(error)
     return true
+  })
+
+  register<string | null>(IPC.logsExportDiagnostics, async () => {
+    const now = new Date()
+    const stamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('') + '-' + [
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0')
+    ].join('')
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: '导出诊断包',
+      defaultPath: join(app.getPath('documents'), `SecureReel-DIT-诊断-${stamp}.zip`),
+      filters: [{ name: 'ZIP', extensions: ['zip'] }]
+    })
+    if (canceled || filePath === undefined) return null
+    return createDiagnosticsZip(filePath, {
+      paths,
+      logger,
+      store,
+      probeRunner
+    })
   })
 }
 

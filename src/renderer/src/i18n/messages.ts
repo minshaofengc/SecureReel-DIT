@@ -181,6 +181,7 @@ export const zhCN = {
   'queue.elapsed': '已用时',
   'queue.done': '完成',
   'queue.failedCount': '失败',
+  'queue.mode.verify': '仅校验',
   'queue.pause': '暂停',
   'queue.resume': '继续',
   'queue.cancel': '取消',
@@ -298,6 +299,8 @@ export const zhCN = {
   'settings.logs': '日志目录',
   'settings.reports': '报告目录',
   'settings.openLogs': '打开日志目录',
+  'settings.exportDiagnostics': '导出诊断包',
+  'settings.diagExported': '诊断包已导出，请把它发给开发者。',
   'settings.privacy':
     '本软件不上传遥测、不格式化磁盘、不删除源素材。所有数据都留在本机。',
 
@@ -533,6 +536,7 @@ export const en: Record<MessageKey, string> = {
   'queue.elapsed': 'Elapsed',
   'queue.done': 'Done',
   'queue.failedCount': 'Failed',
+  'queue.mode.verify': 'Verify only',
   'queue.pause': 'Pause',
   'queue.resume': 'Resume',
   'queue.cancel': 'Cancel',
@@ -654,6 +658,8 @@ export const en: Record<MessageKey, string> = {
   'settings.logs': 'Log directory',
   'settings.reports': 'Report directory',
   'settings.openLogs': 'Open log directory',
+  'settings.exportDiagnostics': 'Export diagnostics',
+  'settings.diagExported': 'Diagnostics exported. Please send the file to the developer.',
   'settings.privacy':
     'No telemetry, no disk formatting, no deleting source media. Everything stays on this machine.',
 

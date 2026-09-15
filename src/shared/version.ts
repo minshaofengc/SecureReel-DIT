@@ -10,5 +10,5 @@
  * 代价是这里要手工同步。为此 tests/version.test.ts 会断言它与
  * package.json 的 version 一致 —— 忘了改就会红。
  */
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = '1.2.0'
 export const APP_NAME = 'SecureReel DIT'

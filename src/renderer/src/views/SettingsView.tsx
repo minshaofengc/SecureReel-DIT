@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   HASH_ALGORITHMS,
   HASH_ALGORITHM_LABELS,
@@ -54,10 +54,65 @@ function ThemeSwatch({ theme, mode }: { theme: ThemeId; mode: 'light' | 'dark' }
   )
 }
 
+/**
+ * 数字设置输入框。
+ *
+ * 之前是每敲一个键就写一次数据库：把 "4" 改成 "5" 要途经 "45"、
+ * 中间值落库，还可能触发越界值被夹紧后输入框跳字。
+ * 现在输入过程只动本地状态，失焦或回车才提交（并夹紧到合法区间）。
+ */
+function NumberSetting({
+  value,
+  min,
+  max,
+  onCommit
+}: {
+  value: number
+  min: number
+  max: number
+  onCommit: (next: number) => void
+}): ReactNode {
+  const [draft, setDraft] = useState(String(value))
+  const [focused, setFocused] = useState(false)
+
+  // 外部值变了（比如设置从别处被重置）且当前没在编辑，就跟上
+  const display = focused ? draft : String(value)
+
+  const commit = (): void => {
+    const parsed = Number(draft)
+    const next = Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : value
+    setDraft(String(next))
+    if (next !== value) onCommit(next)
+  }
+
+  return (
+    <input
+      className="input"
+      type="number"
+      min={min}
+      max={max}
+      value={display}
+      onFocus={() => {
+        setDraft(String(value))
+        setFocused(true)
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setFocused(false)
+        commit()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
+      }}
+    />
+  )
+}
+
 export function SettingsView(): ReactNode {
   const { t } = useI18n()
   const { settings, updateSettings, appInfo, pushToast } = useAppState()
   const previewMode = settings.themeMode === 'dark' ? 'dark' : 'light'
+  const [diagBusy, setDiagBusy] = useState(false)
 
   const hashOptions = useMemo<ComboOption<HashAlgorithm>[]>(
     () => HASH_ALGORITHMS.map((algorithm) => ({ value: algorithm, label: HASH_ALGORITHM_LABELS[algorithm] })),
@@ -152,15 +207,11 @@ export function SettingsView(): ReactNode {
 
       <Card title={t('settings.performance')}>
         <Field label={t('settings.maxParallelTargets')}>
-          <input
-            className="input"
-            type="number"
+          <NumberSetting
+            value={settings.maxParallelTargets}
             min={1}
             max={8}
-            value={settings.maxParallelTargets}
-            onChange={(event) =>
-              void updateSettings({ maxParallelTargets: Number(event.target.value) || 1 })
-            }
+            onCommit={(next) => void updateSettings({ maxParallelTargets: next })}
           />
         </Field>
 
@@ -206,15 +257,11 @@ export function SettingsView(): ReactNode {
         {settings.extractFrames && (
           <>
             <Field label={t('settings.maxFrames')} hint={t('settings.maxFramesHint')}>
-              <input
-                className="input"
-                type="number"
+              <NumberSetting
+                value={settings.maxFrameExtractions}
                 min={0}
                 max={100000}
-                value={settings.maxFrameExtractions}
-                onChange={(event) =>
-                  void updateSettings({ maxFrameExtractions: Math.max(0, Number(event.target.value) || 0) })
-                }
+                onCommit={(next) => void updateSettings({ maxFrameExtractions: next })}
               />
             </Field>
             {settings.maxFrameExtractions === 0 && (
@@ -224,15 +271,11 @@ export function SettingsView(): ReactNode {
             )}
 
             <Field label={t('settings.frameConcurrency')} hint={t('settings.frameConcurrencyHint')}>
-              <input
-                className="input"
-                type="number"
+              <NumberSetting
+                value={settings.frameConcurrency}
                 min={1}
                 max={8}
-                value={settings.frameConcurrency}
-                onChange={(event) =>
-                  void updateSettings({ frameConcurrency: Math.min(8, Math.max(1, Number(event.target.value) || 1)) })
-                }
+                onCommit={(next) => void updateSettings({ frameConcurrency: next })}
               />
             </Field>
           </>
@@ -294,6 +337,27 @@ export function SettingsView(): ReactNode {
             }}
           >
             {t('settings.openLogs')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={diagBusy}
+            onClick={() => {
+              void (async () => {
+                setDiagBusy(true)
+                try {
+                  const saved = await unwrap(window.securereel.logs.exportDiagnostics())
+                  if (saved === null) return
+                  pushToast('success', t('settings.diagExported'))
+                } catch (error) {
+                  pushToast('error', error instanceof Error ? error.message : String(error))
+                } finally {
+                  setDiagBusy(false)
+                }
+              })()
+            }}
+          >
+            {t('settings.exportDiagnostics')}
           </button>
         </div>
 

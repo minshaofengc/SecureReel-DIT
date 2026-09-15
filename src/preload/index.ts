@@ -67,7 +67,8 @@ const api: SecureReelApi = {
   },
   logs: {
     tail: (lines) => invoke(IPC.logsTail, { lines }),
-    reveal: () => invoke(IPC.logsReveal)
+    reveal: () => invoke(IPC.logsReveal),
+    exportDiagnostics: () => invoke(IPC.logsExportDiagnostics)
   },
   onEvent: (handler) => {
     const listener = (_event: unknown, payload: unknown): void => handler(payload)

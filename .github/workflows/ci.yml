@@ -1,0 +1,36 @@
+# 持续集成：每次推送 / 每个PR 自动跑一遍核心检查。
+#
+# 这套检查与本地 `npm run verify` 的前三步一致（类型、规范、单元测试）。
+# 端到端流水线需要 Electron 图形环境，GitHub 托管环境跑不了，仍留在本地做。
+#
+# 生效条件：仓库推送到 GitHub 之后自动启用，无需额外配置。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run type-check
+
+      - name: 代码规范
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm run test
