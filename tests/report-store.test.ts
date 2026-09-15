@@ -215,6 +215,51 @@ describe('report.html 自包含性', () => {
     expect(html).not.toMatch(/@import\s+url\(/i)
   })
 
+  it('首帧图能被内联成 data URI，内联后 HTML 不再引用 frames/（单文件自包含）', async () => {
+    const { job } = await seedJob()
+
+    // 给文件挂一个"已探测到首帧"的记录，并在探测工作目录放一张假 JPEG
+    const frameName = 'Clips_a.mov-first.jpg'
+    const workFrame = join(reportStore.frameWorkDir(job.id), frameName)
+    await mkdir(reportStore.frameWorkDir(job.id), { recursive: true })
+    await writeFile(workFrame, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]))
+    store.updateFile(job.id, 'Clips/a.mov', {
+      probe: {
+        available: true,
+        reason: null,
+        capturedAt: null,
+        durationSeconds: 3,
+        timecode: null,
+        codec: 'prores',
+        width: 1920,
+        height: 1080,
+        frameRate: '25 fps',
+        firstFrame: frameName,
+        lastFrame: null,
+        format: 'QuickTime / ProRes',
+        formatFamily: 'quicktime',
+        frameSource: 'decoded',
+        vendorTool: null,
+        note: null
+      }
+    })
+
+    const { revision } = await writeRevision(job)
+    const htmlPath = revision.files.html as string
+    const before = await readFile(htmlPath, 'utf8')
+    expect(before).toContain('src="frames/')
+    // frames/ 也已经归档进修订目录
+    await expect(stat(join(revision.dir, 'frames', frameName))).resolves.toBeTruthy()
+
+    const { inlined, skipped } = await reportStore.inlineReportFrames(revision)
+    expect(inlined).toBe(1)
+    expect(skipped).toBe(0)
+
+    const after = await readFile(htmlPath, 'utf8')
+    expect(after).toContain('data:image/jpeg;base64,')
+    expect(after).not.toContain('src="frames/')
+  })
+
   it('母项目、机型、镜头、两层备注都出现在报告里', async () => {
     const { revision } = await reviseWith(PROJECT)
     const html = await readFile(revision.files.html as string, 'utf8')

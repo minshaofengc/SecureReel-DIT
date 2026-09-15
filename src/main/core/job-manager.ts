@@ -444,6 +444,23 @@ export class JobManager {
           `PDF 中有 ${missing} 张首帧图未能载入（共 ${pdf.imageTotal} 张）；网页版报告不受影响。`
         )
       }
+
+      // PDF 生成完才内联首帧图：内联后的单文件 HTML 不再依赖 frames/ 目录，
+      // 单独发出去也能看到画面。超出预算未内联的图保留相对路径引用。
+      try {
+        const { inlined, skipped } = await reportStore.inlineReportFrames(revision)
+        if (inlined > 0) {
+          logger.info('job', `已将 ${inlined} 张首帧图内联进 HTML 报告（单文件自包含）。`)
+        }
+        if (skipped > 0) {
+          extraNotes.push(
+            `有 ${skipped} 张首帧图因超出单文件体积预算未内联，网页版报告需连同 frames/ 目录一起发送。`
+          )
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn('job', `首帧图内联失败（报告仍可用）：${message}`)
+      }
     }
 
     this.deps.emit({ type: 'reports:changed', payload: { jobId } })

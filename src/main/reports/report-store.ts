@@ -13,7 +13,7 @@
  *   manifest/          本次写入的清单副本（ASC MHL 同时也会写进各目标盘）
  */
 import { createWriteStream } from 'node:fs'
-import { copyFile, readdir, writeFile } from 'node:fs/promises'
+import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type {
   CopyJob,
@@ -209,6 +209,75 @@ export class ReportStore {
     const existing = store.listReports(jobId).find((item) => item.revision === revision)
     if (existing === undefined) return
     store.updateReportFiles(jobId, revision, { ...existing.files, pdf: pdfPath })
+  }
+
+  /**
+   * 把报告里引用的 `frames/*.jpg` 内联为 base64 data URI，让 report.html
+   * 成为真正的**单文件**：把 HTML 单独发到微信、邮件里，首帧图也照样显示。
+   *
+   * 这是报告"离线自包含"承诺的最后一环 —— 相对路径引用在"整个文件夹一起走"
+   * 时是对的，但最常见的分享方式恰恰是只发那一个 HTML 文件。
+   *
+   * 设有总量预算（64MB）：几千条素材的报告若全部内联会膨胀到不可用，
+   * 超出预算的图保留相对路径引用（frames/ 目录仍在修订目录里归档）。
+   * 返回值告诉调用方内联了多少张、有多少张超出预算没内联。
+   */
+  async inlineReportFrames(
+    revision: ReportRevision,
+    budgetBytes = 64 * 1024 * 1024
+  ): Promise<{ inlined: number; skipped: number }> {
+    const htmlPath = revision.files.html
+    if (htmlPath === undefined) return { inlined: 0, skipped: 0 }
+
+    let html: string
+    try {
+      html = await readFile(htmlPath, 'utf8')
+    } catch {
+      return { inlined: 0, skipped: 0 }
+    }
+
+    const framesDir = join(dirname(htmlPath), 'frames')
+    const pattern = /src="frames\/([^"]+)"/g
+    const matches = [...html.matchAll(pattern)]
+    if (matches.length === 0) return { inlined: 0, skipped: 0 }
+
+    let used = 0
+    let inlined = 0
+    let skipped = 0
+    const parts: string[] = []
+    let cursor = 0
+
+    for (const match of matches) {
+      const start = match.index
+      const full = match[0]
+      if (start === undefined) continue
+      parts.push(html.slice(cursor, start))
+      cursor = start + full.length
+
+      const name = decodeURIComponent(match[1] ?? '')
+      let dataUri: string | null = null
+      try {
+        const jpeg = await readFile(join(framesDir, name))
+        if (used + jpeg.length <= budgetBytes) {
+          used += jpeg.length
+          dataUri = `data:image/jpeg;base64,${jpeg.toString('base64')}`
+        }
+      } catch {
+        /* 图不在了就保持原样 */
+      }
+
+      if (dataUri === null) {
+        skipped++
+        parts.push(full)
+      } else {
+        inlined++
+        parts.push(`src="${dataUri}"`)
+      }
+    }
+    parts.push(html.slice(cursor))
+
+    await writeFile(htmlPath, parts.join(''), 'utf8')
+    return { inlined, skipped }
   }
 
   private buildSummary(
