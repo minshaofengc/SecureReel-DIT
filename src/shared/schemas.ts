@@ -145,7 +145,6 @@ export const settingsPatchSchema = z
     manifestFormat: z.enum(MANIFEST_FORMATS),
     verifyAfterWrite: z.boolean(),
     maxParallelTargets: z.number().int().min(1).max(8),
-    maxParallelFiles: z.number().int().min(1).max(8),
     resumePartialFiles: z.boolean(),
     ejectAfterCopy: z.boolean(),
     ffmpegDir: z.union([absolutePathSchema, z.null()]),

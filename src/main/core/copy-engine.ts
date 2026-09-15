@@ -83,9 +83,17 @@ interface TargetSlot {
   target: CopyTarget
   /** 用户是否启用了这个目标 */
   enabled: boolean
-  /** 运行时被判定不可用（不可写、写入出错、校验不符） */
+  /** 运行时被判定不可用（不可写、写入出错、重读校验不符） */
   failed: boolean
   error: string | null
+  /**
+   * 该盘上因「目标已有同名文件」而跳过的文件数。
+   *
+   * 刻意与 `failed` 分开记：这些文件确实没拷成，但**盘本身是好的**，
+   * 不应该被隔离，也不该阻断后续文件。混为一谈会让一块健康的盘
+   * 因为一个撞名字的旧文件而整盘停摆。
+   */
+  conflictCount: number
 }
 
 /**
@@ -111,6 +119,12 @@ interface FileTargetWork {
   bytesWritten: number
   /** 该目标在本文件上已注定失败（冲突、无法写入等） */
   fatalError: string | null
+  /**
+   * 本文件的失败属于「命名冲突」而不是介质故障。
+   *
+   * 只影响这一个文件：盘继续用，后续文件照常写。
+   */
+  nameConflict: boolean
   /** 用户停用了这个目标 —— 不写入、也不算失败 */
   skipped: boolean
 }
@@ -122,6 +136,25 @@ interface FileOutcome {
   sourceError: string | null
 }
 
+/**
+ * 命名冲突的固定前缀。
+ *
+ * 关键区分：**命名冲突不是介质故障**。
+ * 目标盘上碰巧躺着一个同名文件，重读校验自然对不上；
+ * 若照 I/O 故障处理，整块好盘会被判死、后续文件全部不写 ——
+ * 现场看到的是"这个盘拷到一半就不拷了"，而盘其实好得很。
+ */
+const NAME_CONFLICT_PREFIX = '目标上已存在同名文件'
+
+/** 判断一条失败原因是不是"目标已有同名文件"这一类。 */
+export function isNameConflictReason(error: string | null): boolean {
+  return error !== null && error.startsWith(NAME_CONFLICT_PREFIX)
+}
+
+/**
+ * 只有真·介质/写入故障才把整盘踢出（`slot.failed`）。
+ * 命名冲突走 `nameConflict` 标记 + `conflictCount` 计数，只让那一个文件失败。
+ */
 export class CopyEngine {
   private readonly deps: CopyEngineDeps
   private readonly slots: TargetSlot[] = []
@@ -158,7 +191,8 @@ export class CopyEngine {
         target,
         enabled: target.enabled,
         failed: false,
-        error: target.enabled ? null : '已停用'
+        error: target.enabled ? null : '已停用',
+        conflictCount: 0
       })
     }
   }
@@ -254,6 +288,15 @@ export class CopyEngine {
       store.updateTargetProgress(job.id, slot.target.id, {
         state: slot.failed ? 'failed' : 'completed'
       })
+    }
+
+    // 冲突单独汇报：这些文件没拷成，但盘是好的 —— 别让用户以为盘出了问题。
+    const conflictTotal = this.slots.reduce((sum, slot) => sum + slot.conflictCount, 0)
+    if (conflictTotal > 0) {
+      this.log(
+        'warn',
+        `另有 ${conflictTotal} 个文件因目标上已存在同名文件而未拷贝（原文件已保留，目标盘本身正常）。请查看各目标的失败清单后人工核对。`
+      )
     }
 
     store.updateJob(job.id, { state, finishedAt: new Date().toISOString() })
@@ -391,6 +434,7 @@ export class CopyEngine {
         verifyPath: partialPath,
         bytesWritten: 0,
         fatalError: slot.failed ? (slot.error ?? '目标不可用') : null,
+        nameConflict: false,
         skipped: !slot.enabled
       }
 
@@ -413,14 +457,19 @@ export class CopyEngine {
             works.push(work)
             continue
           }
+          // 命名冲突：只让这一个文件在此目标上失败，盘继续用。
+          // 若按 I/O 故障隔离整盘，一块好盘会因为一个撞名的旧文件整批停摆。
           work.fatalError =
-            `目标上已存在同名文件且大小不同（现有 ${info.size} 字节，源 ${sourceSize} 字节）。` +
-            '为避免覆盖素材，已保留原文件并跳过该目标。'
-          slot.failed = true
-          slot.error = work.fatalError
+            `${NAME_CONFLICT_PREFIX}且大小不同（现有 ${info.size} 字节，源 ${sourceSize} 字节）。` +
+            '为避免覆盖素材，已保留原文件；该文件在此目标上未拷贝，其余文件照常写入。'
+          work.nameConflict = true
+          slot.conflictCount++
           store.incrementTargetCounters(job.id, slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, slot.target.id, { error: work.fatalError })
-          this.log('warn', `「${slot.target.label}」上已存在同名不同内容的文件，已跳过：${file.relPath}`)
+          this.log(
+            'warn',
+            `「${slot.target.label}」上已存在同名不同大小的文件，已跳过该文件（目标盘继续使用）：${file.relPath}`
+          )
           works.push(work)
           continue
         }
@@ -660,7 +709,34 @@ export class CopyEngine {
         const match = targetHash === outcome.sourceHash
 
         if (!match) {
-          if (!work.adopted) await removeQuietly(work.partialPath)
+          // adopted = 这个文件是目标上**预先存在**的（本次任务一个字节都没写它）。
+          // 校验不符说明那是同名同尺寸但内容不同的别的文件 —— 仍然是命名冲突，
+          // 不是这块盘写坏了。隔离整盘会误伤，只让这一个文件失败。
+          if (work.adopted) {
+            work.nameConflict = true
+            work.slot.conflictCount++
+            const conflictError =
+              `${NAME_CONFLICT_PREFIX}（同名同尺寸，但内容与源不一致）。` +
+              '为避免覆盖素材，已保留原文件；该文件在此目标上未拷贝。请人工核对该文件是否为别的素材。'
+            store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
+            store.updateTargetProgress(job.id, work.slot.target.id, { error: conflictError })
+            this.log(
+              'warn',
+              `「${work.slot.target.label}」上已存在同名同尺寸但内容不同的文件，已跳过该文件（目标盘继续使用）：${file.relPath}`
+            )
+            return {
+              targetId: work.slot.target.id,
+              state: 'failed',
+              hash: targetHash,
+              hashMatch: false,
+              bytesCopied: work.bytesWritten,
+              error: conflictError
+            }
+          }
+
+          // 走到这里说明分片是**本次任务写入**的 —— 校验不符就是写入/介质故障，
+          // 宁可停手也不能让不可信的数据以最终文件名留在盘上。
+          await removeQuietly(work.partialPath)
           work.slot.failed = true
           work.slot.error = '目标侧重读校验值与源侧不一致'
           store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })

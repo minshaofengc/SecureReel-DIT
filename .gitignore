@@ -6,6 +6,8 @@ release/
 .DS_Store
 .vite/
 security-reports/
-
 .verify-output/
 *.tsbuildinfo
+
+# 随包分发的 ffmpeg 静态二进制（约 250MB），用 scripts/fetch-ffmpeg.sh 重新获取
+vendor/

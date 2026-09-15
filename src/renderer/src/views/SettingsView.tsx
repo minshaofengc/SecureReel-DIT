@@ -164,17 +164,6 @@ export function SettingsView(): ReactNode {
           />
         </Field>
 
-        <Field label={t('settings.maxParallelFiles')}>
-          <input
-            className="input"
-            type="number"
-            min={1}
-            max={8}
-            value={settings.maxParallelFiles}
-            onChange={(event) => void updateSettings({ maxParallelFiles: Number(event.target.value) || 1 })}
-          />
-        </Field>
-
         <div className="faint" style={{ fontSize: 12 }}>
           {t('settings.parallelHint')}
         </div>

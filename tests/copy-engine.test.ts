@@ -13,7 +13,7 @@ import type { CopyJob, CopyJobFile, HashAlgorithm } from '../src/shared/types'
 import { DEFAULT_SETTINGS } from '../src/shared/types'
 import { Store } from '../src/main/db/store'
 import { Logger } from '../src/main/logger'
-import { CopyEngine, hashFileAt } from '../src/main/core/copy-engine'
+import { CopyEngine, hashFileAt, isNameConflictReason } from '../src/main/core/copy-engine'
 import { PauseGate } from '../src/main/core/concurrency'
 import { PARTIAL_MARKER, partialPathFor, walkFiles } from '../src/main/fs-utils'
 
@@ -365,6 +365,60 @@ describe('绝不覆盖既有素材', () => {
 
     expect(result.state).toBe('completed')
     expect(store.listFiles(job.id, 10, 0)[0]?.state).toBe('verified')
+  })
+
+  it('命名冲突只让那一个文件失败，同盘后续文件照常写入', async () => {
+    // 评估 P1 第 8 条的回归测试：以前一个撞名文件会把整块好盘判死，
+    // 后续所有文件都不再往里写 —— 现在必须只影响冲突文件本身。
+    const source = await makeSource({
+      'conflict.mov': Buffer.from('new content'),
+      'after-conflict.mov': Buffer.from('written after the conflict')
+    })
+    const targets = await makeTargets(2)
+    const [conflicted, clean] = targets as [string, string]
+    await writeFile(join(conflicted, 'conflict.mov'), 'old data with different length')
+
+    const job = await seedJob(source, targets)
+    const result = await runEngine(job)
+
+    // 任务有失败，但冲突文件原封不动
+    expect(result.state).toBe('completed-with-errors')
+    expect(await readFile(join(conflicted, 'conflict.mov'), 'utf8')).toBe('old data with different length')
+
+    // 关键断言：冲突之后，同一块盘上的后续文件**必须照常写入**
+    expect(await readFile(join(conflicted, 'after-conflict.mov'), 'utf8')).toBe(
+      'written after the conflict'
+    )
+    expect(await readFile(join(clean, 'after-conflict.mov'), 'utf8')).toBe('written after the conflict')
+
+    // 失败原因属于"命名冲突"这一类，而不是介质故障
+    const conflictFile = store.listFiles(job.id, 10, 0).find((file) => file.relPath === 'conflict.mov')
+    const conflictedResult = conflictFile?.results.find((item) => item.targetId === 'tgt_1')
+    expect(conflictedResult?.error).toContain('同名')
+    expect(isNameConflictReason(conflictedResult?.error ?? null)).toBe(true)
+  })
+
+  it('同名同尺寸但内容不同：同样只影响该文件，盘继续使用', async () => {
+    const source = await makeSource({
+      'same-size.bin': Buffer.from('AAAAAAAA'),
+      'next.bin': Buffer.from('follow-up payload')
+    })
+    const targets = await makeTargets(1)
+    const target = targets[0] as string
+    await writeFile(join(target, 'same-size.bin'), 'BBBBBBBB') // 同长度、不同内容
+
+    const job = await seedJob(source, targets)
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed-with-errors')
+    expect(await readFile(join(target, 'same-size.bin'), 'utf8')).toBe('BBBBBBBB')
+    // 盘没有被误伤：后续文件照样写进来了
+    expect(await readFile(join(target, 'next.bin'), 'utf8')).toBe('follow-up payload')
+
+    const file = store.listFiles(job.id, 10, 0).find((item) => item.relPath === 'same-size.bin')
+    expect(file?.state).toBe('failed')
+    expect(file?.results[0]?.error).toContain('同名')
+    expect(isNameConflictReason(file?.results[0]?.error ?? null)).toBe(true)
   })
 })
 

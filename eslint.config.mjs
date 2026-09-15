@@ -4,7 +4,8 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['out/**', 'dist/**', 'release/**', 'node_modules/**', '*.config.js'] },
+  // build/ 里是打包资源与应用图标生成脚本（一次性工具，非应用源码）
+  { ignores: ['out/**', 'dist/**', 'release/**', 'node_modules/**', '*.config.js', 'build/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

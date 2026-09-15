@@ -7,8 +7,9 @@
  * 四条硬性设计：
  *   1. **探测失败绝不影响哈希报告**。读不动的素材只是少几行元数据，
  *      拷贝与校验的结论不变。
- *   2. ffprobe / ffmpeg **不由本应用分发**，只从用户系统或用户指定目录里找。
- *      找不到就明确说明原因，不做任何猜测。
+ *   2. ffprobe / ffmpeg 的查找顺序：用户在设置里指定的目录 >
+ *      **随包分发的二进制**（vendor/ffmpeg 打进应用资源，按 CPU 架构选对应文件）
+ *      > 系统 PATH。全都找不到就明确说明原因，不做任何猜测。
  *   3. 调用一律走 `exec.ts`，参数数组 + shell:false，且带超时。
  *   4. **首帧来源如实标注**。"解码出来的"和"读的文件内嵌预览"是两回事，
  *      报告里必须让人分得清 —— 预览图分辨率通常低于实际记录分辨率。
@@ -198,9 +199,9 @@ export class FfprobeRunner implements MediaProbeRunner {
   constructor(
     private readonly deps: {
       logger: Logger
-      /** 用户指定目录；null 表示自动查找 */
+      /** 用户指定目录；优先级高于随包资源 */
       userDir: string | null
-      /** 随应用资源目录（若用户自行放入了 ffmpeg，可被找到） */
+      /** 随应用资源目录（vendor/ffmpeg 打包后在 Contents/Resources/bin 下） */
       bundledDir: string | null
     }
   ) {}
@@ -216,10 +217,11 @@ export class FfprobeRunner implements MediaProbeRunner {
   get unavailableReason(): string | null {
     if (this.ffprobePath !== null) return null
     return (
-      '未找到 ffprobe，因此无法读取拍摄时间、时长、时码与编码信息。' +
+      '未找到 ffprobe（随包分发的副本缺失或已损坏，系统与设置目录中也没有），' +
+      '因此无法读取拍摄时间、时长、时码与编码信息。' +
       '这部分属于报告的附加内容，缺失不会影响拷贝与哈希校验结果。' +
       'R3D / BRAW 这类私有格式即使没有 ffprobe，也能从文件内嵌预览图取到首帧。' +
-      '如需完整元数据，请自行安装 FFmpeg（例如 brew install ffmpeg），或在设置里指定其所在目录。'
+      '如需完整元数据，可自行安装 FFmpeg（例如 brew install ffmpeg），或在设置里指定其所在目录。'
     )
   }
 
@@ -228,19 +230,40 @@ export class FfprobeRunner implements MediaProbeRunner {
   }
 
   async refresh(): Promise<void> {
+    // 随包二进制按架构命名（ffmpeg-darwin-arm64 / ffmpeg-darwin-x64），
+    // 因为 universal 安装包里两套架构都会带上，运行时按本机架构选用。
+    // 同时保留无后缀名作为兜底（用户自行往资源目录放文件的情形）。
+    const archSuffix = `darwin-${process.arch}`
+    const bundledCandidates = this.deps.bundledDir === null
+      ? []
+      : [
+          join(this.deps.bundledDir, `ffprobe-${archSuffix}`),
+          join(this.deps.bundledDir, 'ffprobe'),
+          join(this.deps.bundledDir, `ffmpeg-${archSuffix}`),
+          join(this.deps.bundledDir, 'ffmpeg')
+        ]
+
     const candidates: string[] = []
     if (this.deps.userDir !== null) {
       candidates.push(join(this.deps.userDir, 'ffprobe'), join(this.deps.userDir, 'ffmpeg'))
     }
-    if (this.deps.bundledDir !== null) {
-      candidates.push(join(this.deps.bundledDir, 'ffprobe'), join(this.deps.bundledDir, 'ffmpeg'))
-    }
+    candidates.push(...bundledCandidates)
 
     const pathProbe = await whichInPath('ffprobe')
     const pathMux = await whichInPath('ffmpeg')
 
-    this.ffprobePath = (await resolveExecutable(candidates[0] ?? null)) ?? (await resolveExecutable(pathProbe))
-    this.ffmpegPath = (await resolveExecutable(candidates[1] ?? null)) ?? (await resolveExecutable(pathMux))
+    // 按声明顺序逐个解析：用户目录 > 随包资源 > 系统 PATH
+    let ffprobePath: string | null = null
+    let ffmpegPath: string | null = null
+    for (const candidate of candidates) {
+      const resolved = await resolveExecutable(candidate)
+      if (resolved === null) continue
+      if (ffprobePath === null && basename(candidate).startsWith('ffprobe')) ffprobePath = resolved
+      else if (ffmpegPath === null && basename(candidate).startsWith('ffmpeg')) ffmpegPath = resolved
+      if (ffprobePath !== null && ffmpegPath !== null) break
+    }
+    this.ffprobePath = ffprobePath ?? (await resolveExecutable(pathProbe))
+    this.ffmpegPath = ffmpegPath ?? (await resolveExecutable(pathMux))
 
     if (this.ffprobePath !== null) {
       this.deps.logger.info('media', `已找到 ffprobe：${this.ffprobePath}`)

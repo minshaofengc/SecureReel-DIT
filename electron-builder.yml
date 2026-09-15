@@ -1,0 +1,68 @@
+# electron-builder 打包配置
+#
+# 这是"能跑"和"能给别人装"之间的那一层。没有这个文件时，
+# electron-builder 会用一堆默认值：应用标识是 com.electron.*、
+# 图标用 Electron 自己的、而且只打当前机器的架构。
+
+appId: com.shanfly.securereel-dit
+productName: SecureReel DIT
+copyright: Copyright © 2026 Shanfly
+
+directories:
+  output: dist
+  buildResources: build
+
+# 打进 app.asar 的内容。生产依赖（hash-wasm / zod）由 electron-builder
+# 自动带上，这里只声明应用自身的产物。
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# 许可与声明必须随包分发，放在 Contents/Resources/ 下
+extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: node_modules/electron/LICENSE
+    to: LICENSES/electron.txt
+  # 随包分发的 ffmpeg / ffprobe 静态二进制（universal 包两套架构都带上，
+  # 运行时由 src/main/media/probe.ts 按 process.arch 选用）。
+  # 来源与许可见 THIRD_PARTY_NOTICES.md；获取脚本：scripts/fetch-ffmpeg.sh
+  - from: vendor/ffmpeg
+    to: bin
+
+mac:
+  category: public.app-category.video
+  icon: build/icon.png
+  # 与 README 声明的 macOS 13+ 保持一致
+  minimumSystemVersion: '13.0'
+  # universal = 一份安装包同时支持 Apple 芯片与 Intel 芯片。
+  # 影视行业还有大量 Intel 的 Mac Pro 在工作，只打 arm64 会让这些人装不上。
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  # 没有开发者证书时不尝试签名，避免构建中途失败；
+  # 拿到证书后把这里删掉即可自动进入签名 + 公证流程
+  identity: null
+
+dmg:
+  title: ${productName} ${version}
+  icon: build/icon.png
+  # 打开 dmg 后把应用图标摆在左边、应用程序文件夹摆在右边，
+  # 用户拖一下就装好 —— 这是 macOS 用户最熟悉的安装动作
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 400

@@ -279,7 +279,6 @@ export const zhCN = {
   'settings.defaults': '默认校验参数',
   'settings.performance': '性能与行为',
   'settings.maxParallelTargets': '同时写入的目标数上限',
-  'settings.maxParallelFiles': '单目标并发文件数',
   'settings.parallelHint': '默认单文件依次处理、多目标同时写入，这是对读卡器最友好的方式。',
   'settings.resume': '断点续传',
   'settings.resumeHint': '中断后重新开始时会从已写入的位置继续，而不是整卡重来。',
@@ -627,7 +626,6 @@ export const en: Record<MessageKey, string> = {
   'settings.defaults': 'Default verification',
   'settings.performance': 'Performance & behaviour',
   'settings.maxParallelTargets': 'Max targets written in parallel',
-  'settings.maxParallelFiles': 'Concurrent files per target',
   'settings.parallelHint':
     'Default is one file at a time written to all targets at once — the friendliest pattern for card readers.',
   'settings.resume': 'Resume partial writes',

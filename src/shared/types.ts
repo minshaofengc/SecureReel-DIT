@@ -415,8 +415,6 @@ export interface AppSettings {
   verifyAfterWrite: boolean
   /** 同时写入的目标数量上限（1–8） */
   maxParallelTargets: number
-  /** 单目标内并发文件数 */
-  maxParallelFiles: number
   /** 断点续传：残留的分片文件若大小未超预期则续写 */
   resumePartialFiles: boolean
   /** 任务完成后弹出目标盘 */
@@ -453,7 +451,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   manifestFormat: 'asc-mhl-2.0',
   verifyAfterWrite: true,
   maxParallelTargets: 4,
-  maxParallelFiles: 2,
   resumePartialFiles: true,
   ejectAfterCopy: false,
   ffmpegDir: null,
