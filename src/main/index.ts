@@ -244,6 +244,12 @@ async function bootstrap(): Promise<void> {
   logger = new Logger({ dir: paths.logsDir, mirrorToConsole: !app.isPackaged })
   logger.info('app', `${APP_NAME} 启动，版本 ${APP_VERSION}`)
 
+  // 顺手清掉 30 天前的按天日志 —— 平时量不大，但没有清理策略的话
+  // 几年就是一堆没人看的文件。失败不影响启动。
+  void logger.pruneOldLogs().then((removed) => {
+    if (removed > 0) logger?.info('app', `已清理 ${removed} 个过期日志文件（保留最近 30 天）。`)
+  })
+
   store = await Store.open(paths.dbFile)
 
   // 界面里的首帧缩略图走这个受控协议，不把文件系统暴露给渲染进程

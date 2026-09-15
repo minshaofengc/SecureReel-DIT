@@ -65,6 +65,8 @@ export const zhCN = {
   'copy.verifyOnly': '仅校验（不拷贝）',
   'copy.verifyOnlyHint':
     '勾选后，"目标"指的是已经拷好的目录：软件只读取两侧并比对校验值，不写入、不删除任何数据。适合隔天复检或核对别人拷好的盘。',
+  'copy.spaceAck': '我已知晓：目标盘可能在拷到一半时因写满被隔离，我选择继续。',
+  'copy.spaceAckRequired': '有目标盘空间可能不足。请先确认下方提示并勾选"我已知晓"，或更换目标。',
   'copy.source': '来源',
   'copy.sourcePlaceholder': '选择素材卡或文件夹',
   'copy.pickSource': '选择来源',
@@ -418,6 +420,9 @@ export const en: Record<MessageKey, string> = {
   'copy.verifyOnly': 'Verify only (no copying)',
   'copy.verifyOnlyHint':
     'When enabled, "targets" are existing copy folders: the app reads both sides and compares hashes without writing or deleting anything. Ideal for next-day rechecks or verifying a drive another person copied.',
+  'copy.spaceAck': 'I understand: a target may run out of space mid-copy and be isolated. Continue anyway.',
+  'copy.spaceAckRequired':
+    'A target may not have enough space. Please read the notice and tick the confirmation box, or pick another target.',
   'copy.source': 'Source',
   'copy.sourcePlaceholder': 'Pick a camera card or folder',
   'copy.pickSource': 'Choose source',

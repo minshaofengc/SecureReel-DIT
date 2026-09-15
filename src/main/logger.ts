@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { LogEntry } from '@shared/types'
 
@@ -86,6 +86,36 @@ export class Logger {
   /** 等待队列里的日志全部落盘。退出前调用。 */
   async flush(): Promise<void> {
     await this.queue
+  }
+
+  /**
+   * 启动时清理过期日志：删掉保留期之前的按天日志文件。
+   *
+   * 日志按天累积且平时量不大，但没有清理策略的话几年后就是一堆没人看的
+   * 文件 —— 在启动时顺手处理掉，用户无感。删除失败不影响启动。
+   */
+  async pruneOldLogs(retentionDays = 30): Promise<number> {
+    if (this.dir === '') return 0
+    let removed = 0
+    try {
+      const entries = await readdir(this.dir)
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
+      for (const name of entries) {
+        const match = /^securereel-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name)
+        if (match === null) continue
+        const stamp = Date.parse(`${match[1]}T00:00:00Z`)
+        if (!Number.isFinite(stamp) || stamp >= cutoff) continue
+        try {
+          await rm(join(this.dir, name), { force: true })
+          removed++
+        } catch {
+          /* 单个文件删不掉就算了，别让启动失败 */
+        }
+      }
+    } catch {
+      /* 日志目录读不到（例如不存在）不构成问题 */
+    }
+    return removed
   }
 
   private fileFor(date: Date): string {

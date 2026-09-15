@@ -237,7 +237,7 @@ describe('report.html 自包含性', () => {
         firstFrame: frameName,
         lastFrame: null,
         format: 'QuickTime / ProRes',
-        formatFamily: 'quicktime',
+        formatFamily: 'prores',
         frameSource: 'decoded',
         vendorTool: null,
         note: null

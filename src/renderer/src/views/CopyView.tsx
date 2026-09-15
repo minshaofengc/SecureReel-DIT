@@ -50,6 +50,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
   const [verify, setVerify] = useState(settings.verifyAfterWrite)
   /** 仅校验模式：选好源和已有拷贝目录后，只比对校验值，不写任何数据 */
   const [verifyOnlyMode, setVerifyOnlyMode] = useState(false)
+  /** 用户对"空间可能不足仍要继续"的明确确认（P1 #11：只提醒不拦 → 需明确勾选） */
+  const [spaceAck, setSpaceAck] = useState(false)
 
   const [parentId, setParentId] = useState<string | null>(null)
   const [newParentOpen, setNewParentOpen] = useState(false)
@@ -221,6 +223,12 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         pushToast('warn', t('copy.noTarget'))
         return
       }
+      // 空间不足不再"只提醒不拦"：必须明确勾选确认才能带着已知风险开跑
+      const hasInsufficient = usage.some((item) => item.sufficient === false)
+      if (!verifyOnlyMode && hasInsufficient && !spaceAck) {
+        pushToast('warn', t('copy.spaceAckRequired'))
+        return
+      }
       setBusy(true)
       try {
         // 项目信息随创建一次带全，不在创建后再补一次保存 ——
@@ -248,6 +256,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         setTargets([])
         setScan(null)
         setUsage([])
+        setSpaceAck(false)
         // 母项目选择与项目信息草稿都清掉：下一张卡重新开始，
         // 未分组时下一次会自动沿用这次填的内容（由主进程挑最近一条）。
         setParentId(null)
@@ -270,6 +279,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
       settings.hashAlgorithm,
       settings.manifestFormat,
       sourcePath,
+      spaceAck,
+      usage,
       t,
       targets,
       verify,
@@ -278,6 +289,11 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
   )
 
   const insufficient = useMemo(() => usage.filter((item) => item.sufficient === false), [usage])
+
+  // 目标或扫描结果一变，之前的"空间不足我知晓"确认就作废 —— 必须重新确认
+  useEffect(() => {
+    setSpaceAck(false)
+  }, [usage])
 
   /*
    * 母项目下拉的选项。
@@ -588,6 +604,14 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
               <Note tone="danger">
                 有 {insufficient.length} 个目标剩余空间可能不足。写入过程中若目标盘写满，该盘会被单独隔离，
                 其余目标仍会继续 —— 但请尽量先腾出空间。
+                <label className="row-actions" style={{ cursor: 'pointer', marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={spaceAck}
+                    onChange={(event) => setSpaceAck(event.target.checked)}
+                  />
+                  <span>{t('copy.spaceAck')}</span>
+                </label>
               </Note>
             )}
           </div>
