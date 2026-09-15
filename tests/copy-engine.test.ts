@@ -57,12 +57,14 @@ async function makeTargets(count: number): Promise<string[]> {
 async function seedJob(
   sourcePath: string,
   targets: string[],
-  algorithm: HashAlgorithm = 'xxhash64'
+  algorithm: HashAlgorithm = 'xxhash64',
+  mode: 'copy' | 'verify' = 'copy'
 ): Promise<CopyJob> {
   const scan = await walkFiles(sourcePath)
   const job: CopyJob = {
     id: `job_test_${Math.random().toString(36).slice(2, 10)}`,
     name: '测试任务',
+    mode,
     sourcePath,
     sourceKind: 'generic',
     isCodExVfs: false,
@@ -419,6 +421,73 @@ describe('绝不覆盖既有素材', () => {
     expect(file?.state).toBe('failed')
     expect(file?.results[0]?.error).toContain('同名')
     expect(isNameConflictReason(file?.results[0]?.error ?? null)).toBe(true)
+  })
+})
+
+describe('仅校验模式', () => {
+  it('目标内容一致时全部通过，且目标盘没有任何改动', async () => {
+    const payloadA = Buffer.from('clip a payload')
+    const payloadB = Buffer.from('clip b payload')
+    const source = await makeSource({ 'a.mov': payloadA, 'b.mov': payloadB })
+    const targets = await makeTargets(1)
+    const target = targets[0] as string
+
+    // 目标上已经有一份拷好的内容
+    await writeFile(join(target, 'a.mov'), payloadA)
+    await writeFile(join(target, 'b.mov'), payloadB)
+    const beforeA = await stat(join(target, 'a.mov'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed')
+    const rows = store.listFiles(job.id, 10, 0)
+    expect(rows.every((file) => file.state === 'verified')).toBe(true)
+
+    // 目标文件未被改动（大小与修改时间都没变），也没有分片残留
+    const afterA = await stat(join(target, 'a.mov'))
+    expect(afterA.size).toBe(beforeA.size)
+    expect(afterA.mtimeMs).toBe(beforeA.mtimeMs)
+    expect(await listPartials(target)).toEqual([])
+  })
+
+  it('目标内容被篡改时该文件失败，但其余文件照常比对（不隔离整盘）', async () => {
+    const source = await makeSource({
+      'bad.mov': Buffer.from('original content'),
+      'good.mov': Buffer.from('another good clip')
+    })
+    const targets = await makeTargets(1)
+    const target = targets[0] as string
+
+    await writeFile(join(target, 'bad.mov'), Buffer.from('tampered content!'))
+    await writeFile(join(target, 'good.mov'), Buffer.from('another good clip'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed-with-errors')
+    expect(await readFile(join(target, 'bad.mov'), 'utf8')).toBe('tampered content!')
+
+    const rows = store.listFiles(job.id, 10, 0)
+    const bad = rows.find((file) => file.relPath === 'bad.mov')
+    const good = rows.find((file) => file.relPath === 'good.mov')
+    expect(bad?.state).toBe('failed')
+    expect(bad?.results[0]?.hashMatch).toBe(false)
+    // 校验的意义就是把所有差异都查出来：一个文件不符不能让其余文件免检
+    expect(good?.state).toBe('verified')
+  })
+
+  it('目标缺少文件或目录不存在时如实报告失败', async () => {
+    const source = await makeSource({ 'missing.mov': Buffer.from('payload') })
+    const targets = await makeTargets(1)
+
+    // 目标目录存在但里面没有文件
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    const result = await runEngine(job)
+    expect(result.state).toBe('completed-with-errors')
+    const rows = store.listFiles(job.id, 10, 0)
+    expect(rows[0]?.state).toBe('failed')
+    expect(rows[0]?.error).toContain('不存在')
   })
 })
 

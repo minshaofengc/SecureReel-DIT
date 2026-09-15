@@ -51,6 +51,13 @@ export const JOB_COLUMN_MIGRATIONS = [
     table: 'jobs',
     column: 'parent_project_id',
     ddl: 'ALTER TABLE jobs ADD COLUMN parent_project_id TEXT'
+  },
+  {
+    // 任务模式（copy = 拷贝+校验；verify = 仅校验）。
+    // 老库存量任务全部按 copy 处理 —— 它们本来就是拷贝任务。
+    table: 'jobs',
+    column: 'mode',
+    ddl: "ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'copy'"
   }
 ] as const
 
@@ -63,6 +70,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 CREATE TABLE IF NOT EXISTS jobs (
   id                 TEXT PRIMARY KEY,
   name               TEXT NOT NULL,
+  mode               TEXT NOT NULL DEFAULT 'copy',
   source_path        TEXT NOT NULL,
   source_kind        TEXT NOT NULL DEFAULT 'generic',
   is_codex_vfs       INTEGER NOT NULL DEFAULT 0,

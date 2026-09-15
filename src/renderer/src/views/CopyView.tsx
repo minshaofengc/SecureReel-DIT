@@ -48,6 +48,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
   const [usage, setUsage] = useState<DriveUsage[]>([])
   const [busy, setBusy] = useState(false)
   const [verify, setVerify] = useState(settings.verifyAfterWrite)
+  /** 仅校验模式：选好源和已有拷贝目录后，只比对校验值，不写任何数据 */
+  const [verifyOnlyMode, setVerifyOnlyMode] = useState(false)
 
   const [parentId, setParentId] = useState<string | null>(null)
   const [newParentOpen, setNewParentOpen] = useState(false)
@@ -228,6 +230,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
             name: jobName.trim() === '' ? sourcePath.split('/').slice(-1)[0] ?? 'DIT 任务' : jobName.trim(),
             sourcePath,
             targets: targets.map((path) => ({ path })),
+            mode: verifyOnlyMode ? 'verify' : 'copy',
             hashAlgorithm: settings.hashAlgorithm,
             manifestFormat: settings.manifestFormat,
             verifyAfterWrite: verify,
@@ -269,7 +272,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
       sourcePath,
       t,
       targets,
-      verify
+      verify,
+      verifyOnlyMode
     ]
   )
 
@@ -366,6 +370,20 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
           {selectedParent === null
             ? t('copy.parentHintUnassigned')
             : `${t('copy.parentHintAssigned')}${selectedParent.name}`}
+        </div>
+      </Card>
+
+      <Card title={t('copy.modeTitle')}>
+        <label className="row-actions" style={{ cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={verifyOnlyMode}
+            onChange={(event) => setVerifyOnlyMode(event.target.checked)}
+          />
+          <span>{t('copy.verifyOnly')}</span>
+        </label>
+        <div className="hint faint" style={{ marginTop: 8 }}>
+          {t('copy.verifyOnlyHint')}
         </div>
       </Card>
 

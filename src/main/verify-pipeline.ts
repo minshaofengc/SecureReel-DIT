@@ -282,6 +282,7 @@ async function main(): Promise<number> {
     const job: CopyJob = {
       id: 'job_verify0001',
       name: '端到端验证任务',
+      mode: 'copy',
       sourcePath: source,
       sourceKind: 'generic',
       isCodExVfs: false,

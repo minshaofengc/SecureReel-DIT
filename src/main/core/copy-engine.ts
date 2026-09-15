@@ -201,6 +201,11 @@ export class CopyEngine {
     this.cancelled = true
   }
 
+  /** 仅校验模式：两侧只算校验值并比对，绝不写入、绝不删除目标盘上的任何字节。 */
+  private get verifyOnly(): boolean {
+    return this.deps.job.mode === 'verify'
+  }
+
   async run(): Promise<CopyEngineResult> {
     const { job, store } = this.deps
 
@@ -330,9 +335,16 @@ export class CopyEngine {
         continue
       }
       try {
-        await ensureDir(slot.target.path)
-        const info = await stat(slot.target.path)
-        if (!info.isDirectory()) throw new Error('目标路径不是目录')
+        if (this.verifyOnly) {
+          // 仅校验模式不创建任何目录：目标不存在说明盘上没有这份拷贝，
+          // 直接隔离该目标并如实报告，而不是替它把目录建出来。
+          const info = await stat(slot.target.path)
+          if (!info.isDirectory()) throw new Error('目标路径不是目录')
+        } else {
+          await ensureDir(slot.target.path)
+          const info = await stat(slot.target.path)
+          if (!info.isDirectory()) throw new Error('目标路径不是目录')
+        }
         store.updateTargetProgress(job.id, slot.target.id, { state: 'running', error: null })
       } catch (error) {
         slot.failed = true
@@ -373,7 +385,9 @@ export class CopyEngine {
           ? '没有启用的目标盘。'
           : enabled.every((slot) => slot.failed)
             ? '所有启用的目标盘都已不可用。'
-            : '所有目标都无法写入该文件（多为目标上已存在同名但内容不同的文件）。'
+            : this.verifyOnly
+              ? '所有目标上都不存在该文件（或文件大小与源不一致）。'
+              : '所有目标都无法写入该文件（多为目标上已存在同名但内容不同的文件）。'
       await this.failFile(file, reason, works)
       return
     }
@@ -439,6 +453,32 @@ export class CopyEngine {
       }
 
       if (work.skipped || work.fatalError !== null) {
+        works.push(work)
+        continue
+      }
+
+      // 仅校验模式：不创建目录、不打开写入句柄，只判断目标文件在不在、尺寸对不对。
+      // 真正的内容比对统一走后面的重读校验流程。
+      if (this.verifyOnly) {
+        try {
+          if (await pathExists(finalPath)) {
+            const info = await stat(finalPath)
+            if (sourceSize > 0 && info.size !== sourceSize) {
+              work.fatalError =
+                `仅校验：目标上该文件大小与源不一致（现有 ${info.size} 字节，源 ${sourceSize} 字节）。` +
+                '该文件可能不完整或不是同一素材；目标文件未做任何改动。'
+            } else {
+              work.adopted = true
+              work.completeBeforeWrite = true
+              work.verifyPath = finalPath
+              work.bytesWritten = 0
+            }
+          } else {
+            work.fatalError = '仅校验：目标上不存在该文件。'
+          }
+        } catch (error) {
+          work.fatalError = `仅校验：无法读取目标文件：${describeError(error)}`
+        }
         works.push(work)
         continue
       }
@@ -709,8 +749,31 @@ export class CopyEngine {
         const match = targetHash === outcome.sourceHash
 
         if (!match) {
-          // adopted = 这个文件是目标上**预先存在**的（本次任务一个字节都没写它）。
-          // 校验不符说明那是同名同尺寸但内容不同的别的文件 —— 仍然是命名冲突，
+          // adopted = 这个文件是目标上**预先存在**的（本次任务没有写过它）。
+
+          // 仅校验模式：比对不符就是复核结论 —— 内容不同或已损坏。
+          // 校验的意义恰恰是把所有差异都查出来，所以只记失败、不隔离目标，
+          // 后续文件照常比对；也绝不动目标上的原文件。
+          if (this.verifyOnly) {
+            const message =
+              '仅校验：目标文件的校验值与源不一致（内容不同或已损坏）。目标文件未做任何改动。'
+            store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
+            store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
+            this.log(
+              'error',
+              `校验不一致：${file.relPath} @ ${work.slot.target.label} —— 目标内容与源不符，请人工复核。`
+            )
+            return {
+              targetId: work.slot.target.id,
+              state: 'failed',
+              hash: targetHash,
+              hashMatch: false,
+              bytesCopied: work.bytesWritten,
+              error: message
+            }
+          }
+
+          // 拷贝模式下：那是同名同尺寸但内容不同的别的文件 —— 仍然是命名冲突，
           // 不是这块盘写坏了。隔离整盘会误伤，只让这一个文件失败。
           if (work.adopted) {
             work.nameConflict = true
@@ -771,6 +834,22 @@ export class CopyEngine {
           error: null
         }
       } catch (error) {
+        // 仅校验模式不隔离目标：复核要覆盖全部文件，读不动哪一个就记哪一个，
+        // 其余文件照常比对。隔离是拷贝时的保护动作，复核时只会掩盖问题。
+        if (this.verifyOnly) {
+          const message = `仅校验：无法读取目标文件：${describeError(error)}`
+          store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
+          store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
+          this.log('error', `读取失败：${file.relPath} @ ${work.slot.target.label} —— ${message}`)
+          return {
+            targetId: work.slot.target.id,
+            state: 'failed',
+            hash: null,
+            hashMatch: false,
+            bytesCopied: work.bytesWritten,
+            error: message
+          }
+        }
         work.slot.failed = true
         work.slot.error = `校验失败：${describeError(error)}`
         store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })

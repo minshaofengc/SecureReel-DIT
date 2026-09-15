@@ -85,6 +85,16 @@ export const JOB_STATES = [
 ] as const
 export type JobState = (typeof JOB_STATES)[number]
 
+/**
+ * 任务模式。
+ *
+ * - `copy`   ：正常拷贝（读源 → 写目标 → 独立重读校验 → 原子改名）
+ * - `verify` ：仅校验（两侧只算校验值并比对，**不写入也不删除任何字节**）。
+ *   用于隔天复检、交接核对别人拷好的盘。
+ */
+export const JOB_MODES = ['copy', 'verify'] as const
+export type JobMode = (typeof JOB_MODES)[number]
+
 export const FILE_STATES = [
   'pending',
   'copying',
@@ -214,6 +224,8 @@ export interface CopyJobFile {
 export interface CopyJob {
   id: string
   name: string
+  /** 任务模式：copy = 拷贝 + 校验；verify = 仅校验，不写目标盘 */
+  mode: JobMode
   sourcePath: string
   sourceKind: VolumeKind
   isCodExVfs: boolean

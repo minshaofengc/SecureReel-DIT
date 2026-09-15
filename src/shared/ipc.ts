@@ -93,6 +93,8 @@ export interface CreateJobRequest {
   name: string
   sourcePath: string
   targets: { path: string }[]
+  /** 任务模式；缺省 = copy（拷贝 + 校验） */
+  mode?: CopyJob['mode']
   hashAlgorithm?: AppSettings['hashAlgorithm']
   manifestFormat?: AppSettings['manifestFormat']
   verifyAfterWrite?: boolean

@@ -55,6 +55,7 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
   const job: CopyJob = {
     id: 'job_report0001',
     name: 'A002 卡备份',
+    mode: 'copy',
     sourcePath: join(root, 'A002R2EC'),
     sourceKind: 'generic',
     isCodExVfs: false,

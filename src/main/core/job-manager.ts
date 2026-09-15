@@ -6,7 +6,7 @@
  */
 import { hostname } from 'node:os'
 import { randomBytes } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { AppSettings, CopyJob, CopyJobFile, CopyTarget, MainEvent, ProjectInfo, ReportSummary, ScanResult } from '@shared/types'
 import type { CreateJobRequest } from '@shared/ipc'
@@ -97,6 +97,7 @@ export class JobManager {
   async createJob(request: CreateJobRequest): Promise<{ job: CopyJob; scan: ScanResult }> {
     const settings = this.deps.getSettings()
     const { store, logger } = this.deps
+    const verifyOnly = request.mode === 'verify'
 
     if (!(await pathExists(request.sourcePath))) {
       throw new Error(`来源路径不存在：${request.sourcePath}`)
@@ -104,10 +105,10 @@ export class JobManager {
 
     const scan = await scanSource(request.sourcePath)
     if (scan.fileCount === 0) {
-      throw new Error('该来源路径下没有找到任何可拷贝的文件。')
+      throw new Error('该来源路径下没有找到任何可校验的文件。')
     }
 
-    // 目标校验：存在、可写、不与源相互嵌套
+    // 目标校验：存在；拷贝模式还要求可写、不与源相互嵌套
     const targets: CopyTarget[] = []
     for (const [index, item] of request.targets.entries()) {
       const targetPath = item.path
@@ -118,9 +119,12 @@ export class JobManager {
         )
       }
 
+      // 同卷限制只针对拷贝：拷贝的意义在于产生跨盘副本。
+      // 仅校验时源与目标在同一个卷上是合理场景（复核本机上的副本），放行。
       const sourceDevice = await describeVolume(request.sourcePath)
       const targetDevice = await describeVolume(targetPath)
       if (
+        !verifyOnly &&
         sourceDevice !== null &&
         targetDevice !== null &&
         sourceDevice.device === targetDevice.device &&
@@ -131,18 +135,31 @@ export class JobManager {
         )
       }
 
-      try {
-        await mkdir(targetPath, { recursive: true })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        throw new Error(`目标「${targetPath}」无法创建或不可写：${message}`)
+      if (verifyOnly) {
+        // 仅校验不写目标盘：目标必须已存在，绝不替用户创建目录
+        let info
+        try {
+          info = await stat(targetPath)
+        } catch {
+          throw new Error(`目标「${targetPath}」不存在。仅校验模式不会创建目录，请选择已有的拷贝目录。`)
+        }
+        if (!info.isDirectory()) {
+          throw new Error(`目标「${targetPath}」不是目录。`)
+        }
+      } else {
+        try {
+          await mkdir(targetPath, { recursive: true })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new Error(`目标「${targetPath}」无法创建或不可写：${message}`)
+        }
       }
 
       const usage = await usageForTargets([{ path: targetPath }], scan.totalBytes)
       const info = usage[0]
       const label = info?.label ?? basename(targetPath)
 
-      if (info?.sufficient === false) {
+      if (!verifyOnly && info?.sufficient === false) {
         logger.warn(
           'job',
           `目标「${label}」剩余空间 ${info.freeBytes} 字节，可能放不下 ${scan.totalBytes} 字节的素材。`
@@ -155,7 +172,7 @@ export class JobManager {
         label,
         enabled: true,
         freeBytes: info?.freeBytes ?? null,
-        writable: true
+        writable: !verifyOnly
       })
     }
 
@@ -171,6 +188,7 @@ export class JobManager {
     const job: CopyJob = {
       id: jobId,
       name: request.name,
+      mode: verifyOnly ? 'verify' : 'copy',
       sourcePath: request.sourcePath,
       sourceKind: scan.kind,
       isCodExVfs: scan.isCodExVfs,
@@ -220,7 +238,7 @@ export class JobManager {
 
     logger.info(
       'job',
-      `已创建任务「${job.name}」：${scan.fileCount} 个文件 / ${scan.totalBytes} 字节，${targets.length} 个目标` +
+      `已创建${verifyOnly ? '仅校验' : '拷贝'}任务「${job.name}」：${scan.fileCount} 个文件 / ${scan.totalBytes} 字节，${targets.length} 个目标` +
         (parentProject === null ? '，未归入母项目。' : `，归入母项目「${parentProject.name}」。`)
     )
 
@@ -395,13 +413,20 @@ export class JobManager {
       toolName: TOOL_NAME,
       toolVersion: TOOL_VERSION,
       now: new Date(),
-      // 只有正常跑完才往目标盘写清单；取消/失败的任务清单并不代表一份可信的交付
-      writeManifestToTargets: completedCleanly
+      // 只有正常跑完的拷贝任务才往目标盘写清单；取消/失败的任务清单并不代表
+      // 一份可信的交付。仅校验模式按定义不写目标盘的任何字节，清单同样不写。
+      writeManifestToTargets: completedCleanly && job.mode !== 'verify'
     })
 
     if (!completedCleanly) {
       extraNotes.push(
         `本次任务未正常结束（状态：${state}），因此没有把清单写入目标盘。报告仍然完整记录了当时的实际结果。`
+      )
+    }
+
+    if (job.mode === 'verify') {
+      extraNotes.push(
+        '本任务为「仅校验」模式：只读取并比对两侧的校验值，未向目标盘写入或删除任何数据。'
       )
     }
 

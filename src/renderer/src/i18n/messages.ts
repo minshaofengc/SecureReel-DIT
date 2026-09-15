@@ -61,6 +61,10 @@ export const zhCN = {
   'copy.subtitle': '一次读取源盘，同时写入多个目标，逐文件独立校验。',
   'copy.jobName': '任务名称',
   'copy.jobNamePlaceholder': '例如：A002 卡 · 现场备份',
+  'copy.modeTitle': '任务模式',
+  'copy.verifyOnly': '仅校验（不拷贝）',
+  'copy.verifyOnlyHint':
+    '勾选后，"目标"指的是已经拷好的目录：软件只读取两侧并比对校验值，不写入、不删除任何数据。适合隔天复检或核对别人拷好的盘。',
   'copy.source': '来源',
   'copy.sourcePlaceholder': '选择素材卡或文件夹',
   'copy.pickSource': '选择来源',
@@ -410,6 +414,10 @@ export const en: Record<MessageKey, string> = {
   'copy.subtitle': 'Read the source once, write to every target, verify each file independently.',
   'copy.jobName': 'Job name',
   'copy.jobNamePlaceholder': 'e.g. A002 card · on-set backup',
+  'copy.modeTitle': 'Task mode',
+  'copy.verifyOnly': 'Verify only (no copying)',
+  'copy.verifyOnlyHint':
+    'When enabled, "targets" are existing copy folders: the app reads both sides and compares hashes without writing or deleting anything. Ideal for next-day rechecks or verifying a drive another person copied.',
   'copy.source': 'Source',
   'copy.sourcePlaceholder': 'Pick a camera card or folder',
   'copy.pickSource': 'Choose source',

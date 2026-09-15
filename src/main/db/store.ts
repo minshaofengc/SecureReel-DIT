@@ -20,7 +20,7 @@ import type {
   TargetProgress,
   VolumeKind
 } from '@shared/types'
-import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_STATES, MANIFEST_FORMATS, VOLUME_KINDS } from '@shared/types'
+import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, VOLUME_KINDS } from '@shared/types'
 import { hasSubstance, normalizeProjectDetails, normalizeProjectInfo } from '@shared/project'
 import {
   fromSqlBoolean,
@@ -237,14 +237,15 @@ export class Store {
       this.db
         .prepare(
           `INSERT INTO jobs (
-             id, name, source_path, source_kind, is_codex_vfs, hash_algorithm, manifest_format,
+             id, name, mode, source_path, source_kind, is_codex_vfs, hash_algorithm, manifest_format,
              verify_after_write, state, total_files, total_bytes, files_done, files_failed,
              bytes_done, created_at, started_at, finished_at, degradation_notice, parent_project_id
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           job.id,
           job.name,
+          job.mode,
           job.sourcePath,
           job.sourceKind,
           job.isCodExVfs ? 1 : 0,
@@ -356,6 +357,7 @@ export class Store {
     return {
       id: asString(row.id),
       name: asString(row.name),
+      mode: pick(JOB_MODES, row.mode, 'copy'),
       sourcePath: asString(row.source_path),
       sourceKind: pick(VOLUME_KINDS, row.source_kind, 'generic') as VolumeKind,
       isCodExVfs: fromSqlBoolean(row.is_codex_vfs),

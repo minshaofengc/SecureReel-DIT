@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import {
   HASH_ALGORITHMS,
+  JOB_MODES,
   LANGUAGES,
   MANIFEST_FORMATS,
   MAX_COPY_NOTES_LENGTH,
@@ -95,6 +96,8 @@ export const createJobSchema = z.object({
     .array(z.object({ path: absolutePathSchema }))
     .min(1, '至少需要一个目标')
     .max(8, '最多 8 个目标'),
+  /** 任务模式；缺省 = copy（拷贝 + 校验） */
+  mode: z.enum(JOB_MODES).optional(),
   hashAlgorithm: z.enum(HASH_ALGORITHMS).optional(),
   manifestFormat: z.enum(MANIFEST_FORMATS).optional(),
   verifyAfterWrite: z.boolean().optional(),

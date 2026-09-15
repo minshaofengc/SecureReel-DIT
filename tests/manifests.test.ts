@@ -55,6 +55,7 @@ function makeJob(): CopyJob {
   return {
     id: 'job_manifest01',
     name: 'A002 卡备份',
+    mode: 'copy',
     sourcePath: '/Volumes/A002R2EC',
     sourceKind: 'generic',
     isCodExVfs: false,
