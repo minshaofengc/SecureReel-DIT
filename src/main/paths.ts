@@ -17,8 +17,6 @@ export interface AppPaths {
   hdeWorkDir: string
   /** SQLite 任务数据库 */
   dbFile: string
-  /** 用户设置 */
-  settingsFile: string
 }
 
 export function buildAppPaths(userDataDir: string): AppPaths {
@@ -27,7 +25,6 @@ export function buildAppPaths(userDataDir: string): AppPaths {
     logsDir: join(userDataDir, 'logs'),
     reportsDir: join(userDataDir, 'reports'),
     hdeWorkDir: join(userDataDir, 'hde'),
-    dbFile: join(userDataDir, 'securereel.sqlite'),
-    settingsFile: join(userDataDir, 'settings.json')
+    dbFile: join(userDataDir, 'securereel.sqlite')
   }
 }

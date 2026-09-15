@@ -6,13 +6,20 @@ SecureReel DIT 是一款面向 macOS 13+ 的免费开源摄影机素材拷贝与
 
 - 单个源卷同步拷贝至 1–8 个目标，单盘故障不会中断其他健康目标。
 - 源文件读取时计算所选校验值，目标写入后独立重读校验，再原子改名。普通任务支持 xxHash64（默认）、MD5（兼容）和 ASC C4（归档）。
+- **仅校验模式**：只读取源与已有拷贝并比对校验值，不写入、不删除任何数据——用于隔天复检或核对别人拷好的盘。
 - 文件级 SQLite 检查点、任务队列、暂停/继续/取消与应用重启恢复。
 - ASC MHL 2.0（默认）和传统 MHL v1 清单。
-- 不可变的 PDF/JSON/离线 HTML 报告修订：R001、R002……旧报告不会被覆盖。
+- 不可变的 PDF/JSON/离线 HTML 报告修订：R001、R002……旧报告不会被覆盖。首帧图内联进 HTML，报告单独发送也能看到画面。
 - 通过随应用分发的开源 FFmpeg/ffprobe 读取可支持素材的拍摄时间、时长、时码并提取首尾帧；解析失败不会影响哈希报告。
 - 自定义“职务 + 所属人”（最多 50 行）及 4000 字项目备注；执行期间自动保存并进入新报告修订。
 - 竹林「清和」与粉蓝「雾光」，均支持跟随系统、明亮和黑暗模式。
 - 简体中文和英文界面，以及内置帮助中心。
+
+## 安装
+
+发布形态是**安装包**（`dmg`，Intel 与 Apple 芯片通用）：打开磁盘映像，把应用拖进「应用程序」即可，不需要命令行、不需要 Node.js。应用内置 FFmpeg/ffprobe，装完即有完整的首帧图与元数据能力。
+
+未签名/未公证的构建首次打开时，macOS 会提示"无法验证开发者"——在「系统设置 → 隐私与安全性」里点「仍要打开」一次即可。
 
 ## HDE 合规说明
 
@@ -31,6 +38,9 @@ HDE 编码能力由 ARRI/CODEX 官方免费工具提供。SecureReel DIT 不随�
 
 要求 Node.js 22.12+ 与 npm 10+。
 
+> `启动 SecureReel DIT.command` 是**开发者用的本地启动脚本**（依赖本机 Node.js 环境）。
+> 给别人用请一律走上面的安装包，不要引导用户跑脚本。
+
 ```bash
 npm install
 npm run dev
@@ -38,6 +48,16 @@ npm run test
 npm run type-check
 npm run lint
 npm run build
+sh scripts/fetch-ffmpeg.sh   # 下载随包分发的 ffmpeg/ffprobe（打包前跑一次）
+npm run dist:mac             # 构建 macOS 安装包（需配置下载镜像，见下）
+```
+
+打包时 electron-builder 需要下载 Electron 本体与构建工具，国内网络建议带上两个镜像变量：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+ELECTRON_BUILDER_BINARIES_MIRROR=https://registry.npmmirror.com/-/binary/electron-builder-binaries/ \
+npm run dist:mac
 ```
 
 构建目标为 Electron 43、React 18 与 TypeScript。渲染进程启用 sandbox 和 context isolation，关闭 Node integration；文件、哈希、数据库、报告与外部工具均位于主进程分层中。
@@ -54,4 +74,4 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 
 ## 许可
 
-应用代码采用 [GPL-3.0-only](LICENSE)。随包提供的 Noto Sans SC 字体采用 SIL Open Font License 1.1。
+应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 GPL-3.0 授权，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
