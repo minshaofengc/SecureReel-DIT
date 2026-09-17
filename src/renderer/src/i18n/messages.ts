@@ -9,6 +9,11 @@
 export const zhCN = {
   'app.name': 'SecureReel DIT',
   'app.tagline': '素材拷贝 · 哈希校验 · 报告',
+  'app.initFailed': '初始化失败：{reason}',
+  'app.databaseQuarantine':
+    '检测到旧版本的任务数据库，结构与当前版本不兼容，已重新建立新的任务库。旧数据没有被删除，已备份到 {backup}。',
+  'app.databaseQuarantineNoBackup':
+    '检测到旧版本的任务数据库，结构与当前版本不兼容，已重新建立新的任务库。旧库未能备份，已原地保留，旧数据没有被删除。',
 
   'nav.copy': '拷贝',
   'nav.queue': '任务队列',
@@ -67,7 +72,12 @@ export const zhCN = {
     '勾选后，"目标"指的是已经拷好的目录：软件只读取两侧并比对校验值，不写入、不删除任何数据。适合隔天复检或核对别人拷好的盘。',
   'copy.spaceAck': '我已知晓：目标盘可能在拷到一半时因写满被隔离，我选择继续。',
   'copy.spaceAckRequired': '有目标盘空间可能不足。请先确认下方提示并勾选"我已知晓"，或更换目标。',
+  'copy.insufficientNotice':
+    '有 {count} 个目标剩余空间可能不足。写入过程中若目标盘写满，该盘会被单独隔离，其余目标仍会继续 —— 但请尽量先腾出空间。',
+  'copy.targetDuplicate': '该目标已在列表里。',
+  'copy.targetLimit': '最多支持 {count} 个目标。',
   'copy.source': '来源',
+  'copy.defaultJobName': 'DIT 任务',
   'copy.sourcePlaceholder': '选择素材卡或文件夹',
   'copy.pickSource': '选择来源',
   'copy.scanning': '正在扫描来源…',
@@ -158,7 +168,7 @@ export const zhCN = {
   'parent.rename': '重命名',
   'parent.remove': '删除母项目',
   'parent.removeConfirm': '确定删除这个母项目？',
-  'parent.removeWarning': '名下 %N% 个拷贝任务会变为「未分组」。任务记录与已经拷到盘上的素材都不会被删除。',
+  'parent.removeWarning': '名下 {count} 个拷贝任务会变为「未分组」。任务记录与已经拷到盘上的素材都不会被删除。',
   'parent.jobs': '名下的拷贝任务',
   'parent.jobsSuffix': '个任务',
   'parent.noJobs': '这个母项目下还没有拷贝任务。',
@@ -218,6 +228,7 @@ export const zhCN = {
   'reports.targetsTable': '各目标结果',
   'reports.generated': '新报告已生成',
   'reports.immutable': '每个修订独占一个目录。要修正内容只能生成新修订，历史记录不会被改写。',
+  'reports.runningBlocked': '任务进行中，完成后才能生成报告',
 
   'hde.title': 'HDE 工作流',
   'hde.subtitle': '本软件不实现、不逆向、也不打包任何 HDE 编码器。',
@@ -232,6 +243,8 @@ export const zhCN = {
   'hde.model': '机型',
   'hde.modelAuto': '自动识别',
   'hde.decision': '处理决策',
+  'hde.needsTranscoder': '官方转码器',
+  'hde.degraded': '已降级',
   'hde.zeroByte': '这些文件在访达里显示 0 字节是预期行为，读取时由虚拟文件系统还原真实数据。',
   'hde.compliance': '合规说明',
   'hde.complianceBody':
@@ -357,6 +370,8 @@ export const zhCN = {
   'help.faq3Body':
     '能，但总线带宽是共享的。实际吞吐取决于最慢的那个盘和读卡器的上限，插得越多单个盘越慢，总时间不一定更短。',
   'help.about': '关于',
+  'help.platform': '平台',
+  'help.license': '许可',
   'help.privacy': '隐私与免责',
   'help.privacyBody':
     '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。'
@@ -367,6 +382,11 @@ export type MessageKey = keyof typeof zhCN
 export const en: Record<MessageKey, string> = {
   'app.name': 'SecureReel DIT',
   'app.tagline': 'Offload · Verify · Report',
+  'app.initFailed': 'Initialization failed: {reason}',
+  'app.databaseQuarantine':
+    'An older job database was found and is not compatible with this version, so a new one was created. Your old data was not deleted — it was backed up to {backup}.',
+  'app.databaseQuarantineNoBackup':
+    'An older job database was found and is not compatible with this version, so a new one was created. The old database could not be backed up and has been left in place — your old data was not deleted.',
 
   'nav.copy': 'Offload',
   'nav.queue': 'Jobs',
@@ -426,7 +446,12 @@ export const en: Record<MessageKey, string> = {
   'copy.spaceAck': 'I understand: a target may run out of space mid-copy and be isolated. Continue anyway.',
   'copy.spaceAckRequired':
     'A target may not have enough space. Please read the notice and tick the confirmation box, or pick another target.',
+  'copy.insufficientNotice':
+    '{count} target(s) may not have enough free space. If a target fills up mid-copy it will be isolated on its own while the others continue — but please free up space first if you can.',
+  'copy.targetDuplicate': 'That target is already in the list.',
+  'copy.targetLimit': 'Up to {count} targets are supported.',
   'copy.source': 'Source',
+  'copy.defaultJobName': 'DIT job',
   'copy.sourcePlaceholder': 'Pick a camera card or folder',
   'copy.pickSource': 'Choose source',
   'copy.scanning': 'Scanning source…',
@@ -513,7 +538,7 @@ export const en: Record<MessageKey, string> = {
   'parent.rename': 'Rename',
   'parent.remove': 'Delete parent project',
   'parent.removeConfirm': 'Delete this parent project?',
-  'parent.removeWarning': 'Its %N% copy jobs will become ungrouped. Job records and the media already copied to disk are not deleted.',
+  'parent.removeWarning': 'Its {count} copy jobs will become ungrouped. Job records and the media already copied to disk are not deleted.',
   'parent.jobs': 'Copy jobs in this project',
   'parent.jobsSuffix': 'jobs',
   'parent.noJobs': 'No copy jobs in this parent project yet.',
@@ -575,6 +600,7 @@ export const en: Record<MessageKey, string> = {
   'reports.generated': 'New report generated',
   'reports.immutable':
     'Each revision owns its own directory. To fix content you generate a new revision; history is never rewritten.',
+  'reports.runningBlocked': 'Job in progress — a report can be generated once it finishes',
 
   'hde.title': 'HDE workflow',
   'hde.subtitle': 'This app does not implement, reverse-engineer, or bundle any HDE encoder.',
@@ -589,6 +615,8 @@ export const en: Record<MessageKey, string> = {
   'hde.model': 'Camera model',
   'hde.modelAuto': 'Auto-detect',
   'hde.decision': 'Decision',
+  'hde.needsTranscoder': 'Official transcoder',
+  'hde.degraded': 'Degraded',
   'hde.zeroByte': 'These files showing 0 bytes in Finder is expected; the VFS restores the real data on read.',
   'hde.compliance': 'Compliance',
   'hde.complianceBody':
@@ -718,6 +746,8 @@ export const en: Record<MessageKey, string> = {
   'help.faq3Body':
     'Yes, but bus bandwidth is shared. Real throughput depends on the slowest disk and on the card reader ceiling. More targets means each one is slower; total time is not necessarily shorter.',
   'help.about': 'About',
+  'help.platform': 'Platform',
+  'help.license': 'License',
   'help.privacy': 'Privacy & disclaimer',
   'help.privacyBody':
     'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.'

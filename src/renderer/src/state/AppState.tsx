@@ -29,6 +29,7 @@ import type {
   ReportRevision
 } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import { translate } from '../i18n'
 
 export interface Toast {
   id: number
@@ -254,9 +255,26 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
         setJobs(jobList)
         setRecovered(recoverable)
         setParents(parentList)
-        if (info.databaseNotice !== null) {
-          // 旧数据库被备份留档这件事必须让用户知道，否则会以为数据丢了
-          pushToast('warn', `检测到旧版本数据库，已备份留档并新建任务库。${info.databaseNotice}`)
+        if (info.databaseQuarantine !== null) {
+          /*
+           * 旧数据库被备份留档这件事必须让用户知道，否则会以为数据丢了。
+           *
+           * 文案**在渲染层组织**，主进程只给事实（备份路径 / 有没有备份成功）：
+           * 主进程拼一段中文的话，英文界面下就会冒出一整段中文；
+           * 而且曾经主进程与这里各拼半句，界面上"检测到旧版本数据库"说了两遍。
+           *
+           * 这里用 translate() 而不是 t()：这个 effect 跑在组件树拿到语言设置之前，
+           * 语言刚从主进程读回来，就在 currentSettings 里。
+           */
+          const { backupPath } = info.databaseQuarantine
+          pushToast(
+            'warn',
+            translate(
+              currentSettings.language,
+              backupPath === null ? 'app.databaseQuarantineNoBackup' : 'app.databaseQuarantine',
+              backupPath === null ? undefined : { backup: backupPath }
+            )
+          )
         }
         if (jobList.length > 0) {
           const latest = jobList[0]
@@ -264,7 +282,13 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
         }
       } catch (error) {
         if (!cancelled) {
-          pushToast('error', `初始化失败：${error instanceof Error ? error.message : String(error)}`)
+          // 这一步失败时语言设置多半也没读回来，退回默认语言
+          pushToast(
+            'error',
+            translate(DEFAULT_SETTINGS.language, 'app.initFailed', {
+              reason: error instanceof Error ? error.message : String(error)
+            })
+          )
         }
       } finally {
         if (!cancelled) setReady(true)

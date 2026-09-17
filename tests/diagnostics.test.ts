@@ -55,7 +55,8 @@ describe('诊断包导出', () => {
       paths,
       logger,
       store,
-      probeRunner: probeRunnerStub
+      probeRunner: probeRunnerStub,
+      language: 'zh-CN'
     })
 
     expect(result).toBe(destination)
@@ -74,7 +75,8 @@ describe('诊断包导出', () => {
       paths,
       logger,
       store,
-      probeRunner: probeRunnerStub
+      probeRunner: probeRunnerStub,
+      language: 'zh-CN'
     })
     expect(result).toBe(destination)
     const listed = execFileSync('/usr/bin/unzip', ['-l', destination]).toString()

@@ -20,6 +20,18 @@ import { useI18n } from '../i18n'
 /** 下拉里表示「新建母项目」的哨兵值，不会与真实 ID 冲突 */
 const NEW_PARENT_VALUE = '__new_parent__'
 
+/**
+ * 取路径的最后一段，用来推默认任务名。
+ *
+ * 必须 `filter` 掉空段：从访达/终端粘贴的路径常带尾斜杠，
+ * `'/Volumes/CARD/'.split('/').slice(-1)[0]` 得到的是**空字符串**而不是 'CARD'，
+ * 于是任务名变成空串、创建请求被校验直接拒掉，只弹一句
+ * 「请填写任务名称」—— 而用户看到的输入框里本来就是空的，莫名其妙。
+ */
+function lastPathSegment(path: string): string | null {
+  return path.split('/').filter((part) => part !== '').slice(-1)[0] ?? null
+}
+
 const KIND_LABEL: Record<VolumeKind, string> = {
   generic: 'copy.type.generic',
   'hde-vfs': 'copy.type.hde-vfs',
@@ -169,7 +181,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     const path = picked.data
     setSourcePath(path)
     if (jobName.trim() === '') {
-      setJobName(path.split('/').filter(Boolean).slice(-1)[0] ?? '')
+      const derived = lastPathSegment(path)
+      if (derived !== null) setJobName(derived)
     }
     setScanning(true)
     try {
@@ -192,11 +205,11 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     if (!picked.ok || picked.data === null) return
     const path = picked.data
     if (targets.includes(path)) {
-      pushToast('warn', '该目标已在列表里。')
+      pushToast('warn', t('copy.targetDuplicate'))
       return
     }
     if (targets.length >= 8) {
-      pushToast('warn', '最多支持 8 个目标。')
+      pushToast('warn', t('copy.targetLimit', { count: 8 }))
       return
     }
     const next = [...targets, path]
@@ -214,8 +227,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
   )
 
   const submit = useCallback(
-    async (start: boolean) => {
-      if (sourcePath.trim() === '') {
+    async (start: boolean) => {      if (sourcePath.trim() === '') {
         pushToast('warn', t('copy.sourcePlaceholder'))
         return
       }
@@ -235,7 +247,10 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         // 那样会多一次 IPC，而且整包覆盖容易把主进程按来源盘推出的卡号冲掉。
         const created = await unwrap(
           window.securereel.jobs.create({
-            name: jobName.trim() === '' ? sourcePath.split('/').slice(-1)[0] ?? 'DIT 任务' : jobName.trim(),
+            name:
+              jobName.trim() === ''
+                ? (lastPathSegment(sourcePath) ?? t('copy.defaultJobName'))
+                : jobName.trim(),
             sourcePath,
             targets: targets.map((path) => ({ path })),
             mode: verifyOnlyMode ? 'verify' : 'copy',
@@ -602,8 +617,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
             </div>
             {insufficient.length > 0 && (
               <Note tone="danger">
-                有 {insufficient.length} 个目标剩余空间可能不足。写入过程中若目标盘写满，该盘会被单独隔离，
-                其余目标仍会继续 —— 但请尽量先腾出空间。
+                {t('copy.insufficientNotice', { count: insufficient.length })}
                 <label className="row-actions" style={{ cursor: 'pointer', marginTop: 8 }}>
                   <input
                     type="checkbox"

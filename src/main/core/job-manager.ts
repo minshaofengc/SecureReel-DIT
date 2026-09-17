@@ -16,7 +16,14 @@ import { emptyProjectDraft, emptyProjectInfo } from '@shared/project'
 import type { Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
 import type { AppPaths } from '@main/paths'
-import { describeVolume, ejectVolume, isNestedPath, pathExists, walkFiles } from '@main/fs-utils'
+import {
+  describeVolume,
+  ejectVolume,
+  isNestedPath,
+  pathExists,
+  stripTrailingSeparators,
+  walkFiles
+} from '@main/fs-utils'
 import { CopyEngine } from './copy-engine'
 import { PauseGate } from './concurrency'
 import { inspectSource, scanSource, usageForTargets } from './source-scan'
@@ -61,8 +68,9 @@ export class JobManager {
   }
 
   /** 任务开始前补加一个目标盘。已开跑的任务不允许改，避免中途改变语义。 */
-  async addTarget(jobId: string, targetPath: string): Promise<CopyTarget[]> {
+  async addTarget(jobId: string, rawTargetPath: string): Promise<CopyTarget[]> {
     const { store } = this.deps
+    const targetPath = stripTrailingSeparators(rawTargetPath)
     if (this.runs.has(jobId)) {
       throw new Error(this.m('job.addTargetWhileRunning'))
     }
@@ -105,11 +113,16 @@ export class JobManager {
     const { store, logger } = this.deps
     const verifyOnly = request.mode === 'verify'
 
-    if (!(await pathExists(request.sourcePath))) {
-      throw new Error(this.m('job.sourceMissing', { path: request.sourcePath }))
+    // 界面上的路径是可手输的文本框，从访达/终端粘贴常带尾斜杠。
+    // 在这里统一归口，保证落库的路径只有一种写法 —— 否则扫描出来的
+    // 相对路径会与后续拼接用的根路径对不上，表现为"每个文件都读不到源"。
+    const sourcePath = stripTrailingSeparators(request.sourcePath)
+
+    if (!(await pathExists(sourcePath))) {
+      throw new Error(this.m('job.sourceMissing', { path: sourcePath }))
     }
 
-    const scan = await scanSource(request.sourcePath)
+    const scan = await scanSource(sourcePath)
     if (scan.fileCount === 0) {
       throw new Error(this.m('job.sourceEmpty'))
     }
@@ -117,15 +130,15 @@ export class JobManager {
     // 目标校验：存在；拷贝模式还要求可写、不与源相互嵌套
     const targets: CopyTarget[] = []
     for (const [index, item] of request.targets.entries()) {
-      const targetPath = item.path
+      const targetPath = stripTrailingSeparators(item.path)
 
-      if (await isNestedPath(targetPath, request.sourcePath)) {
+      if (await isNestedPath(targetPath, sourcePath)) {
         throw new Error(this.m('job.nestedPath', { path: targetPath }))
       }
 
       // 同卷限制只针对拷贝：拷贝的意义在于产生跨盘副本。
       // 仅校验时源与目标在同一个卷上是合理场景（复核本机上的副本），放行。
-      const sourceDevice = await describeVolume(request.sourcePath)
+      const sourceDevice = await describeVolume(sourcePath)
       const targetDevice = await describeVolume(targetPath)
       if (
         !verifyOnly &&
@@ -182,7 +195,7 @@ export class JobManager {
       })
     }
 
-    const sourceInfo = await inspectSource(request.sourcePath)
+    const sourceInfo = await inspectSource(sourcePath)
     const jobId = `job_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`
 
     const parent = request.parentProjectId ?? null
@@ -195,7 +208,7 @@ export class JobManager {
       id: jobId,
       name: request.name,
       mode: verifyOnly ? 'verify' : 'copy',
-      sourcePath: request.sourcePath,
+      sourcePath,
       sourceKind: scan.kind,
       isCodExVfs: scan.isCodExVfs,
       parentProjectId: parent,
@@ -219,7 +232,7 @@ export class JobManager {
     store.upsertFiles(
       jobId,
       scan.preview.length > 0 || scan.fileCount > 0
-        ? await this.collectFileList(request.sourcePath)
+        ? await this.collectFileList(sourcePath)
         : []
     )
 
@@ -272,7 +285,7 @@ export class JobManager {
     const { store } = this.deps
     const job = store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
-    if (this.runs.has(jobId)) throw new Error('该任务正在运行中。')
+    if (this.runs.has(jobId)) throw new Error(this.m('job.alreadyRunning'))
 
     const settings = this.deps.getSettings()
     const gate = new PauseGate()
@@ -409,6 +422,25 @@ export class JobManager {
     const job = store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
 
+    /*
+     * 任务运行中不许生成报告。
+     *
+     * 三条理由，从轻到重：
+     *   1. 报告会缺数据。中途那一眼看到的是"跑了一半的实况"，不是结果。
+     *   2. 会撞上任务结束后 JobManager 自己出的那一份：两份并发各取一次修订号，
+     *      后到的那个会被"修订目录已存在"的守卫中止，用户平白看到一条生成失败。
+     *   3. 最要命的是重复处理。写报告**曾经**顺带把 copying / verifying 的行
+     *      归零成 pending，引擎下一批就把同一批文件再处理一遍 ——
+     *      filesDone 可能超过 totalFiles，两个线程同时提交同一个分片时
+     *      还会让健康盘被误判隔离。
+     *
+     * 第 3 条的根因（归零那一步）已经从 report-store 里删掉，这里再兜一道闸，
+     * 让"运行中生成报告"在语义上不可能发生 —— 界面上的按钮也会相应禁用。
+     */
+    if (this.runs.has(jobId)) {
+      throw new Error(this.m('job.reportWhileRunning'))
+    }
+
     const project = store.getProjectInfo(jobId) ?? emptyProjectInfo()
 
     const sourceDescription = await describeVolume(job.sourcePath)
@@ -417,7 +449,23 @@ export class JobManager {
     const state = terminalState ?? job.state
     const completedCleanly = state === 'completed' || state === 'completed-with-errors'
 
-    const { revision, extraNotes } = await reportStore.writeRevision({
+    /*
+     * 附注必须在报告**渲染之前**交进去。
+     *
+     * 报告是先渲染再落盘的，渲染之后往哪儿 push 都进不去 —— 这里曾经拿 writeRevision
+     * 返回的 extraNotes 数组 push 了四条说明，然后整个数组被丢弃，
+     * 于是报告的「执行说明」一节基本是空的，其中"这是仅校验任务的报告"
+     * 这条尤其要紧：拿到报告的人分不清它是复核记录还是拷贝交付。
+     */
+    const preNotes: string[] = []
+    if (!completedCleanly) {
+      preNotes.push(this.m('job.reportNotCleanNote', { state }))
+    }
+    if (job.mode === 'verify') {
+      preNotes.push(this.m('job.verifyModeNote'))
+    }
+
+    const { revision } = await reportStore.writeRevision({
       job,
       project,
       store,
@@ -429,16 +477,19 @@ export class JobManager {
       now: new Date(),
       // 只有正常跑完的拷贝任务才往目标盘写清单；取消/失败的任务清单并不代表
       // 一份可信的交付。仅校验模式按定义不写目标盘的任何字节，清单同样不写。
-      writeManifestToTargets: completedCleanly && job.mode !== 'verify'
+      writeManifestToTargets: completedCleanly && job.mode !== 'verify',
+      preNotes
     })
 
-    if (!completedCleanly) {
-      extraNotes.push(this.m('job.reportNotCleanNote', { state }))
-    }
-
-    if (job.mode === 'verify') {
-      extraNotes.push(this.m('job.verifyModeNote'))
-    }
+    /*
+     * 下面两条只有等报告渲染完才知道，赶不上「执行说明」那一节。
+     *
+     * 刻意**不**为此把报告再渲染一遍：报告目录里的两份产物（report.html 与
+     * report.json）必须一致，补写就等于重写 HTML、并把 report.json 的逐文件
+     * 记录整体再流一遍 —— 十万条素材的任务为此多跑一遍全量查询，
+     * 代价与收益不成比例。
+     * 所以它们改成写日志 + 界面提示：信息没丢，只是不落在交付物里。
+     */
 
     // PDF 需要 Chromium，失败也不影响 JSON / HTML
     const htmlPath = revision.files.html
@@ -450,7 +501,9 @@ export class JobManager {
       }
       if (pdf.ok && pdf.imageTotal > 0 && pdf.imageLoaded < pdf.imageTotal) {
         const missing = pdf.imageTotal - pdf.imageLoaded
-        extraNotes.push(this.m('job.pdfMissingFrames', { missing, total: pdf.imageTotal }))
+        const message = this.m('job.pdfMissingFrames', { missing, total: pdf.imageTotal })
+        logger.warn('job', message)
+        this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
       }
 
       // PDF 生成完才内联首帧图：内联后的单文件 HTML 不再依赖 frames/ 目录，
@@ -461,7 +514,9 @@ export class JobManager {
           logger.info('job', `已将 ${inlined} 张首帧图内联进 HTML 报告（单文件自包含）。`)
         }
         if (skipped > 0) {
-          extraNotes.push(this.m('job.inlineSkippedNote', { count: skipped }))
+          const message = this.m('job.inlineSkippedNote', { count: skipped })
+          logger.warn('job', message)
+          this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

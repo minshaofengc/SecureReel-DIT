@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { APP_NAME, APP_VERSION } from '@shared/version'
+import { msg, type MsgKey } from '@shared/messages'
+import type { Language } from '@shared/types'
 import type { AppPaths } from '@main/paths'
 import type { Logger } from '@main/logger'
 import type { Store } from '@main/db/store'
@@ -30,6 +32,19 @@ export interface DiagnosticsDeps {
   logger: Logger
   store: Store
   probeRunner: FfprobeRunner
+  /**
+   * 界面语言。
+   *
+   * 这个模块抛出的错误会经 IPC 原样送到界面上，所以必须跟着界面语言走 ——
+   * 之前这里写死了中文，英文界面下导出诊断包失败会弹出一句中文。
+   * （包内的 system-info.txt 仍是中文：那是给维护者看的静态信息，不在此列。）
+   */
+  language: Language
+}
+
+/** 按当前界面语言取一条文案。 */
+function m(deps: DiagnosticsDeps, key: MsgKey, params: Record<string, string | number> = {}): string {
+  return msg(deps.language, key, params)
 }
 
 /** 生成人类可读的系统信息文本。 */
@@ -138,7 +153,7 @@ export async function createDiagnosticsZip(destination: string, deps: Diagnostic
     // 3) 打包：staging 里是平铺的文件，-j 直接归档到 zip 根
     const zipPath = await resolveExecutable(ZIP_PATH)
     if (zipPath === null) {
-      throw new Error('系统里没有找到 /usr/bin/zip，无法打包诊断信息。')
+      throw new Error(m(deps, 'ipc.diagnosticsZipMissing'))
     }
     const staged = await readdir(staging)
     // 注意：macOS 自带的 BSD zip 不支持 `--` 结束选项符，目标路径用绝对路径传入
@@ -147,10 +162,15 @@ export async function createDiagnosticsZip(destination: string, deps: Diagnostic
       cwd: staging
     })
     if (result.spawnError !== null) {
-      throw new Error(`无法启动 zip（${result.spawnError}）`)
+      throw new Error(m(deps, 'ipc.diagnosticsZipSpawn', { reason: result.spawnError }))
     }
     if (result.timedOut || result.code !== 0) {
-      throw new Error(`打包失败（zip 退出码 ${result.code}）：${result.stderr.trim() || '无输出'}`)
+      throw new Error(
+        m(deps, 'ipc.diagnosticsZipFailed', {
+          code: result.code ?? 0,
+          reason: result.stderr.trim() || '（无输出）'
+        })
+      )
     }
 
     logger.info('diagnostics', `已导出诊断包：${destination}（含 ${logs.length} 个日志文件）`)

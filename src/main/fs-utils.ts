@@ -17,7 +17,7 @@ import {
   statfs,
   unlink
 } from 'node:fs/promises'
-import { basename, dirname, join, posix, sep } from 'node:path'
+import { basename, dirname, join, posix, relative, sep } from 'node:path'
 
 /* ------------------------------------------------------------------ *
  * 路径规范化与安全
@@ -34,6 +34,26 @@ import { basename, dirname, join, posix, sep } from 'node:path'
 export function toPosix(path: string): string {
   if (sep === '/') return path
   return path.split(sep).join(posix.sep)
+}
+
+/**
+ * 去掉路径末尾多余的分隔符。
+ *
+ * 为什么必须做：`/Volumes/CARD/` 与 `/Volumes/CARD` 指的是同一个目录，
+ * 但**字符串长度差 1**。所有"用 root 的长度去切相对路径"的写法
+ * （曾经的 `absPath.slice(root.length + 1)`）在带尾斜杠时会多切一个字符，
+ * 把每条相对路径的首字母吃掉 —— 扫描阶段看不出问题，一开跑
+ * 每个文件都拼不出真实路径、全部报"读取源文件失败"。
+ *
+ * 入口是界面上的路径输入框，用户从访达「拷贝路径」或终端粘贴时
+ * 极容易带上尾斜杠，所以这里必须兜住，而不是指望用户不犯错。
+ *
+ * 根目录 `/` 是特例：不能削成空串（那样就变成相对路径了）。
+ */
+export function stripTrailingSeparators(path: string): string {
+  let end = path.length
+  while (end > 1 && (path[end - 1] === '/' || path[end - 1] === sep)) end--
+  return path.slice(0, end)
 }
 
 /**
@@ -65,9 +85,10 @@ export function normalizeRelPath(relPath: string): string {
 /** 把规范化后的相对路径还原成绝对路径，并再次确认没有逃逸。 */
 export function resolveInside(root: string, relPath: string): string {
   const normalized = normalizeRelPath(relPath)
-  const absolute = join(root, normalized)
-  const rootWithSep = root.endsWith(sep) ? root : root + sep
-  if (absolute !== root && !absolute.startsWith(rootWithSep)) {
+  const base = stripTrailingSeparators(root)
+  const absolute = join(base, normalized)
+  const rootWithSep = base.endsWith(sep) ? base : base + sep
+  if (absolute !== base && !absolute.startsWith(rootWithSep)) {
     throw new Error(`路径逃逸检测：${absolute} 不在 ${root} 之内`)
   }
   return absolute
@@ -117,10 +138,12 @@ function isSkippable(name: string, isDirectory: boolean): boolean {
  */
 export async function walkFiles(root: string, options: WalkOptions = {}): Promise<WalkResult> {
   const { skipSystemFiles = true, maxFiles = 200_000, signal } = options
+  // 先削掉尾斜杠：否则下面算 relPath 时会把每条路径的首字母切掉（见 stripTrailingSeparators）
+  const base = stripTrailingSeparators(root)
   const files: WalkedFile[] = []
   const warnings: string[] = []
   let totalBytes = 0
-  const queue: string[] = [root]
+  const queue: string[] = [base]
   let truncated = false
 
   while (queue.length > 0) {
@@ -142,7 +165,9 @@ export async function walkFiles(root: string, options: WalkOptions = {}): Promis
       }
 
       const absPath = join(current, entry.name)
-      const relPath = toPosix(absPath.slice(root.length + 1))
+      // 用 relative() 而不是"按 root 的长度切字符串"：后者对尾斜杠、
+      // 重复分隔符这类输入太脆弱，一个字符之差就会静默毁掉全部相对路径。
+      const relPath = toPosix(relative(base, absPath))
 
       if (entry.isSymbolicLink()) {
         // 不跟随链接：DIT 现场常见软链指回源盘，跟进去会造成重复拷贝

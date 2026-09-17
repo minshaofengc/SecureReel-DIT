@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { CopyJob, CopyJobFile, ProjectInfo, TargetProgress } from '@shared/types'
-import { HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH } from '@shared/types'
+import { HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH, isJobLive } from '@shared/types'
 import { describeLenses } from '@shared/project'
 import { humanBytes, humanDuration, humanRate, percent } from '@shared/format'
 import { frameUrl } from '@shared/frames'
@@ -227,6 +227,12 @@ export function QueueView({
 
   const generateReport = useCallback(async () => {
     if (selected === null) return
+    // 运行中不许生成报告：会让引擎重做已经处理过的文件（详见
+    // JobManager.generateReports 的说明）。按钮也会禁用，这里再挡一道。
+    if (isJobLive(selected.state)) {
+      pushToast('warn', t('reports.runningBlocked'))
+      return
+    }
     setBusy(true)
     try {
       await unwrap(window.securereel.reports.regenerate(selected.id))
@@ -389,12 +395,18 @@ export function QueueView({
                       {t('queue.resume')}
                     </button>
                   )}
-                  {(selected.state === 'running' || selected.state === 'queued' || selected.state === 'paused') && (
+                  {isJobLive(selected.state) && (
                     <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => void act('cancel')}>
                       {t('queue.cancel')}
                     </button>
                   )}
-                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void generateReport()}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={busy || isJobLive(selected.state)}
+                    title={isJobLive(selected.state) ? t('reports.runningBlocked') : undefined}
+                    onClick={() => void generateReport()}
+                  >
                     {t('queue.regenReport')}
                   </button>
                   <button type="button" className="btn btn-sm btn-ghost" onClick={onReports}>

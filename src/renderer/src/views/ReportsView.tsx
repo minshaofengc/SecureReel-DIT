@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { CopyJob, ReportRevision } from '@shared/types'
+import { isJobLive } from '@shared/types'
 import { humanBytes, humanDuration } from '@shared/format'
 import { Card, Empty, Note } from '../components/ui'
 import { SelectBox, type ComboGroup, type ComboOption } from '../components/ComboBox'
@@ -65,6 +66,20 @@ export function ReportsView(): ReactNode {
     [jobId, reports]
   )
 
+  /**
+   * 选中的任务是否还在跑。
+   *
+   * 运行中不许生成报告 —— 报告要通读全部文件行，而任务结束后 JobManager
+   * 自己还会再出一份修订；更重要的是这曾经会让引擎重做已经处理过的文件
+   * （见 JobManager.generateReports 里的说明）。这里先把按钮禁掉，
+   * 让用户一眼看出"现在不行"，而不是点了才弹错误。
+   */
+  const selectedJob = useMemo(
+    () => (jobId === null ? null : (jobs.find((job) => job.id === jobId) ?? null)),
+    [jobId, jobs]
+  )
+  const blocked = selectedJob !== null && isJobLive(selectedJob.state)
+
   const open = useCallback(
     async (path: string | undefined) => {
       if (path === undefined) return
@@ -90,6 +105,10 @@ export function ReportsView(): ReactNode {
 
   const regenerate = useCallback(async () => {
     if (jobId === null) return
+    if (blocked) {
+      pushToast('warn', t('reports.runningBlocked'))
+      return
+    }
     setBusy(true)
     try {
       await unwrap(window.securereel.reports.regenerate(jobId))
@@ -100,7 +119,7 @@ export function ReportsView(): ReactNode {
     } finally {
       setBusy(false)
     }
-  }, [jobId, pushToast, refreshReports, t])
+  }, [blocked, jobId, pushToast, refreshReports, t])
 
   return (
     <div className="page">
@@ -123,7 +142,8 @@ export function ReportsView(): ReactNode {
             <button
               type="button"
               className="btn btn-sm"
-              disabled={busy || jobId === null}
+              disabled={busy || jobId === null || blocked}
+              title={blocked ? t('reports.runningBlocked') : undefined}
               onClick={() => void regenerate()}
             >
               {busy ? t('reports.regenerating') : t('reports.regenerate')}

@@ -515,7 +515,6 @@ export class CopyEngine {
           })
           work.nameConflict = true
           slot.conflictCount++
-          store.incrementTargetCounters(job.id, slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, slot.target.id, { error: work.fatalError })
           this.log(
             'warn',
@@ -563,7 +562,6 @@ export class CopyEngine {
         work.fatalError = this.m('engine.prepareWriteFail', { reason: describeError(error) })
         slot.failed = true
         slot.error = work.fatalError
-        store.incrementTargetCounters(job.id, slot.target.id, { filesFailed: 1 })
         store.updateTargetProgress(job.id, slot.target.id, {
           state: 'failed',
           error: work.fatalError
@@ -630,10 +628,14 @@ export class CopyEngine {
             work.writeOffset = from + length
             store.incrementTargetCounters(job.id, work.slot.target.id, { bytesCopied: length })
           } catch (error) {
-            work.fatalError = this.m('engine.writeFail', { reason: describeError(error) })
+            work.fatalError = this.m('engine.writeFail', {
+              reason:
+                error instanceof ZeroByteWriteError
+                  ? this.m('engine.writeZeroBytes')
+                  : describeError(error)
+            })
             work.slot.failed = true
             work.slot.error = work.fatalError
-            store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: work.fatalError })
             this.log(
               'error',
@@ -684,7 +686,6 @@ export class CopyEngine {
         work.fatalError = this.m('engine.finalizeFail', { reason: describeError(error) })
         work.slot.failed = true
         work.slot.error = work.fatalError
-        store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
         await this.closeHandle(work)
       }
     }
@@ -777,7 +778,6 @@ export class CopyEngine {
           // 后续文件照常比对；也绝不动目标上的原文件。
           if (this.verifyOnly) {
             const message = this.m('engine.verifyMismatch')
-            store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
             this.log(
               'error',
@@ -801,7 +801,6 @@ export class CopyEngine {
             const conflictError = this.m('engine.conflictSameSize', {
               prefix: NAME_CONFLICT_PREFIXES[this.deps.settings.language]
             })
-            store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
             store.updateTargetProgress(job.id, work.slot.target.id, { error: conflictError })
             this.log(
               'warn',
@@ -825,7 +824,6 @@ export class CopyEngine {
           await removeQuietly(work.partialPath)
           work.slot.failed = true
           work.slot.error = this.m('engine.verifyMismatchTargetError')
-          store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, work.slot.target.id, { error: work.slot.error })
           this.log(
             'error',
@@ -850,7 +848,8 @@ export class CopyEngine {
           await syncDirectory(dirname(work.finalPath))
         }
 
-        store.incrementTargetCounters(job.id, work.slot.target.id, { filesDone: 1 })
+        // 目标盘计数不在这里记 —— 统一由 settleFile / failFile 按最终结果记一次。
+        // 分散在各分支里记曾导致"某些失败路径忘了记"，报告的目标表与任务级数字对不上。
         return {
           targetId: work.slot.target.id,
           state: 'verified',
@@ -864,7 +863,6 @@ export class CopyEngine {
         // 其余文件照常比对。隔离是拷贝时的保护动作，复核时只会掩盖问题。
         if (this.verifyOnly) {
           const message = this.m('engine.verifyTargetReadFail', { reason: describeError(error) })
-          store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
           store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
           this.log(
             'error',
@@ -885,7 +883,6 @@ export class CopyEngine {
         }
         work.slot.failed = true
         work.slot.error = this.m('engine.verifyHashFail', { reason: describeError(error) })
-        store.incrementTargetCounters(job.id, work.slot.target.id, { filesFailed: 1 })
         store.updateTargetProgress(job.id, work.slot.target.id, { error: work.slot.error })
         return {
           targetId: work.slot.target.id,
@@ -918,10 +915,16 @@ export class CopyEngine {
     const fileRow = store.getFileRow(job.id, file.relPath)
     const fileId = fileRow === undefined ? 0 : Number(fileRow.id)
 
-    if (fileId > 0) {
-      for (const result of results) {
-        store.saveFileResult(fileId, job.id, result)
-      }
+    // ★ 目标盘计数在这里**唯一**记一次，按每个目标在这一文件上的最终结果累加。
+    //
+    // 曾经分散在 verifyWork / prepareWorks / streamAndFanOut 的各个失败分支里记，
+    // 结果是漏记了一整类失败 —— 「仅校验时目标上文件不存在 /尺寸不符 /读不动」
+    // 走的是 verifyWork 早退的 fatalError 分支，那里没有计数。
+    // 现象是报告里的「目标」表显示该目标失败 0 个，而任务级失败数不是 0，
+    // 同一份报告里两个数字自相矛盾。对仅校验任务（复核交付）尤其严重。
+    for (const result of results) {
+      if (fileId > 0) store.saveFileResult(fileId, job.id, result)
+      this.countTargetResult(result)
     }
 
     store.updateFile(job.id, file.relPath, {
@@ -951,6 +954,22 @@ export class CopyEngine {
 
     this.scheduleProbe(file.relPath, state, resolveInside(job.sourcePath, file.relPath))
     this.emitProgress()
+  }
+
+  /**
+   * 目标盘计数：每个（文件 × 目标）只记一次。
+   *
+   * 刻意做成一个方法而不是散在各分支里写 —— 散着写时"漏记某一类失败"
+   * 不会报错、不会崩，只会让报告里的数字对不上，极难发现。
+   */
+  private countTargetResult(result: FileTargetResult): void {
+    const { job, store } = this.deps
+    if (result.state === 'verified') {
+      store.incrementTargetCounters(job.id, result.targetId, { filesDone: 1 })
+    } else if (result.state === 'failed') {
+      store.incrementTargetCounters(job.id, result.targetId, { filesFailed: 1 })
+    }
+    // skipped（用户在界面上停用的目标）：既不算成功也不算失败，不参与计数
   }
 
   /**
@@ -1035,6 +1054,10 @@ export class CopyEngine {
         bytesCopied: work.bytesWritten,
         error: work.fatalError
       }))
+
+    // 目标盘失败计数与 settleFile 走同一规则（每个"文件 × 目标"只记一次）。
+    // 放在 fileRow 判空之外：计数是计数，与那一行有没有查到无关。
+    for (const result of failedResults) this.countTargetResult(result)
 
     if (fileRow !== undefined) {
       const fileId = Number(fileRow.id)
@@ -1170,14 +1193,28 @@ export class CopyEngine {
  * 辅助
  * ------------------------------------------------------------------ */
 
+/**
+ * 写入返回 0 字节。
+ *
+ * 单独做成一个错误类型、而不是在 `writeFully` 里就地拼一句中文：
+ * `writeFully` 是模块级函数，拿不到 CopyEngine 里那个按语言取文案的 `m()`。
+ * 而这句话是要给用户看的（"盘满了"和"线被拔了"处置完全不同），
+ * 所以由调用处翻译成当前语言 —— 之前它写死成中文，
+ * 于是 `engine.writeZeroBytes` 这个键配好了中英文却从来没人用。
+ */
+export class ZeroByteWriteError extends Error {
+  constructor() {
+    super('write returned 0 bytes')
+    this.name = 'ZeroByteWriteError'
+  }
+}
+
 /** 完整写出一片数据，处理短写。 */
 async function writeFully(handle: FileHandle, data: Buffer, position: number): Promise<void> {
   let written = 0
   while (written < data.length) {
     const result = await handle.write(data, written, data.length - written, position + written)
-    if (result.bytesWritten <= 0) {
-      throw new Error('写入返回 0 字节 —— 目标盘可能已满或被拔出')
-    }
+    if (result.bytesWritten <= 0) throw new ZeroByteWriteError()
     written += result.bytesWritten
   }
 }

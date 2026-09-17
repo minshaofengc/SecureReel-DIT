@@ -48,11 +48,20 @@ export interface WriteRevisionInput {
   writeManifestToTargets: boolean
   /** 在 HTML 里展开多少条文件明细 */
   htmlFileRowLimit?: number
+  /**
+   * 渲染报告**之前**就已经确定的附注，会写进报告的「执行说明」一节。
+   *
+   * 为什么要走参数而不是让调用方拿返回值往里补：报告是先渲染再落盘的，
+   * 渲染之后再怎么 push 都进不去 —— 曾经调用方拿到一个 `extraNotes` 数组、
+   * push 了四条说明（未正常结束 / 仅校验模式 / PDF 缺图 / 内联跳过），
+   * 然后整个数组被丢弃，「执行说明」一节基本是空的。
+   * 附注必须在渲染前交进来，这条路才走得通。
+   */
+  preNotes?: string[]
 }
 
 export interface WriteRevisionResult {
   revision: ReportRevision
-  extraNotes: string[]
 }
 
 export class ReportStore {
@@ -90,13 +99,26 @@ export class ReportStore {
       throw new Error(`修订目录 ${dir} 已存在。为避免覆盖历史报告，本次写入已中止。`)
     }
 
-    store.resetInFlightFiles(job.id)
+    /*
+     * 这里**刻意不**再调用 `store.resetInFlightFiles(job.id)`。
+     *
+     * 写报告不该改动文件状态。而 resetInFlightFiles 会把 copying / verifying
+     * 的行改回 pending —— 如果任务正在跑，引擎下一批 listPendingFiles 就会
+     * 把同一批文件再处理一遍：重复拷贝、filesDone 翻倍，两个线程同时提交
+     * 同一个分片时还会让健康盘被误判隔离。
+     *
+     * 归零残留状态是任务**开始**时的动作，已经在 copy-engine.run() 里做了。
+     * 调用方的契约：写报告前必须确认该任务没有在运行
+     * （由 JobManager.generateReports 把守）。
+     */
 
     await ensureDir(dir)
     await ensureDir(join(dir, 'frames'))
     await ensureDir(join(dir, 'manifest'))
 
-    const notes: string[] = []
+    // 调用方在渲染前交进来的附注（未正常结束 / 仅校验模式）排在最前面 ——
+    // 「这份报告是什么」比后面那些执行细节更该被先看到。
+    const notes: string[] = [...(input.preNotes ?? [])]
     const targetProgress = store.listTargetProgress(job.id)
     const summary = this.buildSummary(job, project, revision, targetProgress, input)
 
@@ -158,6 +180,12 @@ export class ReportStore {
       }
     }
 
+    // 这一条必须在渲染之前记上 —— 它曾经写在 renderHtmlReport() 之后，
+    // 结果 HTML 和 report.json 里都看不到，等于白算。
+    if (copiedFrames > 0) {
+      notes.push(`已归档 ${copiedFrames} 张首尾帧缩略图（frames/ 目录）。`)
+    }
+
     // 3) report.json —— 完整逐文件记录
     const jsonPath = join(dir, 'report.json')
     await this.writeJsonReport(jsonPath, job, project, summary, store, manifestResult, notes)
@@ -180,10 +208,6 @@ export class ReportStore {
     })
     await writeFile(htmlPath, html, 'utf8')
 
-    if (copiedFrames > 0) {
-      notes.push(`已归档 ${copiedFrames} 张首尾帧缩略图（frames/ 目录）。`)
-    }
-
     // 5) 落库
     const row: ReportRevision = {
       id: 0,
@@ -201,7 +225,7 @@ export class ReportStore {
       `已生成报告修订 ${revision}：${humanBytes(summary.totalBytes)} / ${summary.totalFiles} 个文件`
     )
 
-    return { revision: { ...row, files: { ...row.files } }, extraNotes: notes }
+    return { revision: { ...row, files: { ...row.files } } }
   }
 
   /** PDF 生成完之后回填路径。 */

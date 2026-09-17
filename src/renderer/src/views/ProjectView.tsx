@@ -120,7 +120,7 @@ export function ProjectView(): ReactNode {
   const remove = useCallback(async () => {
     if (selected === null) return
     const affected = jobs.filter((job) => job.parentProjectId === selected.id).length
-    const warning = t('parent.removeWarning').replace('%N%', String(affected))
+    const warning = t('parent.removeWarning', { count: affected })
     if (!window.confirm(`${t('parent.removeConfirm')}\n\n${warning}`)) return
     try {
       await unwrap(window.securereel.parents.remove(selected.id))

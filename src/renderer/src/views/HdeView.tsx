@@ -1,18 +1,34 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { HdeCameraModel, HdeCapabilityDecision, HdeToolStatus } from '@shared/types'
 import { Card, Note, PathPicker } from '../components/ui'
 import { SelectBox } from '../components/ComboBox'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
-const MODELS: { value: HdeCameraModel | 'auto'; label: string }[] = [
-  { value: 'auto', label: '自动识别' },
-  { value: 'alexa-mini', label: 'ALEXA Mini' },
-  { value: 'alexa-mini-lf', label: 'ALEXA Mini LF' },
-  { value: 'alexa-35', label: 'ALEXA 35' },
-  { value: 'alexa-35-xtreme', label: 'ALEXA 35 Xtreme' },
-  { value: 'alexa-265', label: 'ALEXA 265' }
+/**
+ * 机型下拉的取值顺序。
+ *
+ * 机型名是产品名（ALEXA Mini / ALEXA 35…），任何语言下都保持原样；
+ * 只有「自动识别」需要跟随界面语言，所以它单独走 i18n。
+ * 这里曾经把「自动识别」也写死在常量里 —— 英文界面下会冒出一句中文。
+ */
+const MODEL_VALUES: (HdeCameraModel | 'auto')[] = [
+  'auto',
+  'alexa-mini',
+  'alexa-mini-lf',
+  'alexa-35',
+  'alexa-35-xtreme',
+  'alexa-265'
 ]
+
+/** 机型显示名（`auto` 除外，它取自 `t('hde.modelAuto')`）。 */
+const MODEL_NAMES: Partial<Record<HdeCameraModel | 'auto', string>> = {
+  'alexa-mini': 'ALEXA Mini',
+  'alexa-mini-lf': 'ALEXA Mini LF',
+  'alexa-35': 'ALEXA 35',
+  'alexa-35-xtreme': 'ALEXA 35 Xtreme',
+  'alexa-265': 'ALEXA 265'
+}
 
 export function HdeView(): ReactNode {
   const { t } = useI18n()
@@ -22,6 +38,15 @@ export function HdeView(): ReactNode {
   const [model, setModel] = useState<HdeCameraModel | 'auto'>('auto')
   const [decision, setDecision] = useState<HdeCapabilityDecision | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const modelOptions = useMemo(
+    () =>
+      MODEL_VALUES.map((value) => ({
+        value,
+        label: value === 'auto' ? t('hde.modelAuto') : (MODEL_NAMES[value] ?? value)
+      })),
+    [t]
+  )
 
   const refresh = useCallback(async () => {
     setBusy(true)
@@ -152,7 +177,7 @@ export function HdeView(): ReactNode {
           <SelectBox<HdeCameraModel | 'auto'>
             value={model}
             ariaLabel={t('hde.model')}
-            options={MODELS}
+            options={modelOptions}
             onChange={setModel}
           />
         </div>
@@ -170,8 +195,10 @@ export function HdeView(): ReactNode {
             <div className="row-actions" style={{ marginTop: 8 }}>
               <span className="badge">{decision.model}</span>
               {decision.useVfs && <span className="badge info">VFS</span>}
-              {decision.requiresTranscoder && <span className="badge warn">官方转码器</span>}
-              {decision.degraded && <span className="badge danger">{t('common.unknown')}</span>}
+              {decision.requiresTranscoder && (
+                <span className="badge warn">{t('hde.needsTranscoder')}</span>
+              )}
+              {decision.degraded && <span className="badge danger">{t('hde.degraded')}</span>}
             </div>
           </div>
         )}

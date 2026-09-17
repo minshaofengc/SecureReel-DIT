@@ -67,11 +67,11 @@ export function HelpView(): ReactNode {
           <dd>{appInfo?.chrome ?? '—'}</dd>
           <dt>Node</dt>
           <dd>{appInfo?.node ?? '—'}</dd>
-          <dt>平台</dt>
+          <dt>{t('help.platform')}</dt>
           <dd>
             {appInfo?.platform ?? '—'} / {appInfo?.arch ?? '—'}
           </dd>
-          <dt>许可</dt>
+          <dt>{t('help.license')}</dt>
           <dd>GPL-3.0-only</dd>
         </dl>
       </Card>

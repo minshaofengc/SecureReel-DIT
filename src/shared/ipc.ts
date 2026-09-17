@@ -86,8 +86,13 @@ export interface AppInfo {
   userDataDir: string
   logsDir: string
   reportsDir: string
-  /** 启动时若把不兼容的旧数据库挪走留档，这里放说明文字，供界面提示 */
-  databaseNotice: string | null
+  /**
+   * 启动时若把不兼容的旧数据库挪走留档，这里给出**结构化**的事实供界面组织提示。
+   *
+   * 刻意不返回"已经拼好的一句话"：界面是中英双语的，主进程拼中文的话
+   * 英文界面下就会冒出一整段中文。文案归界面，主进程只负责给事实。
+   */
+  databaseQuarantine: { backupPath: string | null } | null
 }
 
 export interface CreateJobRequest {

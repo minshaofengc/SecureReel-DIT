@@ -96,6 +96,15 @@ export type MsgKey =
   | 'job.pdfMissingFrames'
   | 'job.inlineSkippedNote'
   | 'job.reportGenFail'
+  | 'job.reportWhileRunning'
+  // ---- IPC 处理器层（这些文案会以 { ok:false, error } 原样送到界面） ----
+  | 'ipc.pathNotVolume'
+  | 'ipc.invalidTargetPath'
+  | 'ipc.jobRunningCannotDelete'
+  | 'ipc.parentMissing'
+  | 'ipc.diagnosticsZipMissing'
+  | 'ipc.diagnosticsZipSpawn'
+  | 'ipc.diagnosticsZipFailed'
 
 const MESSAGES: Record<MsgKey, Record<Language, string>> = {
   /* ---------------- 任务生命周期 ---------------- */
@@ -402,7 +411,57 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
   'job.reportGenFail': {
     'zh-CN': '报告生成失败：{reason}',
     en: 'Report generation failed: {reason}'
+  },
+  'job.reportWhileRunning': {
+    'zh-CN': '任务正在运行，现在生成报告会让它在拷贝中途重做已处理过的文件。请等任务完成或先取消。',
+    en: 'The job is running. Generating a report now would make it redo files it has already processed. Wait for it to finish, or cancel it first.'
+  },
+  'ipc.pathNotVolume': {
+    'zh-CN': '无法识别该路径所属的卷。',
+    en: 'Could not determine the volume this path belongs to.'
+  },
+  'ipc.invalidTargetPath': {
+    'zh-CN': '目标路径不合法。',
+    en: 'The target path is not valid.'
+  },
+  'ipc.jobRunningCannotDelete': {
+    'zh-CN': '任务正在运行，请先取消再删除。',
+    en: 'The job is running. Cancel it before deleting.'
+  },
+  'ipc.parentMissing': {
+    'zh-CN': '母项目不存在。',
+    en: 'Parent project not found.'
+  },
+  'ipc.diagnosticsZipMissing': {
+    'zh-CN': '系统里没有找到打包工具 /usr/bin/zip，无法生成诊断包。',
+    en: 'The packaging tool /usr/bin/zip was not found, so the diagnostics bundle could not be created.'
+  },
+  'ipc.diagnosticsZipSpawn': {
+    'zh-CN': '无法启动 zip：{reason}',
+    en: 'Could not start zip: {reason}'
+  },
+  'ipc.diagnosticsZipFailed': {
+    'zh-CN': '打包失败（zip 退出码 {code}）：{reason}',
+    en: 'Packaging failed (zip exited with {code}): {reason}'
   }
+}
+
+/**
+ * 占位符替换：`{name}` → 值。
+ *
+ * 放在共享层是因为**两个地方都要用**：主进程的 `msg()` 与渲染层的 `t()`。
+ * 各写一份的话，两边的占位符写法迟早会漂（这个项目里真的漂过 ——
+ * 渲染层曾经用 `%N%`，主进程用 `{name}`）。
+ *
+ * 没有对应参数的占位符**原样保留**：界面上出现一个 `{count}` 很扎眼，
+ * 一眼就能看出漏传参数，比悄悄渲染成空串好。
+ */
+export function fillTemplate(text: string, params: Record<string, string | number> = {}): string {
+  let result = text
+  for (const [name, value] of Object.entries(params)) {
+    result = result.replaceAll(`{${name}}`, String(value))
+  }
+  return result
 }
 
 /**
@@ -412,9 +471,5 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
 export function msg(lang: Language, key: MsgKey, params: Record<string, string | number> = {}): string {
   const entry = MESSAGES[key]
   if (entry === undefined) throw new Error(`未知消息键：${key}`)
-  let text = entry[lang]
-  for (const [name, value] of Object.entries(params)) {
-    text = text.replaceAll(`{${name}}`, String(value))
-  }
-  return text
+  return fillTemplate(entry[lang], params)
 }

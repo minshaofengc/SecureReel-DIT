@@ -8,7 +8,7 @@
  */
 import { basename } from 'node:path'
 import type { DriveUsage, ScanResult, SourceDrive, VolumeKind } from '@shared/types'
-import { describeVolume, volumeUsage, walkFiles } from '@main/fs-utils'
+import { describeVolume, stripTrailingSeparators, volumeUsage, walkFiles } from '@main/fs-utils'
 
 /** 出现这些扩展名，就认为卷上带 HDE 特征。 */
 const HDE_EXTENSIONS = new Set(['arx'])
@@ -58,7 +58,9 @@ export interface ScanOptions {
 
 export async function scanSource(path: string, options: ScanOptions = {}): Promise<ScanResult> {
   const { previewLimit = 200, signal } = options
-  const walk = await walkFiles(path, { signal })
+  // 尾斜杠会让同一个目录产生两种写法，进而让 relPath / 卷名判定出现分歧 —— 统一在这里归口
+  const root = stripTrailingSeparators(path)
+  const walk = await walkFiles(root, { signal })
 
   const extensionTally = new Map<string, { count: number; bytes: number }>()
   for (const file of walk.files) {
@@ -71,8 +73,8 @@ export async function scanSource(path: string, options: ScanOptions = {}): Promi
     extensionTally.set(ext, entry)
   }
 
-  const kind = classify(path, new Map([...extensionTally.keys()].map((ext) => [ext, 1])))
-  const description = await describeVolume(path)
+  const kind = classify(root, new Map([...extensionTally.keys()].map((ext) => [ext, 1])))
+  const description = await describeVolume(root)
 
   const preview = [...walk.files]
     .sort((a, b) => b.sizeBytes - a.sizeBytes)
@@ -80,7 +82,7 @@ export async function scanSource(path: string, options: ScanOptions = {}): Promi
     .map((file) => ({ relPath: file.relPath, sizeBytes: file.sizeBytes }))
 
   return {
-    root: path,
+    root,
     kind,
     isCodExVfs: kind === 'hde-vfs',
     fileCount: walk.files.length,

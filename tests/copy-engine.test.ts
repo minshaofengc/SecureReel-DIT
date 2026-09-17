@@ -156,6 +156,35 @@ describe('基本拷贝与校验', () => {
     }
   })
 
+  it('源路径带尾斜杠时照样完整拷贝并校验通过', async () => {
+    // 界面上的路径是可手输的，从访达粘贴常带尾斜杠。
+    // 曾经的 relPath 计算会因此吃掉每条路径的首字母，
+    // 结果是扫描阶段一切正常、一开跑每个文件都报"读取源文件失败"。
+    const source = await makeSource({
+      'DCIM/100/A001.MP4': Buffer.from('clip one'),
+      'Sidecar.txt': Buffer.from('sidecar')
+    })
+    const targets = await makeTargets(2)
+    const job = await seedJob(`${source}/`, targets)
+
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed')
+    const done = store.getJob(job.id)
+    expect(done?.totalFiles).toBe(2)
+    expect(done?.filesDone).toBe(2)
+    expect(done?.filesFailed).toBe(0)
+
+    // 相对路径的首字母必须还在
+    expect(store.listFiles(job.id, 10, 0).map((file) => file.relPath).sort()).toEqual([
+      'DCIM/100/A001.MP4',
+      'Sidecar.txt'
+    ])
+    for (const target of targets) {
+      expect(await readFile(join(target, 'DCIM/100/A001.MP4'), 'utf8')).toBe('clip one')
+    }
+  })
+
   it('各目标的校验值等于源侧值', async () => {
     const source = await makeSource({ 'clip.mov': Buffer.from('payload for hashing') })
     const targets = await makeTargets(3)
@@ -213,6 +242,65 @@ describe('基本拷贝与校验', () => {
       expect((await stat(join(target, 'big.bin'))).size).toBe(big.length)
     }
   }, 60_000)
+
+  /**
+   * 认不出格式的厂商 RAW 素材 —— 必须照样完整拷贝并校验。
+   *
+   * 这是本工具**最根本的一条承诺**：它搬的是字节，不是"它看得懂的视频"。
+   * 格式识别（media/formats.ts）只影响报告上标注什么名字、要不要提缩略图，
+   * 绝不能影响一个字节的落盘与校验 —— 否则"认不出的素材"就等于"不敢用"，工具就废了。
+   *
+   * 这条用例用佳能 Cinema RAW Light 的 `.CRM` 做样本（EOS R5 C 的 RAW LT / ST
+   * 就是这种文件）：MOV 系容器（major_brand = 'crx'），画面是厂商标识 CRAW，
+   * ffmpeg 没有对应解码器，本软件也认不出这个格式族。
+   * 它同时是 .R3D / .braw / .ari 这些私有 RAW 的代表 —— 同样是"认不出也必须照搬"。
+   */
+  it('认不出格式的厂商 RAW 素材（Canon Cinema RAW Light 的 .CRM）照样完整拷贝并校验', async () => {
+    // 真实的 .CRM 以 ftyp box 开头，major_brand = 'crx'
+    const crmFixture = (payloadBytes: number): Buffer => {
+      const ftyp = Buffer.alloc(24)
+      ftyp.writeUInt32BE(24, 0)
+      ftyp.write('ftyp', 4, 'latin1')
+      ftyp.write('crx ', 8, 'latin1')
+      ftyp.writeUInt32BE(1, 12)
+      ftyp.write('crx ', 16, 'latin1')
+      ftyp.write('isom', 20, 'latin1')
+      const payload = Buffer.alloc(payloadBytes)
+      for (let i = 0; i < payload.length; i += 97) payload[i] = (i * 13) % 256
+      return Buffer.concat([ftyp, payload])
+    }
+
+    const lt = crmFixture(520 * 1024)
+    const st = crmFixture(130 * 1024)
+    const relLt = 'CONTENTS/CLIPS001/A001C001_260917AB_CANON.CRM'
+    const relSt = 'CONTENTS/CLIPS001/A001C002_260917AB_CANON.CRM'
+    const source = await makeSource({ [relLt]: lt, [relSt]: st })
+    const targets = await makeTargets(2)
+    const job = await seedJob(source, targets)
+
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed')
+    const done = store.getJob(job.id)
+    // 一条都不能少、一条都不能失败 —— "认不出"不是跳过它的理由
+    expect(done?.filesDone).toBe(2)
+    expect(done?.filesFailed).toBe(0)
+
+    const expectedHash = await hashFileAt(join(source, relLt), 'xxhash64')
+    for (const target of targets) {
+      // 逐字节一致，连文件头的 ftyp 都要原样搬过去
+      expect(await readFile(join(target, relLt))).toEqual(lt)
+      expect(await readFile(join(target, relSt))).toEqual(st)
+      // 目标侧独立重读算哈希，与源侧一致
+      expect(await hashFileAt(join(target, relLt), 'xxhash64')).toBe(expectedHash)
+      expect(await listPartials(target)).toEqual([])
+    }
+
+    for (const file of store.listFiles(job.id, 10, 0)) {
+      expect(file.state).toBe('verified')
+      expect(file.results.every((item) => item.hashMatch === true)).toBe(true)
+    }
+  })
 })
 
 describe('断点续传', () => {
@@ -488,6 +576,144 @@ describe('仅校验模式', () => {
     const rows = store.listFiles(job.id, 10, 0)
     expect(rows[0]?.state).toBe('failed')
     expect(rows[0]?.error).toContain('不存在')
+  })
+})
+
+describe('目标级计数与报告一致', () => {
+  /*
+   * 报告里有两组数字：任务级的「失败 N 个」与每个目标各自的失败数。
+   * 它们必须自洽 —— 曾经目标级计数分散在十几个失败分支里记，
+   * 结果漏掉了一整类（仅校验时"目标上文件不存在 / 尺寸不符 / 读不动"），
+   * 表现为报告的目标表显示失败 0、任务级却大于 0。
+   * 现在计数统一在文件结清时按最终结果记一次，这组测试就是钉住这件事。
+   */
+
+  it('仅校验时目标上缺文件，该目标的失败数必须被记上（曾经是 0）', async () => {
+    /*
+     * 关键：必须有**至少一个可用目标**，否则整个文件会走 failFile，
+     * 而漏记的恰恰是 settleFile 这条路径 —— 目标上缺文件的失败结果
+     * 是从 verifyWork 的 fatalError 早退分支返回的。
+     */
+    const source = await makeSource({
+      'a.mov': Buffer.from('aaa'),
+      'b.mov': Buffer.from('bbb')
+    })
+    const targets = await makeTargets(2)
+    const [complete, incomplete] = targets as [string, string]
+    await writeFile(join(complete, 'a.mov'), Buffer.from('aaa'))
+    await writeFile(join(complete, 'b.mov'), Buffer.from('bbb'))
+    await writeFile(join(incomplete, 'a.mov'), Buffer.from('aaa'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed-with-errors')
+
+    const progress = store.listTargetProgress(job.id)
+    const full = progress.find((item) => item.targetId === 'tgt_1')
+    const partial = progress.find((item) => item.targetId === 'tgt_2')
+    expect(full?.filesDone).toBe(2)
+    expect(full?.filesFailed).toBe(0)
+    expect(partial?.filesDone).toBe(1)
+    expect(partial?.filesFailed).toBe(1)
+  })
+
+  it('仅校验时目标上文件尺寸不符，同样要记进该目标的失败数', async () => {
+    const source = await makeSource({
+      'a.mov': Buffer.from('the real payload')
+    })
+    const targets = await makeTargets(2)
+    const [complete, wrong] = targets as [string, string]
+    await writeFile(join(complete, 'a.mov'), Buffer.from('the real payload'))
+    await writeFile(join(wrong, 'a.mov'), Buffer.from('short'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    await runEngine(job)
+
+    const progress = store.listTargetProgress(job.id)
+    const full = progress.find((item) => item.targetId === 'tgt_1')
+    const broken = progress.find((item) => item.targetId === 'tgt_2')
+    expect(full?.filesDone).toBe(1)
+    expect(broken?.filesDone).toBe(0)
+    expect(broken?.filesFailed).toBe(1)
+    // 仅校验绝不隔离盘：尺寸不符只记这一个文件，目标本身照常完成
+    expect(broken?.state).not.toBe('failed')
+  })
+
+  it('命名冲突只计一次失败 —— 既不能漏记也不能翻倍', async () => {
+    const source = await makeSource({ 'clip.mov': Buffer.from('the real payload') })
+    const targets = await makeTargets(1)
+    const target = targets[0] as string
+    await writeFile(join(target, 'clip.mov'), Buffer.from('an older file with a different size'))
+
+    const job = await seedJob(source, targets)
+    await runEngine(job)
+
+    const progress = store.listTargetProgress(job.id)
+    expect(progress[0]?.filesFailed).toBe(1)
+    expect(progress[0]?.filesDone).toBe(0)
+    // 冲突的本质是"绝不覆盖"：原文件必须原样还在
+    expect(await readFile(join(target, 'clip.mov'), 'utf8')).toBe(
+      'an older file with a different size'
+    )
+  })
+
+  it('所有目标都撞名时（走 failFile 路径）失败数依然只记一次', async () => {
+    // 这一条守的是"计数迁移"：全盘皆冲突时不会走 scheduleVerification，
+    // 而是直接进 failFile，计数点挪动后极易在这里丢掉。
+    const source = await makeSource({ 'clip.mov': Buffer.from('the real payload') })
+    const targets = await makeTargets(2)
+    for (const target of targets) {
+      await writeFile(join(target, 'clip.mov'), Buffer.from('older file, different size'))
+    }
+
+    const job = await seedJob(source, targets)
+    await runEngine(job)
+
+    const progress = store.listTargetProgress(job.id)
+    expect(progress.length).toBe(2)
+    for (const item of progress) {
+      expect(item.filesFailed).toBe(1)
+      expect(item.filesDone).toBe(0)
+    }
+  })
+
+  it('校验通过的目标会被记上 filesDone（计数迁移后不能丢）', async () => {
+    const source = await makeSource({
+      'a.mov': Buffer.from('aaa'),
+      'b.mov': Buffer.from('bbb')
+    })
+    const targets = await makeTargets(1)
+    const target = targets[0] as string
+    await writeFile(join(target, 'a.mov'), Buffer.from('aaa'))
+    await writeFile(join(target, 'b.mov'), Buffer.from('bbb'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify')
+    await runEngine(job)
+
+    const progress = store.listTargetProgress(job.id)
+    expect(progress[0]?.filesDone).toBe(2)
+    expect(progress[0]?.filesFailed).toBe(0)
+  })
+
+  it('用户在界面上停用的目标不参与计数（既不算成功也不算失败）', async () => {
+    const source = await makeSource({ 'x.txt': Buffer.from('payload') })
+    const targets = await makeTargets(2)
+    const job = await seedJob(source, targets)
+    const disabledJob = {
+      ...job,
+      targets: job.targets.map((target, index) => ({ ...target, enabled: index === 0 }))
+    }
+    store.deleteJob(job.id)
+    store.insertJob(disabledJob)
+    store.upsertFiles(job.id, [{ relPath: 'x.txt', sizeBytes: 7 }])
+
+    await runEngine(disabledJob)
+
+    const progress = store.listTargetProgress(job.id)
+    const disabled = progress.find((item) => item.targetId === 'tgt_2')
+    expect(disabled?.filesDone).toBe(0)
+    expect(disabled?.filesFailed).toBe(0)
   })
 })
 

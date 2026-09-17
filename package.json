@@ -1,7 +1,7 @@
 {
   "name": "securereel-dit",
   "productName": "SecureReel DIT",
-  "version": "1.2.0",
+  "version": "1.2.5",
   "description": "免费开源的摄影机素材拷贝与校验工具：多目标拷贝、xxHash64 复核、ASC MHL、不可变报告。",
   "license": "GPL-3.0-only",
   "author": {

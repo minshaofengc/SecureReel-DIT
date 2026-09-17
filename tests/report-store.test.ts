@@ -111,7 +111,7 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
 }
 
 /** 为已落库的任务写入一个新修订。 */
-async function writeRevision(job: CopyJob, writeToTargets = true) {
+async function writeRevision(job: CopyJob, writeToTargets = true, preNotes?: string[]) {
   const result = await reportStore.writeRevision({
     job,
     project: PROJECT,
@@ -122,9 +122,10 @@ async function writeRevision(job: CopyJob, writeToTargets = true) {
     toolName: 'SecureReel DIT',
     toolVersion: '1.0.0',
     now: NOW,
-    writeManifestToTargets: writeToTargets
+    writeManifestToTargets: writeToTargets,
+    ...(preNotes === undefined ? {} : { preNotes })
   })
-  return { job, revision: result.revision, extraNotes: result.extraNotes }
+  return { job, revision: result.revision }
 }
 
 /** 用一份自定义的项目信息生成一版报告（用于验证母项目 / 镜头 / 两层备注的渲染）。 */
@@ -258,6 +259,95 @@ describe('report.html 自包含性', () => {
     const after = await readFile(htmlPath, 'utf8')
     expect(after).toContain('data:image/jpeg;base64,')
     expect(after).not.toContain('src="frames/')
+  })
+
+  /**
+   * 拿不到静帧的素材，报告必须**说明原因**，不能静默留白。
+   *
+   * 真实场景：boss 用 EOS R5 C 拷了一条 Cinema RAW Light（.CRM），
+   * 报告里"首帧画面"整节消失、也没有一个字解释 —— 看起来像拷贝或工具出了问题，
+   * 于是来问"报告中没有静帧出来"。实测确认的真实原因：
+   *   · .CRM 是 MOV 系容器（major_brand='crx'，画面 fourcc=CRAW）
+   *   · 文件里**没有**内嵌预览图 —— 前 96 MiB 与尾部 16 MiB 里 0 个可解析的 JPEG
+   *   · ffmpeg 也没有 CRAW 解码器
+   * 所以这个格式"有参数、没有画面"。
+   *
+   * 这里覆盖的是**探测成功但没有画面**那条路（当前 CRM 的实际形态）：
+   * available 为 true、frameSource 为 none、说明写在 note 里。
+   */
+  it('探测成功但拿不到画面的格式（如佳能 CRM）会被单独说明，而不是整块消失', async () => {
+    const { job } = await seedJob()
+    const note =
+      'CRM（Canon Cinema RAW Light） 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。' +
+      ' 该格式也没有可用的内嵌预览图，因此本报告不含该素材的画面。'
+    store.updateFile(job.id, 'Clips/a.mov', {
+      probe: {
+        available: true,
+        reason: null,
+        capturedAt: '2026-09-17T00:56:13.000Z',
+        durationSeconds: 9.009,
+        timecode: '08:21:48:23',
+        codec: 'CRAW',
+        width: 4096,
+        height: 2160,
+        frameRate: '23.976 fps',
+        firstFrame: null,
+        lastFrame: null,
+        format: 'CRM（Canon Cinema RAW Light）',
+        formatFamily: 'canon-raw',
+        frameSource: 'none',
+        vendorTool: 'Canon Cinema RAW Development / DaVinci Resolve',
+        note
+      }
+    })
+
+    const { revision } = await writeRevision(job)
+    const html = await readFile(revision.files.html as string, 'utf8')
+
+    // 没有首帧时，以前是"整节不渲染"，现在必须有一节把原因讲清楚
+    expect(html).toContain('没有首帧画面的素材')
+    // 点名格式，而不是含糊地说"某些文件"
+    expect(html).toContain('CRM（Canon Cinema RAW Light）')
+    // 说明里要讲清"这个格式本来就解不出画面"
+    expect(html).toContain('没有可用的内嵌预览图')
+    // 最重要的一句：这件事跟拷贝/校验结果无关，别让人误以为素材有问题
+    expect(html).toContain('这与拷贝和校验结果无关')
+    // 参数照常出现 —— 这正是"有参数、没有画面"的意思
+    expect(html).toContain('08:21:48:23')
+    expect(html).toContain('4096×2160')
+    // 同一句说明只能说一次：它已经进了「没有首帧画面的素材」，
+    // 就不该再出现在「素材格式说明」里（项目一直在防这种重复刷屏）
+    expect(html.split(note).length - 1).toBe(1)
+  })
+
+  it('探测完全不可用的素材（老记录 / 未知扩展名）同样会被点名说明', async () => {
+    const { job } = await seedJob()
+    store.updateFile(job.id, 'Clips/a.mov', {
+      probe: {
+        available: false,
+        reason: '该文件类型不做媒体元数据探测，仅记录文件级哈希。',
+        capturedAt: null,
+        durationSeconds: null,
+        timecode: null,
+        codec: null,
+        width: null,
+        height: null,
+        frameRate: null,
+        firstFrame: null,
+        lastFrame: null,
+        format: '普通文件',
+        formatFamily: 'generic',
+        frameSource: 'none',
+        vendorTool: null,
+        note: null
+      }
+    })
+
+    const { revision } = await writeRevision(job)
+    const html = await readFile(revision.files.html as string, 'utf8')
+
+    expect(html).toContain('没有首帧画面的素材')
+    expect(html).toContain('这与拷贝和校验结果无关')
   })
 
   it('母项目、机型、镜头、两层备注都出现在报告里', async () => {

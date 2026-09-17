@@ -14,6 +14,7 @@ import type { AppInfo } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type { AppSettings, MainEvent, ProjectDetails, SourceDrive } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import { msg, type MsgKey } from '@shared/messages'
 import { APP_VERSION } from '@shared/version'
 import {
   absolutePathSchema,
@@ -93,6 +94,17 @@ function newParentProjectId(): string {
 export function registerIpcHandlers(services: Services): void {
   const { store, paths, reportStore, jobManager, probeRunner, hde, logger } = services
 
+  /*
+   * IPC 层的用户可见错误文案。
+   *
+   * 这里抛出的 Error 会被 `register()` 包成 `{ ok:false, error }` 原样送到界面。
+   * 曾经这一层写死了九处中文 —— 英文界面下点「删除运行中的任务」会弹出一句中文，
+   * 而"任务不存在。"还在 job-manager 里另有一份走消息表的实现。
+   * 引擎层早已统一走消息表，这一层不能是例外。
+   */
+  const m = (key: MsgKey, params: Record<string, string | number> = {}): string =>
+    msg(services.getSettings().language, key, params)
+
   /* ---------------- 应用信息 ---------------- */
 
   register<AppInfo>(IPC.appInfo, () => ({
@@ -107,7 +119,7 @@ export function registerIpcHandlers(services: Services): void {
     userDataDir: paths.userDataDir,
     logsDir: paths.logsDir,
     reportsDir: paths.reportsDir,
-    databaseNotice: describeDatabaseNotice(store)
+    databaseQuarantine: describeDatabaseQuarantine(store)
   }))
 
   /* ---------------- 设置 ---------------- */
@@ -186,7 +198,7 @@ export function registerIpcHandlers(services: Services): void {
   register(IPC.volumesEject, async (payload) => {
     const { path } = parseOrThrow<{ path: string }>(reportPathSchema, payload)
     const description = await describeVolume(path)
-    if (description === null) throw new Error('无法识别该路径所属的卷。')
+    if (description === null) throw new Error(m('ipc.pathNotVolume'))
     const result = await ejectVolume(description.mountPoint)
     if (!result.ok) throw new Error(result.message)
     return true
@@ -222,7 +234,7 @@ export function registerIpcHandlers(services: Services): void {
   register(IPC.jobGet, (payload) => {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(m('job.notFound'))
     return job
   })
 
@@ -257,7 +269,7 @@ export function registerIpcHandlers(services: Services): void {
   register(IPC.jobDelete, (payload) => {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
     if (jobManager.isRunning(jobId)) {
-      throw new Error('任务正在运行，请先取消再删除。')
+      throw new Error(m('ipc.jobRunningCannotDelete'))
     }
     store.deleteJob(jobId)
     return true
@@ -269,14 +281,14 @@ export function registerIpcHandlers(services: Services): void {
     const body = payload as { jobId?: unknown; path?: unknown }
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, { jobId: body?.jobId })
     const parsed = absolutePathSchema.safeParse(body?.path)
-    if (!parsed.success) throw new Error('目标路径不合法。')
+    if (!parsed.success) throw new Error(m('ipc.invalidTargetPath'))
     return jobManager.addTarget(jobId, parsed.data)
   })
 
   register(IPC.jobProgress, (payload) => {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(m('job.notFound'))
     return {
       jobId,
       state: job.state,
@@ -301,7 +313,7 @@ export function registerIpcHandlers(services: Services): void {
       payload
     )
     if (parentProjectId !== null && store.getParentProject(parentProjectId) === null) {
-      throw new Error('母项目不存在。')
+      throw new Error(m('ipc.parentMissing'))
     }
     store.updateJob(jobId, { parentProjectId })
 
@@ -314,7 +326,7 @@ export function registerIpcHandlers(services: Services): void {
     }
 
     const job = store.getJob(jobId)
-    if (job === null) throw new Error('任务不存在。')
+    if (job === null) throw new Error(m('job.notFound'))
     return job
   })
 
@@ -376,7 +388,7 @@ export function registerIpcHandlers(services: Services): void {
       ...(request.details === undefined ? {} : { details: request.details }),
       updatedAt: new Date().toISOString()
     })
-    if (updated === null) throw new Error('母项目不存在。')
+    if (updated === null) throw new Error(m('ipc.parentMissing'))
     return updated
   })
 
@@ -386,7 +398,7 @@ export function registerIpcHandlers(services: Services): void {
       payload
     )
     const project = store.getParentProject(parentProjectId)
-    if (project === null) throw new Error('母项目不存在。')
+    if (project === null) throw new Error(m('ipc.parentMissing'))
     const affected = store.countJobsByParent(parentProjectId)
     store.deleteParentProject(parentProjectId)
     logger.info(
@@ -466,7 +478,8 @@ export function registerIpcHandlers(services: Services): void {
       paths,
       logger,
       store,
-      probeRunner
+      probeRunner,
+      language: services.getSettings().language
     })
   })
 }
@@ -508,18 +521,17 @@ export function shortLabel(path: string): string {
 }
 
 /**
- * 把旧数据库被隔离这件事翻译成用户能看懂的一句话。
+ * 旧数据库被隔离这件事的**结构化**描述。
  *
- * 刻意**不**把"缺哪些列"这类细节塞进来 —— 那是给开发者看的，
- * 会写进结构化日志。界面上堆一大串列名只会把真正重要的两件事
- * （数据没丢、备份在哪）淹掉。
+ * 只给事实（备份到哪了 / 有没有备份成功），**不在这里拼句子** ——
+ * 界面是中英双语的，主进程拼一段中文会让英文界面下冒出一整段中文，
+ * 而且拼接点散落两处时很容易出现"同一句话说了两遍"。
+ * 文案一律归渲染层，主进程只负责给事实。
  */
-export function describeDatabaseNotice(store: Store): string | null {
+export function describeDatabaseQuarantine(
+  store: Store
+): { backupPath: string | null } | null {
   const record = store.quarantined
   if (record === null) return null
-  const backup =
-    record.backupPath === null
-      ? '旧库未能备份，已原地保留'
-      : `旧库已备份到 ${record.backupPath}`
-  return `检测到旧版本的任务数据库，结构与当前版本不兼容。${backup}，旧数据没有被删除。已重新建立新的任务库。`
+  return { backupPath: record.backupPath }
 }

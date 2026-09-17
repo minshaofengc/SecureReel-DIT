@@ -19,6 +19,7 @@ import {
   pathExists,
   removeQuietly,
   resolveInside,
+  stripTrailingSeparators,
   toPosix,
   volumeUsage,
   walkFiles,
@@ -147,6 +148,47 @@ describe('目录遍历', () => {
     const result = await walkFiles(root, { maxFiles: 3 })
     expect(result.files.length).toBe(3)
     expect(result.warnings.join('\n')).toMatch(/上限/)
+  })
+})
+
+/**
+ * 尾斜杠是一类真实的事故来源：界面上的路径是可手输的文本框，
+ * 从访达「拷贝路径」或终端粘贴时经常带一个尾斜杠。
+ * 曾经的实现用 `absPath.slice(root.length + 1)` 算相对路径，
+ * 带尾斜杠时会多切一个字符 —— 每条相对路径都丢掉首字母，
+ * 扫描阶段完全正常，一开跑每个文件都拼不出真实路径而失败。
+ */
+describe('路径尾斜杠', () => {
+  it('stripTrailingSeparators 削掉多余的尾斜杠，但保留根目录', () => {
+    expect(stripTrailingSeparators('/Volumes/CARD/')).toBe('/Volumes/CARD')
+    expect(stripTrailingSeparators('/Volumes/CARD///')).toBe('/Volumes/CARD')
+    expect(stripTrailingSeparators('/Volumes/CARD')).toBe('/Volumes/CARD')
+    expect(stripTrailingSeparators('/')).toBe('/')
+    expect(stripTrailingSeparators('///')).toBe('/')
+  })
+
+  it('带尾斜杠调用 walkFiles 得到的相对路径与不带时完全一致', async () => {
+    await mkdir(join(root, 'DCIM/100'), { recursive: true })
+    await writeFile(join(root, 'DCIM/100/A001.MP4'), 'aaaa')
+    await writeFile(join(root, 'Sidecar.txt'), 'bb')
+
+    const plain = await walkFiles(root)
+    const slashed = await walkFiles(`${root}/`)
+
+    expect(plain.files.map((file) => file.relPath).sort()).toEqual([
+      'DCIM/100/A001.MP4',
+      'Sidecar.txt'
+    ])
+    expect(slashed.files.map((file) => file.relPath).sort()).toEqual(
+      plain.files.map((file) => file.relPath).sort()
+    )
+    expect(slashed.totalBytes).toBe(plain.totalBytes)
+  })
+
+  it('resolveInside 对带尾斜杠的根给出同样的绝对路径', () => {
+    expect(resolveInside('/tmp/base/', 'a/b.mov')).toBe('/tmp/base/a/b.mov')
+    expect(resolveInside('/tmp/base', 'a/b.mov')).toBe('/tmp/base/a/b.mov')
+    expect(() => resolveInside('/tmp/base/', '../escape')).toThrow()
   })
 })
 
