@@ -527,6 +527,14 @@ select {
 
 /* ---------------- 主题选择 ---------------- */
 
+/*
+ * 主题选择：三个带名字的方框。
+ *
+ * 这里原本还有一个 30px 高的"配色预览条"（底色 / 主色 / 辅色 / 文字 四段色块），
+ * 已按需求去掉 —— 一是那几个色块本身显得杂，二是它并非必要：点一下主题是**立即生效**的，
+ * 当前界面马上跟着换，不需要先看小样再决定。
+ * 去掉之后卡片只剩一行文字，所以顺手把纵向排列和间距撤了、改成居中。
+ */
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
@@ -535,44 +543,32 @@ select {
 
 .theme-card {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  color: var(--text-muted);
   cursor: pointer;
-  text-align: left;
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .theme-card:hover {
   border-color: var(--accent);
+  color: var(--text);
 }
 
 .theme-card[aria-pressed='true'] {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.theme-swatch {
-  display: flex;
-  height: 30px;
-  border-radius: 4px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-
-.theme-swatch > span {
-  flex: 1;
-}
-
-.theme-swatch > span:first-child {
-  flex: 1.6;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .theme-name {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* ---------------- 按钮 ---------------- */

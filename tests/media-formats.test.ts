@@ -174,8 +174,9 @@ describe('扩展名兜底表', () => {
     for (const [file, tool] of [
       ['a.R3D', 'RED'],
       ['a.braw', 'Blackmagic'],
-      ['a.ari', 'ARRI'],
-      ['a.arx', 'CODEX']
+      ['a.ari', 'ARRIRAW'],
+      ['a.arx', 'CODEX'],
+      ['a.CRM', 'Canon']
     ] as const) {
       const result = fallbackByExtension(`/x/${file}`)
       expect(result.ffmpegCanDecode).toBe(false)
@@ -199,6 +200,7 @@ describe('能力查询', () => {
     expect(canDecodeWithFfmpeg('r3d')).toBe(false)
     expect(canDecodeWithFfmpeg('braw')).toBe(false)
     expect(canDecodeWithFfmpeg('arriraw')).toBe(false)
+    expect(canDecodeWithFfmpeg('canon-raw')).toBe(false)
     expect(canDecodeWithFfmpeg('hde')).toBe(false)
   })
 
@@ -211,5 +213,79 @@ describe('能力查询', () => {
     expect(usuallyHasEmbeddedPreview('r3d')).toBe(true)
     expect(usuallyHasEmbeddedPreview('braw')).toBe(true)
     expect(usuallyHasEmbeddedPreview('prores')).toBe(false)
+    // 佳能 CRM 的预览图结构未核实过，所以**不**声称有 —— 宁缺勿错
+    expect(usuallyHasEmbeddedPreview('canon-raw')).toBe(false)
+  })
+})
+
+/**
+ * 佳能 Cinema RAW Light（.CRM）—— 已登记命名，**也探测参数，但不解画面**。
+ *
+ * 边界要说清楚（实测自一条 1 GB 的 R5 C 素材）：
+ *   有：格式名、分辨率、时长、时码、拍摄时间（ffprobe 读容器，0.01 秒）
+ *   没有：画面 —— ffmpeg 无 CRAW 解码器，且文件里也没有内嵌预览图
+ *
+ * ⚠️ 两条容易踩的边界：
+ *   1. 不能只靠扩展名兜底认它。ffprobe 对 CRAW **连 codec_name 都不输出**，
+ *      靠扩展名拿到对答案是巧合；必须显式认 fourcc。
+ *   2. 认不出编码时，ffprobe 可能给 `none` / `unknown` —— 那不是格式名，
+ *      直接写进报告会变成「格式：none」，比留空更误导。
+ */
+describe('Canon Cinema RAW Light（.CRM）', () => {
+  it('兜底表认识 crm，给出可读格式名与官方工具', () => {
+    const format = fallbackByExtension('/x/CONTENTS/CLIPS001/A001C001.CRM')
+    expect(format.family).toBe('canon-raw')
+    expect(format.label).toContain('Cinema RAW Light')
+    expect(format.vendorTool).toContain('Canon')
+    // 没有解码器 —— 这一条决定了它永远不会有首帧
+    expect(format.ffmpegCanDecode).toBe(false)
+  })
+
+  it('大写扩展名同样识别（卡片里的文件名常常是全大写）', () => {
+    expect(fallbackByExtension('/x/A001C001.CRM').family).toBe('canon-raw')
+  })
+
+  it('靠画面轨 fourcc（CRAW）识别，不依赖 codec_name 恰好缺席', () => {
+    // 真实 CRM：容器是 MOV，画面轨 fourcc 是 CRAW，ffprobe 不给 codec_name
+    const missing = formatFromFfprobe(
+      undefined,
+      null,
+      '/x/A001C001.CRM',
+      'mov,mp4,m4a,3gp,3g2,mj2',
+      'CRAW'
+    )
+    expect(missing.family).toBe('canon-raw')
+    // 就算某个 ffmpeg 版本把它写成 "none"，也必须认对
+    const named = formatFromFfprobe('none', null, '/x/A001C001.CRM', 'mov,mp4,m4a,3gp,3g2,mj2', 'CRAW')
+    expect(named.family).toBe('canon-raw')
+    expect(named.label).toContain('Cinema RAW Light')
+  })
+
+  it('认不出编码时，不会把 none / unknown 当成格式名写进报告', () => {
+    for (const bogus of ['none', 'unknown']) {
+      const format = formatFromFfprobe(bogus, null, '/x/strange.xyz', 'mov,mp4,m4a,3gp,3g2,mj2')
+      expect(format.label).not.toBe('none')
+      expect(format.label).not.toBe('unknown')
+    }
+  })
+
+  it('是 MOV 容器但编码认不出来时，也不会误判成 ProRes', () => {
+    // 猜错码率会让后期按错误规格规划存储
+    const format = formatFromFfprobe('none', null, '/x/A001C001.CRM', 'mov,mp4,m4a,3gp,3g2,mj2')
+    expect(format.family).not.toBe('prores')
+    expect(format.family).not.toBe('prores-raw')
+  })
+
+  it('文件头里没有 RED 魔数也没有 ProRes 的 icpf —— 认不出编码，于是靠扩展名兜底', () => {
+    const header = Buffer.alloc(64, 0x11)
+    header.write('ftypcrx ', 0, 'latin1')
+    const format = formatFromMagic(header, '/x/A001C001.CRM')
+    // 落到扩展名兜底，而 crm 已登记 —— 这是登记过的名字，不是猜出来的
+    expect(format?.family).toBe('canon-raw')
+  })
+
+  it('真·未知的扩展名才返回 null —— 宁可空着，也不编一个格式名', () => {
+    const header = Buffer.alloc(64, 0x11)
+    expect(formatFromMagic(header, '/x/A001C001.xyz')).toBeNull()
   })
 })

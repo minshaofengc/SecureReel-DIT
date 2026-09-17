@@ -197,6 +197,64 @@ describe('不可探测的类型', () => {
   })
 })
 
+/**
+ * 佳能 Cinema RAW Light（EOS R5 C / C70 / C300 III / C500 II / C200 等）。
+ *
+ * 现在的状态是：**会探测参数，但永远拿不到画面**。两条边界都要钉住：
+ *   · 会探测：`.crm` 在可探测清单里 → 时长/时码/拍摄时间/分辨率能进报告
+ *     （实测一条 1 GB 素材只要 0.01 秒）。
+ *   · 没有画面：ffmpeg 无 CRAW 解码器，**且文件里也没有内嵌预览图**（实测：
+ *     前 96 MiB + 尾部 16 MiB 内可解析 JPEG 为 0，moov 里没有图片轨）。
+ *     所以它**不进** VIDEO_EXTENSIONS —— 明知解不出来，就不要去读那几个 GB。
+ *
+ * 注意这里用的是"伪造的 CRM"（只有 ftyp 头 + 填充），不是真实 MOV，
+ * 所以 ffprobe 解不动、走文件头与扩展名那条兜底路 —— 这恰好是本用例要覆盖的路径。
+ * 真实文件上的参数读取（4096×2160 / 9.009s / 时码 08:21:48:23）在 CHANGELOG 1.2.4 有记录。
+ */
+describe('Canon Cinema RAW Light（.CRM）：探测参数，但没有画面', () => {
+  /** 造一个 CRM 的文件夹头：MOV 系容器，major_brand = 'crx'。 */
+  function buildCrmFile(payloadBytes: number): Buffer {
+    const ftyp = Buffer.alloc(24)
+    ftyp.writeUInt32BE(24, 0)
+    ftyp.write('ftyp', 4, 'latin1')
+    ftyp.write('crx ', 8, 'latin1')
+    ftyp.writeUInt32BE(1, 12)
+    ftyp.write('crx ', 16, 'latin1')
+    ftyp.write('isom', 20, 'latin1')
+    return Buffer.concat([ftyp, Buffer.alloc(payloadBytes, 0x33)])
+  }
+
+  it('在可探测清单里，但**不**当成视频去提首帧（明知解不出来，别白读几个 GB）', () => {
+    expect(isProbeable('CONTENTS/CLIPS001/A001C001.CRM')).toBe(true)
+    expect(isVideoLike('CONTENTS/CLIPS001/A001C001.CRM')).toBe(false)
+  })
+
+  it('探测不抛错、格式名给对，且明确没有画面', async () => {
+    const file = join(root, 'A001C001_260917AB_CANON.CRM')
+    await writeFile(file, buildCrmFile(64 * 1024))
+
+    const probe = await runner.probe(file, { extractFrames: true })
+
+    // 格式名必须对
+    expect(probe.formatFamily).toBe('canon-raw')
+    expect(probe.format).toContain('Cinema RAW Light')
+    expect(probe.vendorTool).toContain('Canon')
+    // 这个伪造文件解不动，所以没有元数据 —— 但原因必须说清楚，不能是空白
+    expect(probe.firstFrame).toBeNull()
+    expect(probe.frameSource).toBe('none')
+    expect(probe.reason).not.toBeNull()
+    expect(probe.reason).not.toBe('')
+  })
+
+  it('大写扩展名同样处理（卡片里的文件名常常是全大写）', async () => {
+    const file = join(root, 'A002C001.CRM')
+    await writeFile(file, buildCrmFile(1024))
+    const probe = await runner.probe(file, { extractFrames: true })
+    expect(probe.formatFamily).toBe('canon-raw')
+    expect(probe.frameSource).toBe('none')
+  })
+})
+
 describe('工具状态', () => {
   it('两个工具状态都是布尔值，且原因说明可读', () => {
     expect(typeof runner.available).toBe('boolean')

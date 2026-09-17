@@ -7,52 +7,12 @@ import {
   THEMES,
   THEME_MODES,
   type HashAlgorithm,
-  type ManifestFormat,
-  type ThemeId
+  type ManifestFormat
 } from '@shared/types'
 import { Card, Field, PathPicker, Segmented, Note } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
-
-/**
- * 主题预览用的色块。
- *
- * 这里是全项目**唯一**允许写死色值的地方，而且理由充分：
- * 这些色块要展示的是「**别的**主题」长什么样，而当前生效主题的 CSS 变量
- * 里根本没有其它主题的颜色。让每个主题各贡献一组预览色，
- * 比"点一下换一个主题再看效果"的试错方式好用得多。
- *
- * 色条按「底 → 主色 →（辅色）→ 文字」的顺序排。
- * 只有「雾光」是双强调色主题，所以它多一格粉色；竹林和奶酪
- * 的 --accent-2 就是 --accent，多铺一格只会得到一根更宽的色带，
- * 所以它们维持三格不变 —— 观感与从前完全一致。
- */
-const THEME_PREVIEW: Record<ThemeId, { light: readonly string[]; dark: readonly string[] }> = {
-  qinghe: {
-    light: ['#f5f5f0', '#3d7a58', '#1b2a23'],
-    dark: ['#131a16', '#74bf95', '#e6efe9']
-  },
-  wuguang: {
-    light: ['#f6f6fa', '#586ec4', '#c2456f', '#232538'],
-    dark: ['#14151d', '#8fa3e8', '#ef9ab8', '#e8e9f3']
-  },
-  cheese: {
-    light: ['#f8f3e6', '#c2860f', '#362c18'],
-    dark: ['#1c1710', '#e6b23c', '#f3e9d6']
-  }
-}
-
-function ThemeSwatch({ theme, mode }: { theme: ThemeId; mode: 'light' | 'dark' }): ReactNode {
-  const colors = THEME_PREVIEW[theme][mode]
-  return (
-    <span className="theme-swatch" aria-hidden="true">
-      {colors.map((color) => (
-        <span key={color} style={{ background: color }} />
-      ))}
-    </span>
-  )
-}
 
 /**
  * 数字设置输入框。
@@ -111,7 +71,6 @@ function NumberSetting({
 export function SettingsView(): ReactNode {
   const { t } = useI18n()
   const { settings, updateSettings, appInfo, pushToast } = useAppState()
-  const previewMode = settings.themeMode === 'dark' ? 'dark' : 'light'
   const [diagBusy, setDiagBusy] = useState(false)
 
   const hashOptions = useMemo<ComboOption<HashAlgorithm>[]>(
@@ -145,7 +104,6 @@ export function SettingsView(): ReactNode {
                 aria-pressed={settings.themeId === theme}
                 onClick={() => void updateSettings({ themeId: theme })}
               >
-                <ThemeSwatch theme={theme} mode={previewMode} />
                 <span className="theme-name">{t(`settings.theme.${theme}` as never)}</span>
               </button>
             ))}

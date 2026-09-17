@@ -57,6 +57,17 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
   const probed: string[] = []
   const frames: string[] = []
   const notes = new Set<string>()
+  /**
+   * 拿不到静帧的素材，按「格式 + 原因 + 所需工具」去重计数。
+   *
+   * 为什么必须收集而不是像以前那样"没有静帧就整块不渲染"：
+   * 拿到报告的人看到「首帧画面」整节消失、也没有任何说明，
+   * 第一反应是**怀疑拷贝或工具出了问题**，而不是"这个格式本来就解不出来"。
+   * 佳能 Cinema RAW Light（.CRM）就是这种情况 —— 实测确认文件里没有内嵌预览图，
+   * ffmpeg 也没有 CRAW 解码器，所以既没有元数据也没有画面。
+   * 报告必须把这件事说清楚，并且明确它对校验结果没有影响。
+   */
+  const frameGaps = new Map<string, number>()
   let included = 0
   let total = 0
 
@@ -100,7 +111,22 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
             </figcaption>
           </figure>`
         )
+      } else if (probe.frameSource === 'none') {
+        // 探测成功但明确拿不到画面：可能是任务里没开首帧提取，
+        // 也可能是这个格式本来就出不了画面（CRM）。用 note 里的说明 —— 它已经
+        // 分清了这两种情况，不必在报告层再猜一遍。
+        const why = noteOrReason(probe.note, probe.reason, '本次未生成画面')
+        const key = `${probe.format ?? '未识别格式'}\u0000${why.text}\u0000${why.appendVendor ? (probe.vendorTool ?? '') : ''}`
+        frameGaps.set(key, (frameGaps.get(key) ?? 0) + 1)
+        // 这段说明已经在上面出现过了，就从「素材格式说明」里撤掉 ——
+        // 同一句话在报告里出现两遍会把真正需要被看到的信息淹掉。
+        if (probe.note !== null) notes.delete(probe.note)
       }
+    } else if (file.probe !== null) {
+      // 探测不可用：连元数据都没拿到。同样要记进"没有画面"的说明里，不能让这一格静默留白。
+      const why = noteOrReason(file.probe.note, file.probe.reason, '未获得可用的媒体元数据')
+      const key = `${file.probe.format ?? '未识别格式'}\u0000${why.text}\u0000${why.appendVendor ? (file.probe.vendorTool ?? '') : ''}`
+      frameGaps.set(key, (frameGaps.get(key) ?? 0) + 1)
     }
 
     if (included < context.fileRowLimit) {
@@ -342,6 +368,26 @@ ${frames.join('\n')}
 }
 
 ${
+  frameGaps.size === 0
+    ? ''
+    : `<h2>没有首帧画面的素材（${[...frameGaps.values()].reduce((sum, n) => sum + n, 0)} 条）</h2>
+<p class="small muted">
+  下列格式当前无法在本地生成画面，因此报告中没有对应的首帧图。
+  <strong>这与拷贝和校验结果无关</strong> —— 这些文件同样已逐字节写入并通过独立重读校验，
+  见上方「全部文件通过校验」与文件明细里的校验值。
+</p>
+<ul class="small">
+${[...frameGaps.entries()]
+  .map(([key, count]) => {
+    const [label, why, vendor] = key.split('\u0000')
+    const tool = vendor === undefined || vendor === '' ? '' : ` 完整技术参数与画面需要厂商官方工具：${vendor}。`
+    return `  <li>${count} 条 ${escapeXml(label ?? '未识别格式')}：${escapeXml(why ?? '')}${escapeXml(tool)}</li>`
+  })
+  .join('\n')}
+</ul>`
+}
+
+${
   probed.length === 0
     ? ''
     : `<h2>媒体元数据</h2>
@@ -405,6 +451,23 @@ function stateBadge(state: string): string {
             ? '校验中'
             : '待处理'
   return `<span class="badge ${cls}">${text}</span>`
+}
+
+/**
+ * 挑出"为什么没有画面"的说明文字。
+ *
+ * 优先用 `probe.note` —— 探测器已经分清了两种完全不同的情况
+ * （"本次没开首帧提取" vs "这个格式根本解不出画面"），报告层不必再猜一遍。
+ * note 里通常已经带了厂商工具，此时就不要再追加一次，免得同一句话说两遍。
+ */
+function noteOrReason(
+  note: string | null,
+  reason: string | null,
+  fallback: string
+): { text: string; appendVendor: boolean } {
+  if (note !== null && note !== '') return { text: note, appendVendor: false }
+  if (reason !== null && reason !== '') return { text: reason, appendVendor: true }
+  return { text: fallback, appendVendor: true }
 }
 
 /**

@@ -33,6 +33,40 @@ const GENERIC: FormatDescriptor = {
   ffmpegCanDecode: true
 }
 
+/*
+ * 佳能 Cinema RAW Light —— EOS R5 C / C70 / C300 III / C500 II / C200 等
+ * 机内 RAW 录制的容器，扩展名 `.CRM`，画面 12-bit，机内有 LT / ST / HQ 三档。
+ *
+ * 关于它，三件事是**实测**出来的（一条 1 GB 的 R5 C 素材，2026-09）：
+ *   1. 容器是 MOV 系（`major_brand = 'crx'`），画面轨 fourcc 是 `CRAW`；
+ *      ffprobe 能读出**真实**的时长、时码、拍摄时间、分辨率。
+ *   2. 但 ffmpeg **没有 CRAW 解码器**（trac #6765 自 2017 年至今 open），
+ *      解不出画面；而且**文件里也没有内嵌预览图** ——
+ *      前 96 MiB + 尾部 16 MiB 里可解析的 JPEG 为 0，moov 里只有画面/音频/时码轨，
+ *      **没有图片轨**。所以 R3D/BRAW 那条"读内嵌预览图"的路子在这里也走不通。
+ *   3. ffprobe 读它**只要 0.01 秒**（moov 在文件头部），拿参数的成本可以忽略。
+ *
+ * 结论：这个格式**有参数、没有画面**。要画面只能用 Canon 官方工具。
+ * 因此取缩略图那条路（embedded-preview）对它无效。
+ */
+const CANON_RAW: FormatDescriptor = {
+  family: 'canon-raw',
+  label: 'CRM（Canon Cinema RAW Light）',
+  vendorTool: 'Canon Cinema RAW Development / DaVinci Resolve',
+  ffmpegCanDecode: false
+}
+
+/**
+ * 佳能 CRM 画面轨的 fourcc。
+ *
+ * ⚠️ 为什么必须显式认它，而不是靠"扩展名兜底"：
+ * ffprobe 认不出这个编码时**连 `codec_name` 字段都不输出**（实测如此，不是输出 "none"），
+ * 于是 formatFromFfprobe 会一路落到最后那条"拿 codec 名当格式名"的兜底之外、
+ * 靠扩展名才拿到对的答案 —— 那是**巧合**，不是设计。
+ * 一旦某个 ffmpeg 版本改成像 `codec_name: "none"` 这样输出，报告上就会写出 `none`。
+ */
+const CANON_RAW_CODEC_TAG = 'craw'
+
 /** 扩展名 → 兜底格式（仅在 ffprobe 无结论、文件头也认不出来时使用）。 */
 const EXTENSION_FALLBACK: Record<string, FormatDescriptor> = {
   mov: { family: 'prores', label: 'QuickTime 素材（编码未识别）', vendorTool: null, ffmpegCanDecode: true },
@@ -55,6 +89,9 @@ const EXTENSION_FALLBACK: Record<string, FormatDescriptor> = {
     vendorTool: 'ARRIRAW Converter / ARRIRAW HDE Transcoder',
     ffmpegCanDecode: false
   },
+  /* 佳能 Cinema RAW Light：扩展名无歧义，直接指向上面那份描述。
+     它同样在可探测清单里 —— 探测能拿到时长/时码/分辨率，拿不到画面。 */
+  crm: CANON_RAW,
   arx: {
     family: 'hde',
     label: 'HDE（ARRIRAW 高密度编码）',
@@ -142,12 +179,23 @@ export function formatFromFfprobe(
   codecName: string | null | undefined,
   profile: string | null | undefined,
   fallbackPath: string,
-  formatName?: string | null
+  formatName?: string | null,
+  codecTag?: string | null
 ): FormatDescriptor {
   const container = (formatName ?? '').toLowerCase()
   for (const [needle, descriptor] of CONTAINER_FAMILIES) {
     if (container.includes(needle)) return descriptor
   }
+
+  /*
+   * 佳能 Cinema RAW Light：容器是 MOV（不会出现在上面的专用容器表里），
+   * 所以必须靠画面轨的 fourcc 认它。
+   *
+   * 为什么不靠扩展名兜底代替：ffprobe 对 CRAW 连 `codec_name` 都不输出，
+   * 于是下面的 codec 分支全部落空、最后靠扩展名拿到对的答案 —— 那是巧合。
+   * 有了这条判定，无论 ffprobe 输出什么（缺字段、还是写成 "none"）都能认对。
+   */
+  if ((codecTag ?? '').toLowerCase() === CANON_RAW_CODEC_TAG) return CANON_RAW
 
   // 扩展名是高置信度私有格式，且 ffprobe 没认出任何"像样"的容器时，
   // 以扩展名为准：它翻到的多半只是文件里那张预览图。
@@ -156,7 +204,13 @@ export function formatFromFfprobe(
     return highConfidence
   }
 
-  const codec = (codecName ?? '').toLowerCase()
+  const rawCodec = (codecName ?? '').toLowerCase()
+  /*
+   * ffprobe 有时把"认不出编码"写成 `none` / `unknown` —— 那不是编码名。
+   * 直接当编码名用会让报告上出现 `格式：none`，比留空更容易误导人，
+   * 所以这里当成"没有信息"处理，交给后面的扩展名兜底。
+   */
+  const codec = rawCodec === 'none' || rawCodec === 'unknown' ? '' : rawCodec
   const prof = (profile ?? '').toLowerCase()
 
   if (codec === 'prores_raw') {
@@ -264,6 +318,7 @@ export function canDecodeWithFfmpeg(family: MaterialFormat): boolean {
     case 'r3d':
     case 'braw':
     case 'arriraw':
+    case 'canon-raw':
     case 'hde':
       return false
     default:

@@ -86,6 +86,20 @@ export const JOB_STATES = [
 export type JobState = (typeof JOB_STATES)[number]
 
 /**
+ * "任务还占着运行态"的状态。
+ *
+ * 判断依据刻意不是界面上显示的 running，而是**任务是否可以被安全地做只读长操作**：
+ * `queued` / `paused` 的任务在 JobManager 里同样持有 RunHandle，引擎随时会继续推进，
+ * 所以它们和 `running` 一样不能再生成报告 —— 否则会与正在跑的引擎抢同一批文件行。
+ */
+export const LIVE_JOB_STATES = ['queued', 'running', 'paused'] as const
+
+/** 任务是否处于运行态（含排队与暂停）。 */
+export function isJobLive(state: JobState): boolean {
+  return (LIVE_JOB_STATES as readonly string[]).includes(state)
+}
+
+/**
  * 任务模式。
  *
  * - `copy`   ：正常拷贝（读源 → 写目标 → 独立重读校验 → 原子改名）
@@ -156,6 +170,10 @@ export interface FileTargetResult {
  *   · prores / prores-raw —— ffmpeg 原生可解码，首尾帧都能真解出来
  *   · r3d / braw —— 厂商私有编码，ffmpeg 没有解码器；
  *     首帧改从文件内嵌的预览图取（厂商自己嵌的，用于机内回放）
+ *   · canon-raw —— 佳能 Cinema RAW Light（.CRM）。**只做了命名，不做探测**：
+ *     ffmpeg 能读它的 MOV 容器但没有 CRAW 解码器，所以既没有帧也没有元数据；
+ *     登记它只是为了让报告里不把 8K RAW 母版写成"普通文件"。
+ *     详见 media/formats.ts 里 crm 那一条的注释。
  *   · 其余按可解码处理，失败再退回内嵌预览
  */
 export const MATERIAL_FORMATS = [
@@ -164,6 +182,7 @@ export const MATERIAL_FORMATS = [
   'r3d',
   'braw',
   'arriraw',
+  'canon-raw',
   'hde',
   'cinema-dng',
   'mxf',

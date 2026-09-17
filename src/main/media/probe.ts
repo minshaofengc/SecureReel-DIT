@@ -52,11 +52,20 @@ export interface MediaProbeRunner {
   refresh(): Promise<void>
 }
 
-/** 会尝试探测的扩展名（小写，不含点）。 */
+/**
+ * 会尝试探测的扩展名（小写，不含点）。
+ *
+ * 佳能 Cinema RAW Light 的 `crm` 现在**在**这个清单里，但它的探测结果与别的格式不同：
+ * **有参数、没有画面**。容器是 MOV 系，ffprobe 能读出真实的时长/时码/拍摄时间/分辨率
+ * （实测一条 1 GB 素材只要 0.01 秒），但没有 CRAW 解码器、文件里也没有内嵌预览图，
+ * 所以永远拿不到首帧 —— 要画面只能用 Canon 官方工具。
+ * 详见 media/formats.ts 里 CANON_RAW 那一段的实测记录。
+ */
 const PROBEABLE_EXTENSIONS = new Set([
   // 专业录制格式
   'mov',
   'mxf',
+  'crm',
   'r3d',
   'braw',
   'ari',
@@ -111,6 +120,11 @@ export function isVideoLike(path: string): boolean {
 interface FfprobeStream {
   codec_type?: string
   codec_name?: string
+  /**
+   * 容器里的 fourcc。ffmpeg 认不出编码时**连 codec_name 都不会输出**，
+   * 但 fourcc 仍然可靠 —— 佳能 CRM 就是靠这个 `CRAW` 认出来的。
+   */
+  codec_tag_string?: string
   profile?: string
   width?: number
   height?: number
@@ -290,7 +304,8 @@ export class FfprobeRunner implements MediaProbeRunner {
         parsed.video?.codec_name,
         parsed.video?.profile,
         absPath,
-        parsed.format?.format_name
+        parsed.format?.format_name,
+        parsed.video?.codec_tag_string
       )
     } else {
       format = (await this.readHeaderDescriptor(absPath)) ?? fallbackByExtension(absPath)
@@ -300,17 +315,28 @@ export class FfprobeRunner implements MediaProbeRunner {
     const decodable = canDecodeWithFfmpeg(format.family)
 
     // ---- 2. 填元数据 ----
-    // 关键判断：对 R3D / BRAW 这类私有格式，ffprobe 看到的流其实是文件里
-    // 内嵌的预览图（R3D 会被当成一路 MJPEG）。此时流级的分辨率、帧率、时长
-    // 全是预览图的性质，当成素材本身的技术参数写进报告就是错的。
-    // 容器身份可以采信，流级参数不能。
-    if (parsed !== null && decodable) {
+    /*
+     * 关键判断：**流级参数可不可信**，不能只看"能不能解码"。
+     *
+     * · R3D / BRAW 这类私有格式：ffprobe 看到的"视频流"其实是文件里内嵌的
+     *   预览图（R3D 会被当成一路 MJPEG）。此时分辨率、帧率、时长全是预览图的
+     *   性质，当成素材本身的技术参数写进报告就是错的 —— 容器身份可以采信，
+     *   流级参数不能。
+     * · 佳能 CRM 是个例外：它的画面轨就是 CRAW 原始轨道本身，不是预览图。
+     *   没有解码器 ≠ 参数是错的。实测一条 1 GB 的 R5 C 素材，ffprobe 读出
+     *   4096×2160、时长 9.009s、时码 08:21:48:23 —— 这些都是真实记录参数
+     *   （来自容器的 stsd/mvhd），不采信反而把有用的信息丢了。
+     */
+    const streamParamsTrustworthy = decodable || format.family === 'canon-raw'
+    if (parsed !== null && streamParamsTrustworthy) {
       const video = parsed.video
       const durationRaw = parsed.format?.duration ?? video?.duration
       const duration = durationRaw === undefined ? Number.NaN : Number(durationRaw)
       const tags = { ...(parsed.format?.tags ?? {}), ...(video?.tags ?? {}) }
 
-      probe.codec = video?.codec_name ?? parsed.format?.format_name ?? null
+      // codec_name 缺失时退到 fourcc（CRM 就是这种情况，fourcc 是 CRAW），
+      // 再退到容器名。不要在这里用容器名冒充编码名 —— 那是最后的选择。
+      probe.codec = video?.codec_name ?? video?.codec_tag_string ?? parsed.format?.format_name ?? null
       probe.width = video?.width ?? null
       probe.height = video?.height ?? null
       probe.frameRate = pickFrameRate(video)
@@ -329,7 +355,8 @@ export class FfprobeRunner implements MediaProbeRunner {
     }
 
     // ---- 3. 取首帧 ----
-    const wantsFrame = options.extractFrames && isVideoLike(absPath)
+    const videoLike = isVideoLike(absPath)
+    const wantsFrame = options.extractFrames && videoLike
     if (wantsFrame) {
       const frame = await this.acquireFirstFrame(absPath, decodable, options.signal)
       if (frame !== null) {
@@ -350,7 +377,7 @@ export class FfprobeRunner implements MediaProbeRunner {
       probe.lastFrame = await this.extractFrameWithFfmpeg(absPath, 'last')
     }
 
-    probe.note = buildNote(probe, format, wantsFrame)
+    probe.note = buildNote(probe, format, wantsFrame, videoLike)
     if (!probe.available && probe.reason === null) {
       probe.reason = '该素材没有可读取的元数据，也没有可用于提取首帧的内嵌预览图。'
     }
@@ -505,7 +532,21 @@ export class FfprobeRunner implements MediaProbeRunner {
  * 只在**确实有需要解释的事情**时才写 —— 一切正常时不要塞废话，
  * 报告里满屏的"正常"会把人训练成不看备注。
  */
-function buildNote(probe: MediaProbe, format: FormatDescriptor, wantedFrame: boolean): string | null {
+/**
+ * 组装面向读者的说明文字。
+ *
+ * `wantedFrame` 为 false 有**两种完全不同的原因**，不能混为一谈：
+ *   · 设置里关掉了首帧提取 —— 那确实该提示"去设置里打开"；
+ *   · 这个扩展名压根不属于视频（例如佳能 .CRM：明知解不出来，就不去读那几个 GB）——
+ *     此时提示"去设置里打开"是**误导**，开了也拿不到画面。
+ * 所以额外收一个 `videoLike`，只有真的是视频类素材才提设置项。
+ */
+function buildNote(
+  probe: MediaProbe,
+  format: FormatDescriptor,
+  wantedFrame: boolean,
+  videoLike: boolean
+): string | null {
   const parts: string[] = []
   const decodable = canDecodeWithFfmpeg(format.family)
 
@@ -518,6 +559,8 @@ function buildNote(probe: MediaProbe, format: FormatDescriptor, wantedFrame: boo
         '首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，' +
           '通常低于实际记录分辨率，请以原件参数为准。'
       )
+    } else {
+      parts.push('该格式也没有可用的内嵌预览图，因此本报告不含该素材的画面。')
     }
     if (format.vendorTool !== null) {
       parts.push(`如需完整技术参数与逐帧提取，请使用官方工具：${format.vendorTool}。`)
@@ -532,7 +575,7 @@ function buildNote(probe: MediaProbe, format: FormatDescriptor, wantedFrame: boo
     parts.push('本次未能取到首帧画面，该文件仅记录哈希与体积。')
   }
 
-  if (!wantedFrame && probe.formatFamily !== 'audio') {
+  if (!wantedFrame && videoLike && probe.formatFamily !== 'audio') {
     parts.push('本次未提取首帧（可在设置中开启「为视频素材提取首帧」）。')
   }
 
