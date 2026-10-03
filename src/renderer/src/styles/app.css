@@ -142,6 +142,28 @@ select {
   padding: 40px 32px 64px;
 }
 
+/*
+ * ---------------- Windows 的窗口 chrome ----------------
+ *
+ * Windows 走的是「无边框 + 系统绘制的标题栏叠加层」（见 src/main/index.ts）：
+ * 窗口最上面 40px 由系统画成一条标题栏，右端放最小化/最大化/关闭三个按钮。
+ * 那块区域**不归我们画**，所以界面必须让开它。
+ *
+ * 好在两处留白本来就对得上 —— .sidebar 与 .main 的顶部都是 40px
+ * （原本是给 macOS 红绿灯留的位置），所以这两个值一行都不用改。
+ *
+ * 真正需要处理的是**吸顶元素**：它们的 top: 0 是相对 .main 的滚动视口算的，
+ * 也就是窗口最顶端 —— 在 Windows 上那正好被标题栏盖住，表头一滚动就凭空消失。
+ * 往下让一个标题栏的高度即可。
+ *
+ * macOS 分支完全不受影响：这些规则都被 [data-platform='windows'] 限定了。
+ * .combo-group-label 也是 sticky，但它在下拉浮层自己的滚动容器里，不能动。
+ */
+[data-platform='windows'] table.data th,
+[data-platform='windows'] .group-row td {
+  top: var(--titlebar-height);
+}
+
 .page {
   max-width: 980px;
   margin: 0 auto;
@@ -756,6 +778,53 @@ select {
 .meter .item .value {
   font-size: 15px;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 正在处理的文件列表。
+ *
+ * 放在进度统计下面，回答的是另一类问题：统计数字说"还剩多久"，
+ * 这里说"现在到底在动没有"。大文件拷贝时字节数会长时间不动，
+ * 没有这一块，用户只能盯着一个不动的数字猜程序是不是卡死了。
+ */
+.active-files {
+  margin-top: 12px;
+}
+
+.active-files ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.active-files li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+/* 路径可能很长，让它先被截断，字节数永远保留完整 */
+.active-files li > .mono {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.active-files li > .num {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 音量滑块：用原生 range，只把它染上主色 —— 否则在深色主题里会是一条突兀的白杠 */
+.volume-slider {
+  width: 160px;
+  accent-color: var(--accent);
 }
 
 /* ---------------- 表格 ---------------- */

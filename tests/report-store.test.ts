@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CopyJob, FileTargetResult, ProjectInfo } from '../src/shared/types'
+import type { CopyJob, FileTargetResult, ProjectInfo, ReportRevision } from '../src/shared/types'
 import { Store } from '../src/main/db/store'
 import { Logger } from '../src/main/logger'
 import { buildAppPaths, type AppPaths } from '../src/main/paths'
@@ -57,6 +57,7 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
     name: 'A002 卡备份',
     mode: 'copy',
     sourcePath: join(root, 'A002R2EC'),
+    sourceRootName: '',
     sourceKind: 'generic',
     isCodExVfs: false,
     parentProjectId: null,
@@ -510,5 +511,98 @@ describe('修订目录已存在时拒绝写入', () => {
     expect(await readFile(join(paths.reportsDir, job.id, 'R001', 'report.html'), 'utf8')).toBe(
       'someone else data'
     )
+  })
+})
+
+/**
+ * 报告复制到目标盘。
+ *
+ * 报告只留本机时，盘一旦交给别人（剪辑、甲方、归档）就等于没有交付凭证 ——
+ * 这组测试守住"复制过去"这个动作，以及它的三条硬约束：
+ * 仅校验不写盘、绝不覆盖、不因复制失败影响任务本身。
+ */
+describe('报告复制到目标盘', () => {
+  const publish = (job: CopyJob, revision: ReportRevision) =>
+    reportStore.publishToTargets({
+      job,
+      revision,
+      targets: job.targets,
+      hostname: 'dit-mac.local',
+      toolName: 'SecureReel DIT 2',
+      toolVersion: '2.0.0',
+      now: NOW
+    })
+
+  it('整份修订被复制到 <目标盘>/SecureReel/<任务名>_R001/', async () => {
+    const { job, targetPath } = await seedJob()
+    const { revision } = await writeRevision(job)
+
+    const result = await publish(job, revision)
+
+    expect(result.failed).toEqual([])
+    expect(result.published).toEqual(['BackupA'])
+    expect(result.relativeDirs).toEqual([join('SecureReel', `${job.name}_R001`)])
+
+    const dest = join(targetPath, 'SecureReel', `${job.name}_R001`)
+    expect((await readFile(join(dest, 'report.html'), 'utf8')).length).toBeGreaterThan(0)
+    expect((await readFile(join(dest, 'report.json'), 'utf8')).length).toBeGreaterThan(0)
+
+    // 多一份纯文本说明，给不打开网页、只 ls 一下盘的人看
+    const note = await readFile(join(dest, '交付说明.txt'), 'utf8')
+    expect(note).toContain('交付说明')
+    expect(note).toContain(job.name)
+    expect(note).toContain('report.html')
+  })
+
+  it('目标盘上已有同名目录时中止，一个字节都不动', async () => {
+    const { job, targetPath } = await seedJob()
+    const { revision } = await writeRevision(job)
+
+    const dest = join(targetPath, 'SecureReel', `${job.name}_R001`)
+    await mkdir(dest, { recursive: true })
+    await writeFile(join(dest, 'report.html'), '上一次的交付记录', 'utf8')
+
+    const result = await publish(job, revision)
+
+    expect(result.published).toEqual([])
+    expect(result.failed).toHaveLength(1)
+    expect(result.failed[0]?.reason).toContain('已存在')
+    expect(await readFile(join(dest, 'report.html'), 'utf8')).toBe('上一次的交付记录')
+  })
+
+  it('仅校验模式连目录都不建 —— 它承诺不向目标盘写任何字节', async () => {
+    const { job, targetPath } = await seedJob()
+    const verifyJob: CopyJob = { ...job, mode: 'verify' }
+    const { revision } = await writeRevision(verifyJob)
+
+    const result = await publish(verifyJob, revision)
+
+    expect(result.published).toEqual([])
+    expect(result.failed).toEqual([])
+    expect(await readdir(targetPath)).not.toContain('SecureReel')
+  })
+
+  it('任务名里的斜杠与冒号会被换掉，不会把目录拆成两级', async () => {
+    const { job, targetPath } = await seedJob()
+    const tricky: CopyJob = { ...job, name: 'D02/A机:主卡' }
+    const { revision } = await writeRevision(tricky)
+
+    await publish(tricky, revision)
+
+    expect(await readdir(join(targetPath, 'SecureReel'))).toEqual(['D02_A机_主卡_R001'])
+  })
+
+  it('目标被停用时跳过，不建目录', async () => {
+    const { job, targetPath } = await seedJob()
+    const disabled: CopyJob = {
+      ...job,
+      targets: job.targets.map((target) => ({ ...target, enabled: false }))
+    }
+    const { revision } = await writeRevision(job)
+
+    const result = await publish(disabled, revision)
+
+    expect(result.published).toEqual([])
+    expect(await readdir(targetPath)).not.toContain('SecureReel')
   })
 })

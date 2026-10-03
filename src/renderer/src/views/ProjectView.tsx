@@ -35,6 +35,8 @@ export function ProjectView(): ReactNode {
   const timerRef = useRef<number | null>(null)
   // 已加载过的母项目 id，避免自动保存回写之后又被重新加载覆盖掉正在输入的内容
   const loadedFor = useRef<string | null>(null)
+  /** 当前这份 details 是否已经被用户动过（动过就不再被回捞结果替换） */
+  const touched = useRef(false)
 
   const selected = useMemo(
     () => parents.find((project) => project.id === selectedId) ?? null,
@@ -53,10 +55,32 @@ export function ProjectView(): ReactNode {
   useEffect(() => {
     if (selected === null) return
     if (loadedFor.current === selected.id) return
-    loadedFor.current = selected.id
+    const targetId = selected.id
+    loadedFor.current = targetId
+    touched.current = false
     setDetails(selected.details)
     setNameDraft(selected.name)
     setRenaming(false)
+
+    /*
+     * 再问一次"这个母项目该带哪些内容"。
+     *
+     * 档案里空着的职员与镜头，主进程会从该母项目名下历史任务的快照里补回来 ——
+     * 旧版本只把内容存进任务快照、从不写回档案，不补的话这一页看起来像空的，
+     * 用户会以为数据丢了。补回来的内容一旦被编辑，就会顺理成章地写回档案。
+     *
+     * 只在用户还没动过这一页时替换：慢一步回来就盖掉人家正在敲的字，
+     * 比不显示更糟。失败就保持档案原样，不影响编辑。
+     */
+    void (async () => {
+      try {
+        const recalled = await unwrap(window.securereel.parents.recall(targetId))
+        if (loadedFor.current !== targetId || touched.current) return
+        setDetails(recalled)
+      } catch {
+        /* 回捞只是补全，取不到不影响这一页的正常编辑 */
+      }
+    })()
   }, [selected])
 
   const scheduleSave = useCallback(
@@ -64,6 +88,7 @@ export function ProjectView(): ReactNode {
       if (selected === null) return
       // 先本地立刻生效，700ms 后再落库：边等拷贝边填信息，不该每次按键都写盘
       loadedFor.current = selected.id
+      touched.current = true
       setDetails(next)
       if (timerRef.current !== null) window.clearTimeout(timerRef.current)
       timerRef.current = window.setTimeout(() => {
@@ -266,6 +291,9 @@ export function ProjectView(): ReactNode {
             <ProjectInfoFields
               value={details}
               sections={['basic', 'lenses', 'crew', 'notes']}
+              // 拍摄日不在这里：它属于"这一次拷贝"，拷贝页每次都重置成当天。
+              // 留一个拷贝页根本不读的字段，比不显示更让人困惑。
+              showShootDay={false}
               onChange={(next) => scheduleSave(next)}
             />
             <Note>{t('parent.snapshotHint')}</Note>

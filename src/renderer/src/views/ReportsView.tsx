@@ -6,10 +6,11 @@ import { Card, Empty, Note } from '../components/ui'
 import { SelectBox, type ComboGroup, type ComboOption } from '../components/ComboBox'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
+import { revealLabelKey } from '../platform'
 
 export function ReportsView(): ReactNode {
   const { t } = useI18n()
-  const { jobs, parents, reports, refreshReports, pushToast } = useAppState()
+  const { jobs, parents, reports, refreshReports, pushToast, appInfo } = useAppState()
   const [jobId, setJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -184,7 +185,7 @@ export function ReportsView(): ReactNode {
                   className="btn btn-sm btn-ghost"
                   onClick={() => void reveal(revision.files.html ?? revision.dir)}
                 >
-                  {t('reports.revealDir')}
+                  {t(revealLabelKey(appInfo?.platform))}
                 </button>
               </>
             }

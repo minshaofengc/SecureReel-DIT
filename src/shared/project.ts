@@ -17,6 +17,10 @@ import {
   type ProjectInfo
 } from './types'
 
+/* ------------------------------------------------------------------ *
+ * 空值构造
+ * ------------------------------------------------------------------ */
+
 export function emptyProjectDetails(): ProjectDetails {
   return {
     projectName: '',
@@ -141,9 +145,102 @@ export function hasSubstance(details: ProjectDetails): boolean {
   if (details.projectName.trim() !== '') return true
   if (details.camera.trim() !== '') return true
   if (details.notes.trim() !== '') return true
-  if (details.lenses.some((lens) => lens.model.trim() !== '' || lens.detail.trim() !== '')) return true
-  if (details.crew.some((entry) => entry.role.trim() !== '' || entry.name.trim() !== '')) return true
+  if (hasLenses(details.lenses)) return true
+  if (hasCrew(details.crew)) return true
   return false
+}
+
+/**
+ * 镜头列表里有没有真正填过的行。
+ *
+ * 只能选一个字段的也算 —— 现场常有人只写"雅典娜"不写焦段。
+ * 界面上点"+ 添加镜头"留下的空行不算。
+ */
+export function hasLenses(lenses: LensEntry[]): boolean {
+  return lenses.some((lens) => lens.model.trim() !== '' || lens.detail.trim() !== '')
+}
+
+/**
+ * 人员列表里有没有真正填过的行。
+ *
+ * 同理，只填了职务没填名字（或反过来）也算 —— 那多半是还没填完，
+ * 不该被当成"没有内容"而丢掉。界面上留下的空行不算。
+ */
+export function hasCrew(crew: CrewEntry[]): boolean {
+  return crew.some((entry) => entry.role.trim() !== '' || entry.name.trim() !== '')
+}
+
+/** 丢掉界面上点"添加一行"留下、但一个字都没填的空行。 */
+export function dropEmptyCrew(crew: CrewEntry[]): CrewEntry[] {
+  return crew.filter((entry) => entry.role.trim() !== '' || entry.name.trim() !== '')
+}
+
+export function dropEmptyLenses(lenses: LensEntry[]): LensEntry[] {
+  return lenses.filter((lens) => lens.model.trim() !== '' || lens.detail.trim() !== '')
+}
+
+/**
+ * 把 fallback 里"base 没填"的字段补进 base —— 用于从历史拷贝记录里回捞母项目信息。
+ *
+ * 为什么是"补空"而不是"覆盖"：母项目是**用户自己维护**的档案，
+ * 一个字段一旦填了就是他的意思，历史记录再新也不该把它顶掉。
+ * 反过来，空着的字段说明他从没在这部戏的档案里写过，用历史记录填上只是把
+ * 他早就填过、却被旧版本漏存的内容还给他。
+ *
+ * **故意不合并 shootDay**：拍摄日是"这一次拷贝拍的是哪天"，
+ * 不属于整部戏不变的属性；从历史里翻出一个几个月前的日期填进去只会误导。
+ */
+export function fillMissingDetails(base: ProjectDetails, fallback: ProjectDetails | null): ProjectDetails {
+  if (fallback === null) return base
+  return {
+    // 拍摄日保持 base 的，理由见上
+    shootDay: base.shootDay,
+    projectName: base.projectName.trim() === '' ? fallback.projectName : base.projectName,
+    camera: base.camera.trim() === '' ? fallback.camera : base.camera,
+    notes: base.notes.trim() === '' ? fallback.notes : base.notes,
+    lenses: hasLenses(base.lenses) ? base.lenses : fallback.lenses,
+    crew: hasCrew(base.crew) ? base.crew : fallback.crew
+  }
+}
+
+/**
+ * 把本次拷贝填的职员与镜头"沉淀"回母项目档案。
+ *
+ * 与 `fillMissingDetails` 的方向正好相反：这次是**用户刚在拷贝页填的**，
+ * 以它为准，覆盖母项目里对应的那两项。
+ *
+ * 两条保护，都是"宁可不更新，也不能把档案清空"：
+ *   · 本次**没填**（一个有效行都没有）→ 保持档案原样，绝不写入空数组。
+ *     否则"这张卡懒得填"就会把辛苦攒了几部戏的人员表抹掉。
+ *   · 只动 lenses / crew 两项。机型、项目名、备注、拍摄日各自有归属，
+ *     不在拷贝页的顺手改动范围里。
+ */
+export function mergeTalentIntoParent(
+  parent: ProjectDetails,
+  filled: Pick<ProjectDetails, 'lenses' | 'crew'>
+): { details: ProjectDetails; changed: boolean } {
+  const nextLenses = hasLenses(filled.lenses) ? dropEmptyLenses(filled.lenses) : parent.lenses
+  const nextCrew = hasCrew(filled.crew) ? dropEmptyCrew(filled.crew) : parent.crew
+
+  const changed = !sameLenses(nextLenses, parent.lenses) || !sameCrew(nextCrew, parent.crew)
+  return {
+    details: changed ? { ...parent, lenses: nextLenses, crew: nextCrew } : parent,
+    changed
+  }
+}
+
+function sameLenses(a: LensEntry[], b: LensEntry[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((lens, index) => lens.model === b[index]?.model && lens.detail === b[index]?.detail)
+  )
+}
+
+function sameCrew(a: CrewEntry[], b: CrewEntry[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((entry, index) => entry.role === b[index]?.role && entry.name === b[index]?.name)
+  )
 }
 
 /* ------------------------------------------------------------------ *

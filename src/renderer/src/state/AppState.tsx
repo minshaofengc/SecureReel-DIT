@@ -20,6 +20,7 @@ import type {
   AppSettings,
   CopyJob,
   CopyJobFile,
+  FileStateDelta,
   IpcResult,
   JobProgress,
   LogEntry,
@@ -28,8 +29,9 @@ import type {
   ProjectDraft,
   ReportRevision
 } from '@shared/types'
-import { DEFAULT_SETTINGS } from '@shared/types'
+import { DEFAULT_SETTINGS, cueForJobState, isJobLive, shouldApplyFileStateChange } from '@shared/types'
 import { translate } from '../i18n'
+import { playCue, unlockAudio } from '../sound'
 
 export interface Toast {
   id: number
@@ -101,6 +103,39 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
   const [parents, setParents] = useState<ParentProject[]>([])
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const toastSeq = useRef(1)
+  /**
+   * 每个任务的 relPath → 行下标。
+   *
+   * 刻意不放进 React state：它只服务于查找，不参与渲染。存在的理由很实在 ——
+   * 文件表可能有上千行，而中间态事件每 200ms 就来一批，
+   * 逐条 `findIndex` 线性扫的话每秒就是几十万次比较，全花在没意义的查找上。
+   */
+  const fileIndex = useRef<Record<string, Map<string, number>>>({})
+  /**
+   * 上一次看到的每个任务的状态。
+   *
+   * 提示音只该在状态**发生变化**时响一次，而不是每次收到事件都响 ——
+   * 而且要靠它区分"刚开始"和"刚结束"。
+   */
+  const lastJobState = useRef<Record<string, CopyJob['state']>>({})
+  /**
+   * 设置的最新值。
+   *
+   * 事件回调（applyEvent）需要读提示音开关与音量，但不能把 settings 放进
+   * 它的依赖数组 —— 那样每改一次设置都会重新订阅一次主进程事件。
+   */
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+
+  /*
+   * 音频上下文必须在**用户交互之后**才能启动（Chromium 的自动播放策略）。
+   * 挂一次性监听：界面上第一次按下就把它解锁，之后任何时候都能响。
+   */
+  useEffect(() => {
+    const unlock = (): void => unlockAudio()
+    window.addEventListener('pointerdown', unlock, { once: true })
+    return () => window.removeEventListener('pointerdown', unlock)
+  }, [])
 
   const pushToast = useCallback((level: Toast['level'], message: string) => {
     const id = toastSeq.current++
@@ -136,8 +171,10 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
 
   const loadFiles = useCallback(async (jobId: string, limit = 1000) => {
     try {
-      const list = await unwrap(window.securereel.jobs.files(jobId, limit, 0))
-      setFiles((current) => ({ ...current, [jobId]: list.slice(0, MAX_FILE_ROWS) }))
+      const list = (await unwrap(window.securereel.jobs.files(jobId, limit, 0))).slice(0, MAX_FILE_ROWS)
+      // 索引必须与列表同时重建，否则增量事件会改到错行上去
+      fileIndex.current[jobId] = new Map(list.map((file, index) => [file.relPath, index]))
+      setFiles((current) => ({ ...current, [jobId]: list }))
     } catch {
       /* 同上 */
     }
@@ -196,9 +233,33 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
         }
         case 'job:state': {
           const payload = event.payload as { jobId: string; state: CopyJob['state'] }
+          /*
+           * 提示音。
+           *
+           * 必须自己记住上一次的状态：`job:state` 只是"当前是什么"，
+           * 不带"从什么变成的"。没有这一步就分不清"刚开始"和"刚结束"，
+           * 也无法避免同一次变化被重复响。
+           */
+          const previousState = lastJobState.current[payload.jobId]
+          lastJobState.current[payload.jobId] = payload.state
+          if (previousState !== undefined) {
+            const cue = cueForJobState(previousState, payload.state)
+            if (cue !== null && settingsRef.current.soundEnabled) {
+              playCue(cue, settingsRef.current.soundVolume)
+            }
+          }
           setJobs((current) =>
             current.map((job) => (job.id === payload.jobId ? { ...job, state: payload.state } : job))
           )
+          /*
+           * 进入非运行态后引擎就不再推中间态了，而库里可能还留着 copying /
+           * verifying（取消、崩溃恢复、异常退出都会这样）。这里重拉一次，
+           * 界面才与事实一致。
+           *
+           * 暂停**不**重拉：paused 仍属运行态，那些"拷贝中"是真实状态，
+           * 重拉反而会把正在动的进度打回原样。
+           */
+          if (!isJobLive(payload.state)) void loadFiles(payload.jobId, 1500)
           break
         }
         case 'job:file': {
@@ -206,10 +267,72 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
           setFiles((current) => {
             const list = current[payload.jobId]
             if (list === undefined) return current
-            const index = list.findIndex((file) => file.relPath === payload.file.relPath)
-            const next = index >= 0 ? list.map((f, i) => (i === index ? payload.file : f)) : [...list, payload.file]
+            const index = fileIndex.current[payload.jobId]?.get(payload.file.relPath) ?? -1
+            if (index < 0) {
+              // 清单里还没这一行（正常流程不会发生，重拉之后才有）—— 追加并补索引
+              fileIndex.current[payload.jobId]?.set(payload.file.relPath, list.length)
+              return { ...current, [payload.jobId]: [...list, payload.file] }
+            }
+            const next = list.slice()
+            next[index] = payload.file
             return { ...current, [payload.jobId]: next }
           })
+          break
+        }
+        case 'job:files-delta': {
+          const payload = event.payload as { jobId: string; deltas: FileStateDelta[] }
+          setFiles((current) => {
+            const list = current[payload.jobId]
+            const index = fileIndex.current[payload.jobId]
+            if (list === undefined || index === undefined) return current
+            const next = list.slice()
+            let changed = false
+            for (const delta of payload.deltas) {
+              const at = index.get(delta.relPath)
+              if (at === undefined) continue
+              const previous = next[at]
+              if (previous === undefined) continue
+              /*
+               * 迟到的中间态必须挡掉：中间态是延迟 200ms 合并发送的，
+               * 完全可能晚于终态到达。不挡的话，一个界面上已经写着「已校验」
+               * 的行会被 200ms 前的「校验中」打回去 —— 比不显示中间态还糟。
+               */
+              if (!shouldApplyFileStateChange(previous.state, delta.state)) continue
+              /*
+               * 只在字段真的不同时才把新行放回数组。这一步是性能关键：
+               * 行组件套了 React.memo，引用没变就跳过重渲染 ——
+               * 上千行的表里，一次中间态事件通常只弄脏几行。
+               */
+              const merged: CopyJobFile = { ...previous }
+              let touched = false
+              if (delta.state !== previous.state) {
+                merged.state = delta.state
+                touched = true
+              }
+              if (delta.bytesCopied !== undefined && delta.bytesCopied !== previous.bytesCopied) {
+                merged.bytesCopied = delta.bytesCopied
+                touched = true
+              }
+              if (delta.error !== undefined && delta.error !== previous.error) {
+                merged.error = delta.error
+                touched = true
+              }
+              if (delta.sourceHash !== undefined && delta.sourceHash !== previous.sourceHash) {
+                merged.sourceHash = delta.sourceHash
+                touched = true
+              }
+              if (!touched) continue
+              next[at] = merged
+              changed = true
+            }
+            // 一行都没真变就返回原引用，让 React 整个跳过这次更新
+            return changed ? { ...current, [payload.jobId]: next } : current
+          })
+          break
+        }
+        case 'job:files-resync': {
+          const payload = event.payload as { jobId: string }
+          void loadFiles(payload.jobId, 1500)
           break
         }
         case 'job:log': {
@@ -234,7 +357,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
           break
       }
     },
-    [pushToast, refreshReports]
+    [loadFiles, pushToast, refreshReports]
   )
 
   // 初始化

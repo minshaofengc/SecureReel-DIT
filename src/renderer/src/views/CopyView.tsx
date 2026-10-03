@@ -3,19 +3,25 @@ import type {
   DriveUsage,
   HashAlgorithm,
   ManifestFormat,
-  ParentProject,
+  ProjectDetails,
   ProjectDraft,
   ScanResult,
   VolumeKind
 } from '@shared/types'
 import { HASH_ALGORITHMS, HASH_ALGORITHM_LABELS, MANIFEST_FORMATS, MAX_COPY_NOTES_LENGTH } from '@shared/types'
-import { humanBytes } from '@shared/format'
-import { emptyProjectDraft, normalizeProjectDetails } from '@shared/project'
+import { humanBytes, todayLocalDate } from '@shared/format'
+import {
+  emptyProjectDetails,
+  emptyProjectDraft,
+  mergeTalentIntoParent,
+  normalizeProjectDetails
+} from '@shared/project'
 import { Card, Field, Note, PathPicker, Progress, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
+import { zeroByteNoteKey } from '../platform'
 
 /** 下拉里表示「新建母项目」的哨兵值，不会与真实 ID 冲突 */
 const NEW_PARENT_VALUE = '__new_parent__'
@@ -23,13 +29,16 @@ const NEW_PARENT_VALUE = '__new_parent__'
 /**
  * 取路径的最后一段，用来推默认任务名。
  *
- * 必须 `filter` 掉空段：从访达/终端粘贴的路径常带尾斜杠，
+ * 必须 `filter` 掉空段：从文件管理器/终端粘贴的路径常带尾斜杠，
  * `'/Volumes/CARD/'.split('/').slice(-1)[0]` 得到的是**空字符串**而不是 'CARD'，
  * 于是任务名变成空串、创建请求被校验直接拒掉，只弹一句
  * 「请填写任务名称」—— 而用户看到的输入框里本来就是空的，莫名其妙。
+ *
+ * 两种分隔符都要切：Windows 的路径是 `D:\Cards\A001`，只按 `/` 切会
+ * 把整条路径当成任务名（含盘符与反斜杠），既难看又会让落盘目录名走样。
  */
 function lastPathSegment(path: string): string | null {
-  return path.split('/').filter((part) => part !== '').slice(-1)[0] ?? null
+  return path.split(/[/\\]/).filter((part) => part !== '').slice(-1)[0] ?? null
 }
 
 const KIND_LABEL: Record<VolumeKind, string> = {
@@ -49,7 +58,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     parents,
     projectDraft,
     setProjectDraft,
-    pushToast
+    pushToast,
+    appInfo
   } = useAppState()
 
   const [jobName, setJobName] = useState('')
@@ -71,32 +81,60 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
 
   const requiredBytes = scan?.totalBytes ?? null
 
-  // 首次进入拷贝页时准备好项目信息草稿。
-  // 只做一次：草稿本身存在全局状态里，切页面回来不该被重新覆盖。
+  // 首次进入拷贝页时准备好表单。
+  // 只做一次：这些状态在切页面回来后不该被重新覆盖。
   const draftLoaded = useRef(false)
   useEffect(() => {
     if (draftLoaded.current || projectDraft !== null) return
     draftLoaded.current = true
     void (async () => {
-      try {
-        const template = await unwrap(window.securereel.project.template())
-        setProjectDraft(
-          template === null
-            ? { ...emptyProjectDraft(), shootDay: new Date().toISOString().slice(0, 10) }
-            : {
-                projectName: template.projectName,
-                shootDay: template.shootDay,
-                camera: template.camera,
-                lenses: template.lenses,
-                notes: template.notes,
-                crew: template.crew,
-                // 卡号与本次备注属于"这一张卡"，绝不沿用上一次
-                cardLabel: '',
-                copyNotes: ''
-              }
-        )
-      } catch {
-        setProjectDraft({ ...emptyProjectDraft(), shootDay: new Date().toISOString().slice(0, 10) })
+      /*
+       * 两条预填来源各管一摊：
+       *   · template  —— "跟着戏走"的项目信息（机型 / 镜头 / 人员）
+       *   · lastDraft —— "跟着操作走"的来源、目标与项目名
+       * 各自失败也不影响：最差就是一张空表单。
+       */
+      const [template, lastDraft] = await Promise.all([
+        unwrap(window.securereel.project.template()).catch(() => null),
+        unwrap(window.securereel.jobs.lastDraft()).catch(() => null)
+      ])
+
+      const base =
+        template === null
+          ? { ...emptyProjectDraft(), shootDay: todayLocalDate() }
+          : {
+              projectName: template.projectName,
+              /*
+               * 拍摄日**刻意不沿用**上一次填的。
+               *
+               * 它记的是"上一回拷的那批卡是哪天拍的"，隔天再拷就必然错一天 ——
+               * 而且格式完全合法（`2026-9-30`），不报任何错，一路错进报告和清单，
+               * 等发现时报告已经发出去了。默认永远是当天，要改随手改。
+               * 也正因此 `hasSubstance()` 不看这个字段。
+               */
+              shootDay: todayLocalDate(),
+              camera: template.camera,
+              lenses: template.lenses,
+              notes: template.notes,
+              crew: template.crew,
+              // 卡号与本次备注属于"这一张卡"，绝不沿用上一次 ——
+              // 卡号会进报告，填错比空着更糟
+              cardLabel: '',
+              copyNotes: ''
+            }
+
+      setProjectDraft(
+        // 上次实际填过的项目名优先：母项目下的任务不会被 template 覆盖到
+        lastDraft !== null && lastDraft.projectName !== ''
+          ? { ...base, projectName: lastDraft.projectName }
+          : base
+      )
+
+      if (lastDraft !== null) {
+        // 现场常是同一张卡连拷到几块盘，每次都重新选一遍路径纯属浪费。
+        // 目标盘列表也一并带回来 —— 这是最省事的一步。
+        setSourcePath(lastDraft.sourcePath)
+        setTargets(lastDraft.targetPaths)
       }
     })()
   }, [projectDraft, setProjectDraft])
@@ -112,12 +150,22 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     [draft, setProjectDraft]
   )
 
+  /**
+   * 把母项目的项目信息带进表单。
+   *
+   * 传进来的 `details` 来自主进程的 `parents.recall()`：**档案里空着的职员与镜头，
+   * 会从该母项目名下历史任务的快照里补回来**。旧版本只把内容存进任务、不写回档案，
+   * 不补的话切到母项目会看到一份空档案，用户会以为从前填的丢了。
+   *
+   * 拍摄日**不跟随母项目**：它是"这一次拷的卡是哪天拍的"，每次重置为当天。
+   */
   const applyParentDetails = useCallback(
-    (project: ParentProject | null) => {
+    (parentDetails: ProjectDetails | null) => {
       if (draft === null) return
       setProjectDraft({
         ...draft,
-        ...(project === null ? emptyProjectDraft() : normalizeProjectDetails(project.details)),
+        ...(parentDetails === null ? emptyProjectDraft() : parentDetails),
+        shootDay: todayLocalDate(),
         // 卡号与本次备注不受母项目影响
         cardLabel: draft.cardLabel,
         copyNotes: draft.copyNotes
@@ -127,19 +175,37 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
   )
 
   const pickParent = useCallback(
-    (value: string) => {
+    async (value: string) => {
       const next = value === '' ? null : value
       setParentId(next)
-      applyParentDetails(parents.find((project) => project.id === next) ?? null)
+      if (next === null) {
+        applyParentDetails(null)
+        return
+      }
+      try {
+        applyParentDetails(await unwrap(window.securereel.parents.recall(next)))
+      } catch (error) {
+        // 回捞失败退回档案本身：取不到历史不该挡住选母项目这件正事
+        const fallback = parents.find((project) => project.id === next)
+        applyParentDetails(fallback === undefined ? null : normalizeProjectDetails(fallback.details))
+        pushToast('warn', error instanceof Error ? error.message : String(error))
+      }
     },
-    [applyParentDetails, parents]
+    [applyParentDetails, parents, pushToast]
   )
 
   const createParent = useCallback(async () => {
     const name = newParentName.trim()
     if (name === '') return
     try {
-      const created = await unwrap(window.securereel.parents.create(name, emptyProjectDraft()))
+      const created = await unwrap(
+        window.securereel.parents.create(name, {
+          ...emptyProjectDetails(),
+          // 把刚填好的职员与镜头一起带进新母项目：现场常常是先填了才想起建档，
+          // 建完还要再填一遍纯属折腾。
+          ...(draft === null ? {} : { lenses: draft.lenses, crew: draft.crew })
+        })
+      )
       await refreshParents()
       setParentId(created.id)
       setNewParentName('')
@@ -148,11 +214,11 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     } catch (error) {
       pushToast('error', error instanceof Error ? error.message : String(error))
     }
-  }, [newParentName, pushToast, refreshParents, t])
+  }, [draft, newParentName, pushToast, refreshParents, t])
 
   const clearAll = useCallback(() => {
     setParentId(null)
-    setProjectDraft({ ...emptyProjectDraft(), shootDay: new Date().toISOString().slice(0, 10) })
+    setProjectDraft({ ...emptyProjectDraft(), shootDay: todayLocalDate() })
   }, [setProjectDraft])
 
   const refreshUsage = useCallback(
@@ -241,6 +307,19 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         pushToast('warn', t('copy.spaceAckRequired'))
         return
       }
+      /*
+       * 预判主进程接下来会不会真的把职员与镜头写进母项目。
+       *
+       * 用的是与主进程同一个纯函数，两边判断一致。只在"填了、而且和档案里不一样"
+       * 时才成立 —— 没变化还弹一句"已记入"是空话，用户下次就不会信这个提示了。
+       */
+      const willRememberTalent =
+        draft !== null &&
+        selectedParent !== null &&
+        mergeTalentIntoParent(normalizeProjectDetails(selectedParent.details), {
+          lenses: draft.lenses,
+          crew: draft.crew
+        }).changed
       setBusy(true)
       try {
         // 项目信息随创建一次带全，不在创建后再补一次保存 ——
@@ -266,6 +345,12 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         }
         await refreshJobs()
         pushToast('success', t('copy.created'))
+        // 主进程会在创建任务时把职员与镜头记进母项目档案，这里把列表拉回来同步。
+        if (parentId !== null) await refreshParents()
+        // 只有真的会记进去才提示，避免"什么都没变却说已保存"的空话
+        if (willRememberTalent && selectedParent !== null) {
+          pushToast('info', t('copy.talentRemembered', { name: selectedParent.name }))
+        }
         setJobName('')
         setSourcePath('')
         setTargets([])
@@ -290,6 +375,8 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
       parentId,
       pushToast,
       refreshJobs,
+      refreshParents,
+      selectedParent,
       setProjectDraft,
       settings.hashAlgorithm,
       settings.manifestFormat,
@@ -355,7 +442,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
                 setNewParentOpen(true)
                 return
               }
-              pickParent(next)
+              void pickParent(next)
             }}
           />
         </div>
@@ -457,7 +544,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
               </div>
             </div>
 
-            {scan.kind === 'hde-vfs' && <Note tone="warn">{t('hde.zeroByte')}</Note>}
+            {scan.kind === 'hde-vfs' && <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>}
 
             {scan.warnings.length > 0 && (
               <Note tone="warn">
@@ -503,7 +590,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
                 type="button"
                 className="btn btn-sm"
                 disabled={busy || draft === null}
-                onClick={() => applyParentDetails(selectedParent)}
+                onClick={() => void pickParent(selectedParent.id)}
               >
                 {t('copy.resetToParent')}
               </button>

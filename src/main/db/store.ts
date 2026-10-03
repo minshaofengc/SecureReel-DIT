@@ -12,8 +12,10 @@ import type {
   FileState,
   FileTargetResult,
   JobState,
+  LastJobDraft,
   MediaProbe,
   ParentProject,
+  ProjectDetails,
   ProjectInfo,
   ReportRevision,
   ReportSummary,
@@ -21,7 +23,15 @@ import type {
   VolumeKind
 } from '@shared/types'
 import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, VOLUME_KINDS } from '@shared/types'
-import { hasSubstance, normalizeProjectDetails, normalizeProjectInfo } from '@shared/project'
+import {
+  fillMissingDetails,
+  hasCrew,
+  hasLenses,
+  hasSubstance,
+  mergeTalentIntoParent,
+  normalizeProjectDetails,
+  normalizeProjectInfo
+} from '@shared/project'
 import {
   fromSqlBoolean,
   fromSqlNullableNumber,
@@ -81,6 +91,9 @@ export interface QuarantineRecord {
   /** 留档后的文件路径；挪不动时为 null */
   backupPath: string | null
 }
+
+/** `settings_kv` 里存「上次任务草稿」的键。 */
+export const LAST_JOB_DRAFT_KEY = 'lastJobDraft'
 
 export class Store {
   private quarantine: QuarantineRecord | null = null
@@ -230,6 +243,50 @@ export class Store {
     return settings
   }
 
+  /**
+   * 读一条与环境无关的零散状态。
+   *
+   * `settings_kv` 是通用的键值表，`settings` 只是其中一条。这里给那些
+   * **不属于 AppSettings** 的东西留口子 —— 比如"上次任务用过什么"，
+   * 它既不是用户偏好，也不该跟着设置一起被重置。
+   */
+  getKv(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM settings_kv WHERE key = ?').get(key)
+    return row === undefined ? null : asString(row.value)
+  }
+
+  setKv(key: string, value: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)').run(key, value)
+  }
+
+  /**
+   * 上次任务草稿。
+   *
+   * 读不出来（没有 / JSON 坏了 / 形状不对）一律返回 null，让调用方按
+   * "全新一次"处理 —— 预填只是便利，绝不能因为它自己坏了而挡住拷贝。
+   */
+  getLastJobDraft(): LastJobDraft | null {
+    const raw = this.getKv(LAST_JOB_DRAFT_KEY)
+    if (raw === null) return null
+    try {
+      const parsed = JSON.parse(raw) as Partial<LastJobDraft> | null
+      if (parsed === null || typeof parsed !== 'object') return null
+      if (typeof parsed.sourcePath !== 'string' || parsed.sourcePath === '') return null
+      if (!Array.isArray(parsed.targetPaths)) return null
+      return {
+        sourcePath: parsed.sourcePath,
+        targetPaths: parsed.targetPaths.filter((item): item is string => typeof item === 'string'),
+        projectName: typeof parsed.projectName === 'string' ? parsed.projectName : ''
+      }
+    } catch {
+      return null
+    }
+  }
+
+  saveLastJobDraft(draft: LastJobDraft): void {
+    this.setKv(LAST_JOB_DRAFT_KEY, JSON.stringify(draft))
+  }
+
   /* ---------------- 任务 ---------------- */
 
   insertJob(job: CopyJob): void {
@@ -237,16 +294,18 @@ export class Store {
       this.db
         .prepare(
           `INSERT INTO jobs (
-             id, name, mode, source_path, source_kind, is_codex_vfs, hash_algorithm, manifest_format,
+             id, name, mode, source_path, source_root_name, source_kind, is_codex_vfs,
+             hash_algorithm, manifest_format,
              verify_after_write, state, total_files, total_bytes, files_done, files_failed,
              bytes_done, created_at, started_at, finished_at, degradation_notice, parent_project_id
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           job.id,
           job.name,
           job.mode,
           job.sourcePath,
+          job.sourceRootName,
           job.sourceKind,
           job.isCodExVfs ? 1 : 0,
           job.hashAlgorithm,
@@ -359,6 +418,7 @@ export class Store {
       name: asString(row.name),
       mode: pick(JOB_MODES, row.mode, 'copy'),
       sourcePath: asString(row.source_path),
+      sourceRootName: asString(row.source_root_name),
       sourceKind: pick(VOLUME_KINDS, row.source_kind, 'generic') as VolumeKind,
       isCodExVfs: fromSqlBoolean(row.is_codex_vfs),
       parentProjectId: fromSqlNullableString(row.parent_project_id),
@@ -881,6 +941,80 @@ export class Store {
     return rows
       .map((row) => this.getParentProject(asString(row.id)))
       .filter((project): project is ParentProject => project !== null)
+  }
+
+  /**
+   * 从母项目名下**历史拷贝任务**的快照里，把档案里空着的字段补上。
+   *
+   * 存在理由（真实踩到的）：旧版本不会把拷贝页填的职员与镜头写回母项目，
+   * 那些内容只活在每个任务的 `project_info` 快照里。于是母项目档案是空的，
+   * 切到它却什么也带不出来 —— 用户会以为"我之前填的东西丢了"。
+   * 数据其实一直在库的另一张表里，这里负责把它还回去。
+   *
+   * 语义是**只补空、不覆盖**（见 `fillMissingDetails`）：用户自己写进档案的内容
+   * 优先级永远高于历史记录的推断。
+   *
+   * 只读、不落库。写回档案是 `rememberParentTalent` 与该用户的编辑动作的事 ——
+   * 一个读接口顺手改数据库，会让"我什么都没动，它自己变了"这种事发生。
+   */
+  recallParentDetails(parentProjectId: string): ProjectDetails | null {
+    const project = this.getParentProject(parentProjectId)
+    if (project === null) return null
+
+    // 档案已经齐了就不必翻历史
+    const complete =
+      hasCrew(project.details.crew) && hasLenses(project.details.lenses) && project.details.camera !== ''
+    if (complete) return project.details
+
+    const rows = this.db
+      .prepare(
+        `SELECT p.data_json AS data_json FROM project_info p
+         JOIN jobs j ON j.id = p.job_id
+         WHERE j.parent_project_id = ?
+         ORDER BY j.created_at DESC, j.rowid DESC
+         LIMIT 50`
+      )
+      .all(parentProjectId)
+
+    let merged = project.details
+    for (const row of rows) {
+      let snapshot: ProjectDetails
+      try {
+        snapshot = normalizeProjectInfo(JSON.parse(asString(row.data_json)))
+      } catch {
+        continue
+      }
+      // 逐条叠加：后一条只能填前一条留下的空，不会顶掉已经有的
+      merged = fillMissingDetails(merged, snapshot)
+      if (hasCrew(merged.crew) && hasLenses(merged.lenses) && merged.camera !== '') break
+    }
+    return merged
+  }
+
+  /**
+   * 把这次拷贝填的职员与镜头记进母项目档案。
+   *
+   * 只动这两项，其余字段（机型、项目名、备注、拍摄日）原样保留 ——
+   * 拷贝页的顺手改动不该把人家档案里别的字段一起改写。
+   * 本次没填的项不写（见 `mergeTalentIntoParent`），避免把攒了很久的名单清空。
+   *
+   * 返回是否真的产生了变化，让调用方能决定要不要提示用户、要不要刷新列表。
+   */
+  rememberParentTalent(
+    parentProjectId: string,
+    filled: Pick<ProjectDetails, 'lenses' | 'crew'>
+  ): { project: ParentProject; changed: boolean } | null {
+    const current = this.getParentProject(parentProjectId)
+    if (current === null) return null
+
+    const { details, changed } = mergeTalentIntoParent(current.details, filled)
+    if (!changed) return { project: current, changed: false }
+
+    const updated = this.updateParentProject(parentProjectId, {
+      details,
+      updatedAt: new Date().toISOString()
+    })
+    return updated === null ? null : { project: updated, changed: true }
   }
 
   updateParentProject(

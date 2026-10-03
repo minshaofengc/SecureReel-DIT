@@ -13,7 +13,7 @@
  *   manifest/          本次写入的清单副本（ASC MHL 同时也会写进各目标盘）
  */
 import { createWriteStream } from 'node:fs'
-import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type {
   CopyJob,
@@ -28,11 +28,31 @@ import type {
 import type { Store } from '@main/db/store'
 import type { AppPaths } from '@main/paths'
 import type { Logger } from '@main/logger'
-import { ensureDir, pathExists } from '@main/fs-utils'
+import {
+  describeError,
+  ensureDir,
+  pathExists,
+  safeFolderName,
+  targetRelativePath
+} from '@main/fs-utils'
 import { StreamWriter } from '@main/stream-writer'
 import { humanBytes } from '@shared/format'
 import { renderHtmlReport } from './html-report'
 import { writeAscMhlManifest, writeMhlV1Manifest, type ManifestContext, type ManifestResult } from './manifests'
+
+/**
+ * 清单条目的路径转换：把"源内相对路径"换成"目标盘上的相对路径"。
+ *
+ * 清单的用途是拿它去核对目标盘上的文件，所以里面必须写**盘上真实存在的路径**。
+ * 前缀规则与拷贝引擎共用 `targetRelativePath()` —— 两边各算各的话，
+ * 就会出现"清单里列了它、盘上却找不到"这种最难查的问题。
+ */
+async function* manifestEntries(job: CopyJob, store: Store): AsyncIterable<CopyJobFile> {
+  for await (const file of store.iterateFiles(job.id)) {
+    const relPath = targetRelativePath(job.sourceRootName, file.relPath)
+    yield relPath === file.relPath ? file : { ...file, relPath }
+  }
+}
 
 export interface WriteRevisionInput {
   job: CopyJob
@@ -62,6 +82,93 @@ export interface WriteRevisionInput {
 
 export interface WriteRevisionResult {
   revision: ReportRevision
+}
+
+/**
+ * 目标盘上存放报告的顶层目录名。
+ *
+ * 单独占一个目录、而不是把文件散在盘根，是为了让"素材"和"交付记录"
+ * 一眼分得开；名字用工具名，跟其他 DIT 软件在盘上留品牌目录的惯例一致。
+ */
+export const TARGET_REPORT_FOLDER = 'SecureReel'
+
+export interface PublishToTargetsInput {
+  job: CopyJob
+  revision: ReportRevision
+  targets: CopyTarget[]
+  hostname: string
+  toolName: string
+  toolVersion: string
+  now: Date
+}
+
+export interface PublishToTargetsResult {
+  /** 成功写入的盘（用标签，给人看） */
+  published: string[]
+  /** 失败的盘与原因 */
+  failed: { label: string; reason: string }[]
+  /** 每个盘上那份副本的相对路径（相对盘根），供日志与界面显示 */
+  relativeDirs: string[]
+}
+
+/**
+ * 生成随报告一起交付的纯文本说明。
+ *
+ * 为什么除了 HTML/PDF 还要多这一份：能双击打开 HTML 的人会看报告，
+ * 但现场更常见的是有人 `ls` 一下盘、或者用脚本批量核对交付物。
+ * 一份纯文本说明是最省事的入口 —— 它把"这次拷了什么、怎么验的、
+ * 怎么复核"三句话讲清楚，不需要任何工具。
+ */
+function renderDeliveryNote(input: PublishToTargetsInput): string {
+  const { revision } = input
+  const summary = revision.summary
+  const stateText =
+    summary.jobState === 'completed'
+      ? '完成（全部文件校验通过）'
+      : summary.jobState === 'completed-with-errors'
+        ? `完成，但有 ${summary.failedFiles} 个文件未通过`
+        : summary.jobState === 'cancelled'
+          ? '被中断（未跑完，这份记录不完整）'
+          : `异常结束（${summary.jobState}）`
+
+  return [
+    `${input.toolName} 交付说明`,
+    '='.repeat(48),
+    '',
+    `修订号：${revision.revision}`,
+    `任务名称：${summary.jobName}`,
+    `生成时间：${revision.createdAt}`,
+    `生成机器：${input.hostname}`,
+    `工具版本：${input.toolName} ${input.toolVersion}`,
+    '',
+    '【本次拷贝】',
+    `  来源路径：${summary.sourcePath}`,
+    `  来源标签：${summary.sourceLabel}`,
+    `  结果：${stateText}`,
+    `  文件数量：${summary.totalFiles}`,
+    `  数据量：${humanBytes(summary.totalBytes)}`,
+    `  通过校验：${summary.verifiedFiles}`,
+    `  未通过：${summary.failedFiles}`,
+    `  校验算法：${summary.hashAlgorithm}`,
+    `  清单格式：${summary.manifestFormat}`,
+    '',
+    '【本目录里有什么】',
+    '  report.html    可直接双击打开的离线报告（含首尾帧，单文件自包含）',
+    '  report.pdf     适合归档与交付的版式',
+    '  report.json    机器可读的逐文件记录',
+    '  frames/        首尾帧缩略图',
+    '  manifest/      本次写入的清单副本',
+    '',
+    '【怎么复核】',
+    '  1. 双击 report.html，逐文件看状态、校验值、素材参数与画面',
+    '  2. 盘根的 ascmhl/ 目录下另有一份清单随素材存放，',
+    '     可用任何支持 ASC MHL 的工具做完整性核对',
+    '  3. 需要重新验证时，在本工具里对同一来源跑一次「仅校验」，',
+    '     它只读比对、不写入也不删除任何字节',
+    '',
+    '说明：目标盘上出现完整文件名的素材，都已通过独立重读校验。',
+    ''
+  ].join('\n')
 }
 
 export class ReportStore {
@@ -140,8 +247,8 @@ export class ReportStore {
 
     const writeManifest = async (root: string): Promise<ManifestResult> =>
       job.manifestFormat === 'asc-mhl-2.0'
-        ? writeAscMhlManifest(root, manifestContext, store.iterateFiles(job.id))
-        : writeMhlV1Manifest(root, manifestContext, store.iterateFiles(job.id))
+        ? writeAscMhlManifest(root, manifestContext, manifestEntries(job, store))
+        : writeMhlV1Manifest(root, manifestContext, manifestEntries(job, store))
 
     if (input.writeManifestToTargets) {
       for (const target of input.targets) {
@@ -233,6 +340,73 @@ export class ReportStore {
     const existing = store.listReports(jobId).find((item) => item.revision === revision)
     if (existing === undefined) return
     store.updateReportFiles(jobId, revision, { ...existing.files, pdf: pdfPath })
+  }
+
+  /**
+   * 把一份修订目录复制到各目标盘。
+   *
+   * 为什么报告也要跟着素材走：报告只留在本机时，盘一旦交给别人
+   * （剪辑、甲方、归档），就等于没有交付凭证。其他 DIT 工具的惯例
+   * 也是在盘上留一份。
+   *
+   * 落点：`<目标盘根>/SecureReel/<任务名>_R001/`。用任务名而不是内部
+   * jobId，是因为这个名字要给人看、给人在访达里找。
+   *
+   * 三条硬约束：
+   *   1. 仅校验模式**一个字节都不写目标盘**（连目录都不建）
+   *   2. 目标上已有同名目录时中止并记日志，绝不合并、绝不覆盖
+   *   3. 复制失败只影响这一份副本，绝不影响任务结果与本机报告
+   */
+  async publishToTargets(input: PublishToTargetsInput): Promise<PublishToTargetsResult> {
+    const { job, revision, targets } = input
+    const published: string[] = []
+    const failed: { label: string; reason: string }[] = []
+    const relativeDirs: string[] = []
+
+    // 仅校验模式只读比对，不写任何字节 —— 这条没有例外
+    if (job.mode === 'verify') return { published, failed, relativeDirs }
+
+    const source = this.revisionDir(job.id, revision.revision)
+    if (!(await pathExists(source))) {
+      return {
+        published,
+        failed: [{ label: '本机报告目录', reason: '修订目录不存在，无法复制' }],
+        relativeDirs
+      }
+    }
+
+    const name = safeFolderName(job.name)
+    const subdir = `${name === '' ? job.id : name}_${revision.revision}`
+    const relative = join(TARGET_REPORT_FOLDER, subdir)
+
+    for (const target of targets) {
+      if (!target.enabled) continue
+      const dest = join(target.path, relative)
+
+      if (await pathExists(dest)) {
+        // 绝不覆盖：宁可少一份副本，也不能把上一次的交付记录洗掉
+        failed.push({ label: target.label, reason: `${relative} 已存在，未覆盖` })
+        continue
+      }
+
+      try {
+        await cp(source, dest, { recursive: true, force: false, errorOnExist: false })
+        await writeFile(join(dest, '交付说明.txt'), renderDeliveryNote(input), 'utf8')
+        published.push(target.label)
+        relativeDirs.push(relative)
+      } catch (error) {
+        /*
+         * 只清掉**本次刚创建的那份半成品**：留着它会让下一次以为
+         * "已经有一份了"而永远不再重试。
+         * 删的绝不是用户素材，也不是上一次留下的副本 —— 那种情况在
+         * 上面那个 pathExists 分支就已经中止了。
+         */
+        await rm(dest, { recursive: true, force: true }).catch(() => undefined)
+        failed.push({ label: target.label, reason: describeError(error) })
+      }
+    }
+
+    return { published, failed, relativeDirs: [...new Set(relativeDirs)] }
   }
 
   /**

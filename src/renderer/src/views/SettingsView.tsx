@@ -9,7 +9,7 @@ import {
   type HashAlgorithm,
   type ManifestFormat
 } from '@shared/types'
-import { Card, Field, PathPicker, Segmented, Note } from '../components/ui'
+import { Card, Field, PathPicker, Segmented, Note, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
@@ -131,6 +131,37 @@ export function SettingsView(): ReactNode {
               }))}
             />
           </div>
+        </Field>
+
+        {/*
+          提示音。现场拷卡时人往往不在机器跟前，"看一眼屏幕发现跑完了"不现实，
+          出错更得立刻被注意到 —— 所以三种声音的音高走向刻意做得不一样，
+          不看屏幕也能分出是开始、结束还是出问题。
+        */}
+        <Field label={t('settings.sound')} hint={t('settings.soundHint')}>
+          <Toggle
+            checked={settings.soundEnabled}
+            label={t('settings.soundEnable')}
+            onChange={(next) => void updateSettings({ soundEnabled: next })}
+          />
+          {settings.soundEnabled && (
+            <div className="row-actions" style={{ marginTop: 10 }}>
+              <span className="field-label">{t('settings.soundVolume')}</span>
+              <input
+                type="range"
+                className="volume-slider"
+                min={0}
+                max={100}
+                step={5}
+                aria-label={t('settings.soundVolume')}
+                value={Math.round(settings.soundVolume * 100)}
+                onChange={(event) => void updateSettings({ soundVolume: Number(event.target.value) / 100 })}
+              />
+              <span className="faint" style={{ fontSize: 12 }}>
+                {Math.round(settings.soundVolume * 100)}%
+              </span>
+            </div>
+          )}
         </Field>
       </Card>
 

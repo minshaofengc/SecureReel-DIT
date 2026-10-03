@@ -9,6 +9,16 @@
 import { basename } from 'node:path'
 import type { DriveUsage, ScanResult, SourceDrive, VolumeKind } from '@shared/types'
 import { describeVolume, stripTrailingSeparators, volumeUsage, walkFiles } from '@main/fs-utils'
+import { HOST } from '@main/platform'
+import { volumeLabelFor } from '@main/volumes'
+
+/** 取第一个「有内容」的字符串。空串与 null 一样算没有。 */
+function firstNonEmpty(...values: (string | null | undefined)[]): string | null {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value.trim() !== '') return value
+  }
+  return null
+}
 
 /** 出现这些扩展名，就认为卷上带 HDE 特征。 */
 const HDE_EXTENSIONS = new Set(['arx'])
@@ -33,13 +43,26 @@ function classify(root: string, extensions: Map<string, number>): VolumeKind {
   return 'generic'
 }
 
-export async function inspectSource(path: string): Promise<SourceDrive> {
+/**
+ * 识别一个卷。
+ *
+ * `labelOverride` 是调用方已经知道的更好名字（枚举卷列表时的卷标）。
+ * Windows 上 Node 拿不到卷标，`describeVolume` 只能给出盘符（`E:`），
+ * 所以那个场景下要额外问一次 PowerShell；拿不到就老实显示盘符，
+ * 绝不因为「卷标取不到」而让整个列表出不来。
+ */
+export async function inspectSource(path: string, labelOverride?: string | null): Promise<SourceDrive> {
   const description = await describeVolume(path)
   const usage = await volumeUsage(path)
 
+  let label = firstNonEmpty(labelOverride, description?.label)
+  if (HOST === 'win32' && labelOverride === undefined) {
+    label = firstNonEmpty(await volumeLabelFor(description?.mountPoint ?? path), label)
+  }
+
   return {
     path,
-    label: description?.label ?? basename(path),
+    label: label ?? basename(path),
     kind: 'generic',
     isCodExVfs: false,
     totalBytes: usage?.totalBytes ?? null,

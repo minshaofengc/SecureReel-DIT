@@ -13,6 +13,7 @@ import type {
   HdeToolStatus,
   IpcResult,
   JobProgress,
+  LastJobDraft,
   ParentProject,
   ProjectDetails,
   ProjectDraft,
@@ -46,6 +47,7 @@ export const IPC = {
   jobCancel: 'job:cancel',
   jobDelete: 'job:delete',
   jobRecoverable: 'job:recoverable',
+  jobLastDraft: 'job:last-draft',
   jobProgress: 'job:progress',
   jobAddTarget: 'job:add-target',
   jobSetParent: 'job:set-parent',
@@ -59,6 +61,7 @@ export const IPC = {
   parentCreate: 'parent:create',
   parentUpdate: 'parent:update',
   parentDelete: 'parent:delete',
+  parentRecall: 'parent:recall',
 
   reportsList: 'reports:list',
   reportsRegenerate: 'reports:regenerate',
@@ -72,7 +75,17 @@ export const IPC = {
   logsReveal: 'logs:reveal',
   logsExportDiagnostics: 'logs:export-diagnostics',
 
-  event: 'main:event'
+  event: 'main:event',
+
+  /**
+   * 同步窗口标题栏叠加层的颜色（只有 Windows 用得上）。
+   *
+   * 为什么非要回传：`titleBarOverlay` 的颜色由**主进程**设置在原生窗口上，
+   * 而主题在**渲染层**切换；配色真源是 `styles/tokens.css`。
+   * 让主进程也存一份调色板，就意味着以后改主题要记得改两处 ——
+   * 所以改成渲染层把 CSS 变量算出来的颜色送回来。
+   */
+  windowSetTitleBar: 'window:set-title-bar'
 } as const
 
 export interface AppInfo {
@@ -145,6 +158,8 @@ export interface SecureReelApi {
     cancel(jobId: string): Promise<IpcResult<CopyJob>>
     remove(jobId: string): Promise<IpcResult<boolean>>
     recoverable(): Promise<IpcResult<CopyJob[]>>
+    /** 上次任务用过的来源 / 目标 / 选项，用于拷贝页预填；从未建过任务时为 null */
+    lastDraft(): Promise<IpcResult<LastJobDraft | null>>
     addTarget(jobId: string, path: string): Promise<IpcResult<CopyTarget[]>>
     /** 改任务的母项目归属；传 null = 移出到未分组 */
     setParent(jobId: string, parentProjectId: string | null): Promise<IpcResult<CopyJob>>
@@ -168,6 +183,14 @@ export interface SecureReelApi {
     ): Promise<IpcResult<ParentProject>>
     /** 只解绑名下的拷贝任务，不删除任务本身 */
     remove(parentProjectId: string): Promise<IpcResult<boolean>>
+    /**
+     * 取这个母项目"该带进拷贝页"的项目信息。
+     *
+     * 与 `get` 的差别：档案里空着的字段会从该母项目名下历史拷贝任务的快照里补上。
+     * 旧版本只在任务里存快照、不写回母项目，直接 `get` 会看到一份空档案，
+     * 用户会以为从前填的职员与镜头丢了。只读，不落库。
+     */
+    recall(parentProjectId: string): Promise<IpcResult<ProjectDetails>>
   }
   reports: {
     list(jobId: string): Promise<IpcResult<ReportRevision[]>>
@@ -189,4 +212,15 @@ export interface SecureReelApi {
     exportDiagnostics(): Promise<IpcResult<string | null>>
   }
   onEvent(handler: (event: unknown) => void): () => void
+
+  window: {
+    /**
+     * 把标题栏叠加层的颜色同步给主进程（Windows 无边框标题栏用）。
+     *
+     * 颜色由渲染层用 `getComputedStyle` 从当前主题的 CSS 变量里读出来，
+     * 传的是**计算结果**而不是主题名 —— 保证主题配色的唯一真源仍然是 tokens.css。
+     * 非 Windows 平台上主进程会静默忽略，所以调用方不必先判断平台。
+     */
+    setTitleBarOverlay(colors: { color: string; symbolColor: string }): Promise<IpcResult<boolean>>
+  }
 }

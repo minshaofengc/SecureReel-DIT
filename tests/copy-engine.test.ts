@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CopyJob, CopyJobFile, HashAlgorithm } from '../src/shared/types'
+import type { CopyJob, CopyJobFile, FileStateDelta, HashAlgorithm, JobProgress } from '../src/shared/types'
 import { DEFAULT_SETTINGS } from '../src/shared/types'
 import { Store } from '../src/main/db/store'
 import { Logger } from '../src/main/logger'
@@ -58,7 +58,9 @@ async function seedJob(
   sourcePath: string,
   targets: string[],
   algorithm: HashAlgorithm = 'xxhash64',
-  mode: 'copy' | 'verify' = 'copy'
+  mode: 'copy' | 'verify' = 'copy',
+  /** 目标盘上为来源目录保留的那一层；空串 = 不加，等价于 1.x 的行为 */
+  sourceRootName = ''
 ): Promise<CopyJob> {
   const scan = await walkFiles(sourcePath)
   const job: CopyJob = {
@@ -66,6 +68,7 @@ async function seedJob(
     name: '测试任务',
     mode,
     sourcePath,
+    sourceRootName,
     sourceKind: 'generic',
     isCodExVfs: false,
     parentProjectId: null,
@@ -739,5 +742,206 @@ describe('目标被停用', () => {
 
     expect(await readFile(join(targets[0] as string, 'x.txt'), 'utf8')).toBe('payload')
     await expect(stat(join(targets[1] as string, 'x.txt'))).rejects.toThrow()
+  })
+})
+
+/**
+ * 中间态推送。
+ *
+ * 2.0 修的正是这里：从前 `copying` / `verifying` 只写数据库、从不发事件，
+ * 界面上只能看到"待处理 → 已校验"的跳变。这组测试锁住三件事：
+ *   ① 中间态确实发出来了
+ *   ② 同一个文件的多次变更被合并窗口折叠（否则上千文件的卡会推几千条 IPC）
+ *   ③ **文件结清之后不能再冒出中间态** —— 那会让界面"校验完又倒回去"
+ */
+describe('中间态推送', () => {
+  /** 直接构造引擎，为的是拿到 onFilesChanged / onProgress 两个回调。 */
+  function buildEngine(
+    job: CopyJob,
+    hooks: {
+      onFilesChanged?: (deltas: FileStateDelta[]) => void
+      onFileSettled?: (file: CopyJobFile) => void
+      onProgress?: (progress: JobProgress) => void
+    },
+    extra: { progressThrottleMs?: number } = {}
+  ): CopyEngine {
+    return new CopyEngine({
+      job,
+      store,
+      logger,
+      settings: { ...DEFAULT_SETTINGS, maxParallelTargets: 4 },
+      signal: new AbortController().signal,
+      gate: new PauseGate(),
+      probeRunner: null,
+      ...hooks,
+      ...extra
+    })
+  }
+
+  it('中间态真的被推送，且文件结清之后不再回退', async () => {
+    const source = await makeSource({
+      'a.bin': Buffer.alloc(64 * 1024, 1),
+      'b.bin': Buffer.alloc(64 * 1024, 2),
+      'c.bin': Buffer.alloc(64 * 1024, 3)
+    })
+    const job = await seedJob(source, await makeTargets(1))
+
+    // 把 delta 与 settled 放进同一条时间线，顺序本身就是断言对象
+    const timeline: { kind: 'delta' | 'settled'; relPath: string; state: string }[] = []
+    const engine = buildEngine(job, {
+      onFilesChanged: (deltas) => {
+        for (const delta of deltas) {
+          timeline.push({ kind: 'delta', relPath: delta.relPath, state: delta.state })
+        }
+      },
+      onFileSettled: (file) => timeline.push({ kind: 'settled', relPath: file.relPath, state: file.state })
+    })
+
+    const result = await engine.run()
+    expect(result.state).toBe('completed')
+
+    const deltaStates = timeline.filter((item) => item.kind === 'delta').map((item) => item.state)
+    // ① 中间态确实发出来了 —— 这正是 2.0 要修的"看不到进行中"
+    expect(deltaStates.length).toBeGreaterThan(0)
+    // 这条通道只该出现中间态：终态走的是 job:file 那条完整行
+    expect(deltaStates.every((state) => state === 'copying' || state === 'verifying')).toBe(true)
+
+    // ② 折叠：每个文件在同一个窗口里只留一条（copying 与 verifying 合成后者）
+    const perFile = new Map<string, number>()
+    for (const item of timeline) {
+      if (item.kind !== 'delta') continue
+      perFile.set(item.relPath, (perFile.get(item.relPath) ?? 0) + 1)
+    }
+    expect([...perFile.keys()].sort()).toEqual(['a.bin', 'b.bin', 'c.bin'])
+    expect(Math.max(...perFile.values())).toBeLessThanOrEqual(2)
+
+    // 每个文件最终都走到了结清（终态走 job:file 那条完整行，不在这条通道里）
+    expect(timeline.filter((item) => item.kind === 'settled')).toHaveLength(3)
+  })
+
+  it('一个合并窗口能带出多个文件，不是逐文件推送', async () => {
+    const files: Record<string, Buffer> = {}
+    for (let i = 0; i < 40; i++) files[`clip_${String(i).padStart(3, '0')}.bin`] = Buffer.alloc(16 * 1024, i)
+    const source = await makeSource(files)
+    const job = await seedJob(source, await makeTargets(1))
+
+    const batches: number[] = []
+    const engine = buildEngine(job, { onFilesChanged: (deltas) => batches.push(deltas.length) })
+    await engine.run()
+
+    expect(batches.length).toBeGreaterThan(0)
+    // 合并的证据：至少有一批同时带了多个文件。
+    // 反过来（每批只有 1 条）说明窗口没起作用，40 个文件就是 80 次 IPC。
+    expect(Math.max(...batches)).toBeGreaterThan(1)
+  })
+
+  it('进度里能读到正在处理的文件，任务结束后清空', async () => {
+    const size = 8 * 1024 * 1024
+    const source = await makeSource({ 'big.bin': Buffer.alloc(size, 9) })
+    const job = await seedJob(source, await makeTargets(1))
+
+    const snapshots: JobProgress[] = []
+    // progressThrottleMs: 0 —— 必须关掉节流才观察得到瞬时状态。
+    // 真实运行时是 250ms，而一个 8MB 文件在本地盘上几十毫秒就拷完了，
+    // 那时"正在处理"根本轮不到上报。这是物理事实而非缺陷：相机卡上的
+    // 素材动辄几百 MB 到几 GB，250ms 的窗口有的是机会把它们报出来。
+    const engine = buildEngine(
+      job,
+      { onProgress: (progress) => snapshots.push(progress) },
+      { progressThrottleMs: 0 }
+    )
+    await engine.run()
+
+    const busy = snapshots.filter((item) => item.activeFiles.length > 0)
+    expect(busy.length).toBeGreaterThan(0)
+    for (const item of busy) {
+      const active = item.activeFiles[0]
+      expect(active?.relPath).toBe('big.bin')
+      expect(active?.sizeBytes).toBe(size)
+      expect(active?.bytesRead ?? -1).toBeLessThanOrEqual(size)
+    }
+    // currentFile 必须与 activeFiles 自洽（它是给尚未升级的消费者留的兼容字段）
+    expect(busy[0]?.currentFile).toBe('big.bin')
+
+    // 任务结束后的那份进度不该还挂着"正在处理"
+    const last = snapshots[snapshots.length - 1]
+    expect(last?.activeFiles).toEqual([])
+    expect(last?.currentFile).toBeNull()
+  })
+})
+
+/**
+ * 目标盘的目录层级。
+ *
+ * `walkFiles` 算出来的相对路径是相对**用户选中的那一层**的，那一层本身
+ * 不在任何 relPath 里。选卡根时看不出问题（DCIM 那一层本来就是内容的一部分），
+ * 选卡内的子文件夹时目标盘上就会平白少一层 —— 现场看到的是
+ * "文件夹本身没拷过去，文件全摊在盘根"。
+ */
+describe('目标盘的目录层级', () => {
+  it('为来源目录本身保留一层，选子文件夹时不再摊在盘根', async () => {
+    const source = await makeSource({ 'A001_C001.bin': Buffer.from('clip-1') })
+    const targets = await makeTargets(1)
+    // 模拟"用户在卡内选中了一个叫 A001 的子文件夹"
+    const job = await seedJob(source, targets, 'xxhash64', 'copy', 'A001')
+
+    const result = await runEngine(job)
+    expect(result.state).toBe('completed')
+
+    expect(await readFile(join(targets[0] as string, 'A001', 'A001_C001.bin'), 'utf8')).toBe('clip-1')
+  })
+
+  it('素材自带子目录时完整重建 <来源目录>/<内部层级>/<文件>', async () => {
+    const source = await makeSource({
+      'DCIM/100/A001_C001.bin': Buffer.from('inside-1'),
+      'DCIM/100/A001_C002.bin': Buffer.from('inside-2')
+    })
+    const targets = await makeTargets(1)
+    const job = await seedJob(source, targets, 'xxhash64', 'copy', 'A001')
+
+    await runEngine(job)
+
+    expect(await readFile(join(targets[0] as string, 'A001', 'DCIM/100/A001_C001.bin'), 'utf8')).toBe(
+      'inside-1'
+    )
+    expect(await readFile(join(targets[0] as string, 'A001', 'DCIM/100/A001_C002.bin'), 'utf8')).toBe(
+      'inside-2'
+    )
+  })
+
+  it('每一块目标盘都建出同一层目录', async () => {
+    const source = await makeSource({ 'clip.bin': Buffer.from('x') })
+    const targets = await makeTargets(2)
+    const job = await seedJob(source, targets, 'xxhash64', 'copy', 'A001')
+
+    await runEngine(job)
+
+    for (const target of targets) {
+      expect(await readFile(join(target, 'A001', 'clip.bin'), 'utf8')).toBe('x')
+    }
+  })
+
+  it('字段为空串时与从前完全一致 —— 1.x 的存量任务重跑不会多出一级目录', async () => {
+    const source = await makeSource({ 'clip.bin': Buffer.from('legacy') })
+    const targets = await makeTargets(1)
+    const job = await seedJob(source, targets, 'xxhash64', 'copy', '')
+
+    await runEngine(job)
+
+    expect(await readFile(join(targets[0] as string, 'clip.bin'), 'utf8')).toBe('legacy')
+  })
+
+  it('仅校验模式按同一套层级去找文件，不会误报「目标上不存在」', async () => {
+    const source = await makeSource({ 'clip.bin': Buffer.from('same') })
+    const targets = await makeTargets(1)
+    // 先按带前缀的规则摆一份正确答案到目标盘
+    await mkdir(join(targets[0] as string, 'A001'), { recursive: true })
+    await writeFile(join(targets[0] as string, 'A001', 'clip.bin'), Buffer.from('same'))
+
+    const job = await seedJob(source, targets, 'xxhash64', 'verify', 'A001')
+    const result = await runEngine(job)
+
+    expect(result.state).toBe('completed')
+    expect(result.files.map((file) => file.state)).toEqual(['verified'])
   })
 })

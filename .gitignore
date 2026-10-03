@@ -1,13 +1,16 @@
+# —— 构建产物（随时可以重新生成）——
 node_modules/
 out/
 dist/
-release/
-*.log
-.DS_Store
-.vite/
-security-reports/
-.verify-output/
-*.tsbuildinfo
 
-# 随包分发的 ffmpeg 静态二进制（约 250MB），用 scripts/fetch-ffmpeg.sh 重新获取
+# —— 随包二进制：392MB 的 ffmpeg/ffprobe，不进 git。
+#    打包前跑 `sh scripts/fetch-ffmpeg.sh` 重新下载即可（见 README）——
 vendor/
+
+# —— 编译缓存 / 验证输出 ——
+*.tsbuildinfo
+.verify-output/
+
+# —— 系统垃圾 ——
+.DS_Store
+Thumbs.db

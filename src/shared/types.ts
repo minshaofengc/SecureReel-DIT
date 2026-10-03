@@ -120,6 +120,52 @@ export const FILE_STATES = [
 ] as const
 export type FileState = (typeof FILE_STATES)[number]
 
+/** 文件状态是否已经"落定"——不会再往后走了。 */
+export function isFileStateSettled(state: FileState): boolean {
+  return state === 'verified' || state === 'failed' || state === 'skipped' || state === 'cancelled'
+}
+
+/**
+ * 这条文件状态变更该不该应用到界面上。
+ *
+ * 存在的理由：中间态是**延迟合并**（200ms）发送的，所以它完全可能晚于终态到达 ——
+ * 一个界面上已经写着「已校验」的行，会在 200ms 后收到一条迟到的「校验中」。
+ * 直接应用的话用户会看到"校验完了又倒回去"，比根本不显示中间态还糟。
+ *
+ * 为什么用"界面侧拦截"而不是"主进程发送前撤销"：撤销需要在每一条可能的
+ * 结清路径上（正常完成、失败、冲突、取消、崩溃异常）都记得撤销一次，
+ * 漏掉任何一条界面就会倒退。而这条规则是无状态的，漏不掉。
+ */
+export function shouldApplyFileStateChange(previous: FileState, next: FileState): boolean {
+  return !isFileStateSettled(previous) || isFileStateSettled(next)
+}
+
+/* ------------------------------------------------------------------ *
+ * 提示音
+ * ------------------------------------------------------------------ */
+
+export type SoundCue = 'start' | 'done' | 'error'
+
+/**
+ * 任务状态变化该配哪种提示音；返回 null 表示不响。
+ *
+ * 两个刻意的选择：
+ *   · **开始认 `queued`**：JobManager 启动时先置 queued 并发状态事件，
+ *     引擎随后置 running 走的是进度通道，不是状态事件。
+ *   · **取消不响**：那是用户自己按的，不需要再被提醒一次。
+ *
+ * 放在 shared 而不是声音模块里，有两个理由：它是纯逻辑；而且**必须能被
+ * node 环境的单元测试直接引用** —— 声音本身没法断言，"什么时候该响"可以。
+ * `sound.ts` 用到 DOM 的 AudioContext，测试引不动它。
+ */
+export function cueForJobState(previous: JobState, next: JobState): SoundCue | null {
+  if (previous === next) return null
+  if (next === 'queued') return 'start'
+  if (next === 'completed') return 'done'
+  if (next === 'completed-with-errors' || next === 'failed') return 'error'
+  return null
+}
+
 /* ------------------------------------------------------------------ *
  * 拷贝目标
  * ------------------------------------------------------------------ */
@@ -236,6 +282,26 @@ export interface CopyJobFile {
   error: string | null
 }
 
+/**
+ * 文件行的**轻量增量**，用于把 `copying` / `verifying` 这些中间态送到界面上。
+ *
+ * 为什么不能直接推整包 `CopyJobFile`：中间态的推送频率是"每文件每阶段一次"，
+ * 一个上千文件的卡就是几千条。而拼一个 `CopyJobFile` 要额外查一次
+ * `file_target_results`、解析 `probe_json` —— 这些**中间态根本用不到**。
+ * 所以这里只带渲染层真正会画的那几个字段，其余字段在界面侧按
+ * "给了哪些就覆盖哪些"合并，天然不会被冲掉。
+ *
+ * 与 `job:file`（文件结清时的完整行）的分工很明确：
+ * 增量只负责"状态看起来在动"，最终事实仍以 `job:file` 为准。
+ */
+export interface FileStateDelta {
+  relPath: string
+  state: FileState
+  bytesCopied?: number
+  error?: string | null
+  sourceHash?: string | null
+}
+
 /* ------------------------------------------------------------------ *
  * 任务
  * ------------------------------------------------------------------ */
@@ -246,6 +312,20 @@ export interface CopyJob {
   /** 任务模式：copy = 拷贝 + 校验；verify = 仅校验，不写目标盘 */
   mode: JobMode
   sourcePath: string
+  /**
+   * 用户选中的那个来源目录的名字（`basename(sourcePath)`）。
+   *
+   * 目标盘上的落盘结构 = `<目标盘根>/<sourceRootName>/<源内相对路径>`。
+   *
+   * 存在的理由：`walkFiles` 算出来的相对路径是相对**用户选中的那一层**的，
+   * 那一层本身不会出现在任何 relPath 里。选卡根时看不出问题（DCIM 那一层
+   * 本来就是内容的一部分），但选卡内的子文件夹时，目标盘上会平白少一层 ——
+   * 现场看到的是"文件夹本身没拷过去，文件全摊在盘根"。
+   *
+   * 空串表示「不加这一层」。1.x 建的存量任务全是空串，行为与从前完全一致，
+   * 不会因为升级而让老任务重跑时多出一级目录。
+   */
+  sourceRootName: string
   sourceKind: VolumeKind
   isCodExVfs: boolean
   /** 归属的母项目；null = 未分组 */
@@ -267,6 +347,20 @@ export interface CopyJob {
   degradationNotice: string | null
 }
 
+/**
+ * 一个**正在处理中**的文件。
+ *
+ * 存在的理由：整体速率与剩余时间只能回答"还剩多久"，回答不了
+ * "现在到底在动没有"。上千个小文件的卡上，用户最想确认的就是这件事。
+ * 单个超大素材（一整条 100GB+）也靠这里的字节数画一根细进度条。
+ */
+export interface ActiveFileProgress {
+  relPath: string
+  sizeBytes: number
+  /** 已读（并已写入各目标）的字节数 */
+  bytesRead: number
+}
+
 export interface JobProgress {
   jobId: string
   state: JobState
@@ -284,8 +378,10 @@ export interface JobProgress {
   totalBytes: number
   bytesDone: number
   bytesPerSecond: number
-  /** 当前正在处理的文件（相对路径） */
+  /** 当前正在处理的文件（相对路径）。并发时是其中任意一个，仅作兼容保留 */
   currentFile: string | null
+  /** 当前真正在处理的文件；串行时长度为 0 或 1，并发时最多等于文件级并发数 */
+  activeFiles: ActiveFileProgress[]
   targets: TargetProgress[]
   etaSeconds: number | null
   /** 素材分析进度（phase 为 analyzing 时有效） */
@@ -428,6 +524,30 @@ export interface ReportRevision {
  * 设置
  * ------------------------------------------------------------------ */
 
+/**
+ * 上一次拷贝任务用过的信息，用于下次打开拷贝页时预填。
+ *
+ * 与 `store.getLatestProjectTemplate()`（项目信息模板）分工不同：
+ * 那个管的是"机型 / 镜头 / 人员"这类**跟着戏走**的内容，
+ * 这里管的是"上次从哪个盘拷到哪个盘、用了什么选项"这类**跟着操作走**的内容 ——
+ * 现场常常是同一张卡连拷到几块盘，每次都重新选一遍路径纯属浪费。
+ *
+ * 刻意只存路径与选项，不存任务名：任务名是每次都不一样的（换了卡就要改），
+ * 自动填一个错的比空着更烦人。
+ */
+export interface LastJobDraft {
+  sourcePath: string
+  targetPaths: string[]
+  /**
+   * 上次填的项目名。
+   *
+   * 必须单独记：`getLatestProjectTemplate()` 只看**未分组**的任务，
+   * 一个人如果习惯把任务挂到母项目下，项目名就永远拿不回来 ——
+   * 那正是"下次拷贝记不住上次项目名"的根因。
+   */
+  projectName: string
+}
+
 export const THEMES = ['qinghe', 'wuguang', 'cheese'] as const
 export type ThemeId = (typeof THEMES)[number]
 
@@ -472,6 +592,15 @@ export interface AppSettings {
   maxFrameExtractions: number
   /** 并行提取首帧的进程数（1–8） */
   frameConcurrency: number
+  /**
+   * 任务开始 / 结束 / 出错时给一声提示音。
+   *
+   * 现场拷卡时人经常不在机器跟前，靠"看一眼屏幕"发现任务结束不现实；
+   * 出错更需要立刻被注意到。默认开启。
+   */
+  soundEnabled: boolean
+  /** 提示音音量（0–1） */
+  soundVolume: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -489,7 +618,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   acceptHdeDowngrade: false,
   extractFrames: true,
   maxFrameExtractions: 0,
-  frameConcurrency: 4
+  frameConcurrency: 4,
+  soundEnabled: true,
+  soundVolume: 0.6
 }
 
 /* ------------------------------------------------------------------ *
@@ -541,6 +672,19 @@ export type MainEvent =
   | { type: 'job:progress'; payload: JobProgress }
   | { type: 'job:state'; payload: { jobId: string; state: JobState } }
   | { type: 'job:file'; payload: { jobId: string; file: CopyJobFile } }
+  /**
+   * 一批中间态变更（已按 200ms 合并）。载荷刻意用增量而不是整行，
+   * 见 `FileStateDelta` 的说明。
+   */
+  | { type: 'job:files-delta'; payload: { jobId: string; deltas: FileStateDelta[] } }
+  /**
+   * 要求界面**重新拉取**该任务的文件清单。
+   *
+   * 只在"主进程把一批中间态改回 pending"之后发：任务开始时的
+   * `resetInFlightFiles` 会把上次中断留下的 `copying`/`verifying` 归零，
+   * 若不通知，界面会一直显示上次崩溃时卡住的那几个"拷贝中"。
+   */
+  | { type: 'job:files-resync'; payload: { jobId: string } }
   | { type: 'job:log'; payload: { jobId: string; entry: LogEntry } }
   | { type: 'reports:changed'; payload: { jobId: string } }
   | { type: 'toast'; payload: { level: 'info' | 'warn' | 'error' | 'success'; message: string } }

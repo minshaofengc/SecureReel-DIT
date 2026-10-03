@@ -34,6 +34,14 @@ interface Props {
   disabled?: boolean
   /** 只渲染需要的区块；缺省全部渲染 */
   sections?: ProjectInfoSection[]
+  /**
+   * 是否显示「拍摄日」。缺省显示。
+   *
+   * 母项目页把它关掉：拍摄日是"这一次拷的卡是哪天拍的"，
+   * 属于单次拷贝，不属于整部戏不变的属性；拷贝页每次都会重置成当天，不从这里取。
+   * 留在母项目页会变成"填了却不起作用"的字段 —— 那比不显示更让人困惑。
+   */
+  showShootDay?: boolean
 }
 
 /**
@@ -75,7 +83,13 @@ function useRowKeys(length: number): {
   return { keys: keys.current, add, removeAt }
 }
 
-export function ProjectInfoFields({ value, onChange, disabled, sections }: Props): ReactNode {
+export function ProjectInfoFields({
+  value,
+  onChange,
+  disabled,
+  sections,
+  showShootDay = true
+}: Props): ReactNode {
   const { t } = useI18n()
   const show = (section: ProjectInfoSection): boolean =>
     sections === undefined || sections.includes(section)
@@ -142,16 +156,21 @@ export function ProjectInfoFields({ value, onChange, disabled, sections }: Props
               onChange={(event) => patch({ projectName: event.target.value })}
             />
           </label>
-          <label className="field">
-            <span className="field-label">{t('project.shootDay')}</span>
-            <input
-              className="input"
-              value={value.shootDay}
-              placeholder="2026-09-15"
-              disabled={disabled}
-              onChange={(event) => patch({ shootDay: event.target.value })}
-            />
-          </label>
+          {showShootDay && (
+            <label className="field">
+              <span className="field-label">{t('project.shootDay')}</span>
+              <input
+                className="input"
+                value={value.shootDay}
+                placeholder="2026-09-15"
+                disabled={disabled}
+                onChange={(event) => patch({ shootDay: event.target.value })}
+              />
+              <span className="hint faint" style={{ fontSize: 11 }}>
+                {t('project.shootDayHint')}
+              </span>
+            </label>
+          )}
           <label className="field">
             <span className="field-label">{t('project.camera')}</span>
             <input

@@ -19,7 +19,10 @@ import {
   pathExists,
   removeQuietly,
   resolveInside,
+  safeFolderName,
+  safeSourceRootName,
   stripTrailingSeparators,
+  targetRelativePath,
   toPosix,
   volumeUsage,
   walkFiles,
@@ -234,5 +237,56 @@ describe('可执行文件查找', () => {
 
   it('找不到时返回 null 而不是抛错', async () => {
     expect(await whichInPath('definitely-not-a-real-binary-xyz', { PATH: '/bin' })).toBeNull()
+  })
+})
+
+/**
+ * 目标盘的落盘层级。
+ *
+ * 这两个函数是**一处实现、两处调用**（拷贝引擎拼写入路径、
+ * 报告层拼清单路径），两边必须永远一致 —— 各算各的就会出现
+ * "清单里列了它、盘上却找不到"这种最难查的问题。
+ */
+describe('来源目录名与目标盘路径', () => {
+  it('取出路径最后一段作为来源目录名', () => {
+    expect(safeSourceRootName('/Volumes/A002R2EC')).toBe('A002R2EC')
+    expect(safeSourceRootName('/Volumes/A002R2EC/')).toBe('A002R2EC')
+    expect(safeSourceRootName('/Volumes/CARD/DCIM/100')).toBe('100')
+    expect(safeSourceRootName('relative-folder')).toBe('relative-folder')
+  })
+
+  it('取不到像样的名字时返回空串，绝不把危险段拼进目标路径', () => {
+    // 根目录的末段是空串；`.` 与 `..` 拼进路径会让文件落到盘外
+    expect(safeSourceRootName('/')).toBe('')
+    expect(safeSourceRootName('/Volumes/CARD/..')).toBe('')
+    expect(safeSourceRootName('/Volumes/CARD/.')).toBe('')
+  })
+
+  it('拼出 <来源目录名>/<源内相对路径>', () => {
+    expect(targetRelativePath('A001', 'DCIM/100/A001_C001.mov')).toBe('A001/DCIM/100/A001_C001.mov')
+    expect(targetRelativePath('A001', 'clip.mov')).toBe('A001/clip.mov')
+  })
+
+  it('来源目录名为空串时原样返回 —— 1.x 的存量任务行为不变', () => {
+    expect(targetRelativePath('', 'DCIM/100/A001_C001.mov')).toBe('DCIM/100/A001_C001.mov')
+  })
+
+  it('任务名安全化：保留中文，只清掉会破坏路径结构的字符', () => {
+    // 中文必须留着 —— 这个目录是给人看的，不是给校验工具看的
+    expect(safeFolderName('D02 A机 主卡')).toBe('D02 A机 主卡')
+    // 斜杠会拆成两级；冒号在访达里被显示成斜杠，同样会让人误判
+    expect(safeFolderName('D02/A机')).toBe('D02_A机')
+    expect(safeFolderName('D02:A机')).toBe('D02_A机')
+    // 前导点会变成隐藏目录（在访达里"看不见"）；尾随点会被文件系统静默吞掉
+    expect(safeFolderName('.hidden')).toBe('hidden')
+    expect(safeFolderName('trailing...')).toBe('trailing')
+    // 连续空白折叠成一个空格
+    expect(safeFolderName('  多余   空白  ')).toBe('多余 空白')
+  })
+
+  it('任务名没有可用内容时返回空串，让调用方自行回退', () => {
+    expect(safeFolderName('')).toBe('')
+    expect(safeFolderName('   ')).toBe('')
+    expect(safeFolderName('...')).toBe('')
   })
 })

@@ -91,12 +91,21 @@ export type MsgKey =
   // ---- JobManager：报告与收尾 ----
   | 'job.ejected'
   | 'job.ejectFail'
+  // ---- 弹出目标盘：失败原因（两个平台的实现完全不同，原因文案也分开） ----
+  | 'eject.done'
+  | 'eject.unsupported'
+  | 'eject.noShell'
+  | 'eject.failedWindows'
+  | 'eject.commandFailed'
+  | 'eject.exitCode'
   | 'job.reportNotCleanNote'
   | 'job.verifyModeNote'
   | 'job.pdfMissingFrames'
   | 'job.inlineSkippedNote'
   | 'job.reportGenFail'
   | 'job.reportWhileRunning'
+  | 'job.reportPublished'
+  | 'job.reportPublishFail'
   // ---- IPC 处理器层（这些文案会以 { ok:false, error } 原样送到界面） ----
   | 'ipc.pathNotVolume'
   | 'ipc.invalidTargetPath'
@@ -388,6 +397,35 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
     'zh-CN': '弹出目标盘「{label}」失败：{reason}',
     en: 'Failed to eject target "{label}": {reason}'
   },
+  // 这些是「弹出失败的原因」本身，会被上面 job.ejectFail 的 {reason} 包住
+  'eject.done': {
+    'zh-CN': '已弹出',
+    en: 'Ejected'
+  },
+  'eject.unsupported': {
+    'zh-CN': '当前系统不支持自动弹出，请手动推出磁盘。',
+    en: 'This system does not support automatic ejection; please eject the disk manually.'
+  },
+  'eject.noShell': {
+    'zh-CN':
+      '这台电脑上找不到 PowerShell，无法自动弹出。请用任务栏右下角「安全删除硬件并弹出媒体」手动弹出。',
+    en:
+      'PowerShell was not found on this computer, so the disk cannot be ejected automatically. Please use "Safely Remove Hardware and Eject Media" in the taskbar.'
+  },
+  'eject.failedWindows': {
+    'zh-CN':
+      'Windows 无法自动弹出这块盘（读卡器与移动硬盘经常不支持）。请确认写入已经停止后，用任务栏右下角「安全删除硬件并弹出媒体」手动弹出，再拔盘。',
+    en:
+      'Windows could not eject this disk automatically (card readers and portable drives often do not support it). Once you are sure writes have stopped, use "Safely Remove Hardware and Eject Media" in the taskbar before unplugging.'
+  },
+  'eject.commandFailed': {
+    'zh-CN': '无法调用 diskutil：{reason}',
+    en: 'Could not run diskutil: {reason}'
+  },
+  'eject.exitCode': {
+    'zh-CN': 'diskutil 退出码 {code}',
+    en: 'diskutil exited with code {code}'
+  },
   'job.reportNotCleanNote': {
     'zh-CN':
       '本次任务未正常结束（状态：{state}），因此没有把清单写入目标盘。报告仍然完整记录了当时的实际结果。',
@@ -399,6 +437,14 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
       '本任务为「仅校验」模式：只读取并比对两侧的校验值，未向目标盘写入或删除任何数据。',
     en:
       'This job ran in verify-only mode: hashes were read and compared on both sides; nothing was written to or deleted from the targets.'
+  },
+  'job.reportPublished': {
+    'zh-CN': '报告已复制到目标盘：{targets}',
+    en: 'Report copied to target(s): {targets}'
+  },
+  'job.reportPublishFail': {
+    'zh-CN': '报告复制到「{label}」失败：{reason}',
+    en: 'Failed to copy the report to "{label}": {reason}'
   },
   'job.pdfMissingFrames': {
     'zh-CN': 'PDF 中有 {missing} 张首帧图未能载入（共 {total} 张）；网页版报告不受影响。',

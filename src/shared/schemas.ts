@@ -38,6 +38,23 @@ export const absolutePathSchema = z
 
 export const jobIdSchema = z.string().regex(/^job_[A-Za-z0-9_-]{6,40}$/, '非法的任务 ID')
 
+/**
+ * 标题栏叠加层的颜色。
+ *
+ * 这两个值会被交给 Electron 的原生窗口 API，所以只放行**颜色字面量**，
+ * 不接受任意字符串 —— 界面传什么都不该让主进程拿到非颜色内容。
+ * 允许 `#rgb` / `#rrggbb` / `#rrggbbaa` 与 `rgb()` / `rgba()`。
+ */
+const cssColorSchema = z
+  .string()
+  .max(64, '颜色值过长')
+  .regex(/^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s.,%/]+\))$/, '颜色格式不合法')
+
+export const titleBarOverlaySchema = z.object({
+  color: cssColorSchema,
+  symbolColor: cssColorSchema
+})
+
 export const parentProjectIdSchema = z
   .string()
   .regex(/^prj_[A-Za-z0-9_-]{6,40}$/, '非法的母项目 ID')
@@ -156,7 +173,9 @@ export const settingsPatchSchema = z
     extractFrames: z.boolean(),
     /** 0 表示不限制；上限 100000 只是防止界面填入荒谬值 */
     maxFrameExtractions: z.number().int().min(0).max(100_000),
-    frameConcurrency: z.number().int().min(1).max(8)
+    frameConcurrency: z.number().int().min(1).max(8),
+    soundEnabled: z.boolean(),
+    soundVolume: z.number().min(0).max(1)
   })
   .partial()
 

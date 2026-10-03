@@ -91,8 +91,16 @@ export function ascMhlFilename(generation: number, sourceLabel: string, now: Dat
   const stamp = now.toISOString()
   const date = stamp.slice(0, 10)
   const time = stamp.slice(11, 19).replace(/:/g, '')
-  const safeLabel = sourceLabel.replace(/[^A-Za-z0-9._-]+/g, '_') || 'root'
-  return `${String(generation).padStart(4, '0')}_${safeLabel}_${date}_${time}Z.mhl`
+  /*
+   * 基名只保留 ASCII 字母数字与 `._-`：清单文件名会被各家工具当路径解析，
+   * 混入中文与空格的风险不值得冒。
+   *
+   * ⚠️ 但**不能只做替换**。中文卷名（例如「启动磁盘」）会被整个过滤掉，
+   * 结果是 `0001___2026-09-19_152426Z.mhl` —— 一串下划线，既难看又完全
+   * 认不出这是哪张卡的清单。所以过滤后要再去掉首尾分隔符，空了就回退 root。
+   */
+  const safeLabel = sourceLabel.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '')
+  return `${String(generation).padStart(4, '0')}_${safeLabel === '' ? 'root' : safeLabel}_${date}_${time}Z.mhl`
 }
 
 /**

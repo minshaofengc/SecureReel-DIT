@@ -6,12 +6,11 @@
  * 用户选的位置。目标只有一个：把"教用户找文件"的来回沟通砍掉。
  *
  * 设计要点：
- *   - 内容只读，打包在系统临时目录里组装，不往用户数据目录写任何东西
- *   - 打包用系统自带的 /usr/bin/zip，走 exec.ts 的参数化调用（与所有外部命令同规）
+ *   - 内容只读，不往用户数据目录写任何东西，也不需要临时目录
+ *   - 打包用自研的纯 Node zip（`zip.ts`）—— 两个平台行为一致，且可单测
  *   - 诊断包里只有日志与静态信息，不含任务数据库 —— 那里面可能有项目信息
  */
-import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { APP_NAME, APP_VERSION } from '@shared/version'
@@ -21,9 +20,9 @@ import type { AppPaths } from '@main/paths'
 import type { Logger } from '@main/logger'
 import type { Store } from '@main/db/store'
 import type { FfprobeRunner } from '@main/media/probe'
-import { resolveExecutable, runCommand } from '@main/exec'
+import { describeError } from '@main/fs-utils'
+import { type ZipEntry, writeZip } from '@main/zip'
 
-const ZIP_PATH = '/usr/bin/zip'
 /** 打包最近几天的日志：问题常常跨半夜，只有当天的不够查 */
 const LOG_DAYS = 3
 
@@ -57,7 +56,7 @@ function buildSystemInfo(deps: DiagnosticsDeps): string {
     `应用版本：${APP_VERSION}`,
     `Electron：${process.versions.electron ?? '?'}`,
     `Node：${process.versions.node ?? '?'}`,
-    `系统：macOS ${systemVersion()}（${process.arch}）`,
+    `系统：${platformDisplayName()} ${systemVersion()}（${process.arch}）`,
     `主机名：${hostname()}`,
     `系统语言：${appLocale()}`,
     '',
@@ -88,6 +87,13 @@ function buildSystemInfo(deps: DiagnosticsDeps): string {
   return lines.join('\n')
 }
 
+/** 系统名。诊断包里写死了 "macOS" 会让 Windows 上的包看起来像另一个产品的。 */
+function platformDisplayName(): string {
+  if (process.platform === 'win32') return 'Windows'
+  if (process.platform === 'darwin') return 'macOS'
+  return process.platform
+}
+
 /** 系统版本号。`process.getSystemVersion` 是 Electron 专属 API，纯 Node 下兜底。 */
 function systemVersion(): string {
   try {
@@ -100,8 +106,11 @@ function systemVersion(): string {
 
 function appLocale(): string {
   try {
-    // process.env 在打包后的 GUI 启动下通常没有 LANG，拿不到就留空
-    return process.env.LANG ?? '（未知）'
+    // process.env 在打包后的 GUI 启动下通常没有 LANG（Windows 上更是压根没这个变量），
+    // 所以优先用它，拿不到再退回 Intl 报出来的运行时区域设置。
+    const fromEnv = process.env.LANG
+    if (fromEnv !== undefined && fromEnv !== '') return fromEnv
+    return new Intl.DateTimeFormat().resolvedOptions().locale || '（未知）'
   } catch {
     return '（未知）'
   }
@@ -131,51 +140,34 @@ async function recentLogFiles(logsDir: string, days: number): Promise<string[]> 
 /**
  * 生成诊断包 zip，返回其绝对路径。
  *
- * 每一步的失败都以带上下文的错误抛出，由 IPC 包装层统一兜底。
+ * 打包用自研的 `zip.ts`（纯 Node）而不是系统命令：Windows 上根本没有
+ * `/usr/bin/zip`，而 PowerShell 的 `Compress-Archive` 在引号、中文、
+ * 以 `-` 开头的文件名上都有坑。改完之后两个平台的行为也**完全一致**了。
+ *
+ * 每一类失败都以带上下文的错误抛出，由 IPC 包装层统一兜底。
  */
 export async function createDiagnosticsZip(destination: string, deps: DiagnosticsDeps): Promise<string> {
   const { paths, logger } = deps
-  const staging = await mkdtemp(join(tmpdir(), 'securereel-diag-'))
 
-  try {
-    // 1) 最近几天的日志
-    const logs = await recentLogFiles(paths.logsDir, LOG_DAYS)
-    if (logs.length === 0) {
-      logger.warn('diagnostics', '日志目录里没有找到近几天的日志文件，诊断包将只包含系统信息。')
-    }
-    for (const name of logs) {
-      await cp(join(paths.logsDir, name), join(staging, name))
-    }
-
-    // 2) 系统信息
-    await writeFile(join(staging, 'system-info.txt'), buildSystemInfo(deps), 'utf8')
-
-    // 3) 打包：staging 里是平铺的文件，-j 直接归档到 zip 根
-    const zipPath = await resolveExecutable(ZIP_PATH)
-    if (zipPath === null) {
-      throw new Error(m(deps, 'ipc.diagnosticsZipMissing'))
-    }
-    const staged = await readdir(staging)
-    // 注意：macOS 自带的 BSD zip 不支持 `--` 结束选项符，目标路径用绝对路径传入
-    const result = await runCommand(zipPath, ['-j', destination, ...staged], {
-      timeoutMs: 60_000,
-      cwd: staging
-    })
-    if (result.spawnError !== null) {
-      throw new Error(m(deps, 'ipc.diagnosticsZipSpawn', { reason: result.spawnError }))
-    }
-    if (result.timedOut || result.code !== 0) {
-      throw new Error(
-        m(deps, 'ipc.diagnosticsZipFailed', {
-          code: result.code ?? 0,
-          reason: result.stderr.trim() || '（无输出）'
-        })
-      )
-    }
-
-    logger.info('diagnostics', `已导出诊断包：${destination}（含 ${logs.length} 个日志文件）`)
-    return destination
-  } finally {
-    await rm(staging, { recursive: true, force: true })
+  // 1) 最近几天的日志（直接按原路径归档，不再需要临时 staging 目录）
+  const logs = await recentLogFiles(paths.logsDir, LOG_DAYS)
+  if (logs.length === 0) {
+    logger.warn('diagnostics', '日志目录里没有找到近几天的日志文件，诊断包将只包含系统信息。')
   }
+
+  const entries: ZipEntry[] = logs.map((name) => ({ name, absPath: join(paths.logsDir, name) }))
+  // 2) 系统信息
+  entries.push({ name: 'system-info.txt', data: Buffer.from(buildSystemInfo(deps), 'utf8') })
+
+  // 3) 打包
+  try {
+    await writeZip(destination, entries)
+  } catch (error) {
+    throw new Error(
+      m(deps, 'ipc.diagnosticsZipFailed', { code: 0, reason: describeError(error) })
+    )
+  }
+
+  logger.info('diagnostics', `已导出诊断包：${destination}（含 ${logs.length} 个日志文件）`)
+  return destination
 }

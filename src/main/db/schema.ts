@@ -58,6 +58,14 @@ export const JOB_COLUMN_MIGRATIONS = [
     table: 'jobs',
     column: 'mode',
     ddl: "ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'copy'"
+  },
+  {
+    // 来源目录名（见 CopyJob.sourceRootName 的说明）。
+    // 默认空串 = 目标盘上不加这一层，正好等于 1.x 的行为 ——
+    // 老任务重跑时落盘结构不会变，不会凭空多出一级目录或撞名。
+    table: 'jobs',
+    column: 'source_root_name',
+    ddl: "ALTER TABLE jobs ADD COLUMN source_root_name TEXT NOT NULL DEFAULT ''"
   }
 ] as const
 
@@ -72,6 +80,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   name               TEXT NOT NULL,
   mode               TEXT NOT NULL DEFAULT 'copy',
   source_path        TEXT NOT NULL,
+  source_root_name   TEXT NOT NULL DEFAULT '',
   source_kind        TEXT NOT NULL DEFAULT 'generic',
   is_codex_vfs       INTEGER NOT NULL DEFAULT 0,
   hash_algorithm     TEXT NOT NULL,

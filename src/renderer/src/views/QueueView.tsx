@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { CopyJob, CopyJobFile, ProjectInfo, TargetProgress } from '@shared/types'
 import { HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH, isJobLive } from '@shared/types'
 import { describeLenses } from '@shared/project'
@@ -10,6 +10,57 @@ import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
 type Tab = 'files' | 'log' | 'info'
+
+/**
+ * 文件表的单行。
+ *
+ * 单独抽出来并套 `memo` 不是为了好看：一张五千条素材的卡上，中间态事件
+ * 每 200ms 就会弄脏几行，若整表一起重渲染，光 React 的 reconciliation
+ * 就够让进度卡住。memo 之后只有真正变化的那几行会重画。
+ *
+ * ⚠️ 前提是 `AppState` 里的 `patchFiles` 只为变化的行新建对象 ——
+ * 两处必须一起改：这里 memo 了、那边每行都换引用的话等于白搭。
+ */
+const FileRow = memo(function FileRow({
+  file,
+  jobId,
+  dash
+}: {
+  file: CopyJobFile
+  jobId: string
+  dash: string
+}): ReactNode {
+  return (
+    <tr>
+      <td>
+        {file.probe?.firstFrame == null ? (
+          <span className="faint">—</span>
+        ) : (
+          <img
+            className="thumb"
+            src={frameUrl(jobId, file.probe.firstFrame)}
+            alt=""
+            loading="lazy"
+            title={file.probe.note ?? undefined}
+          />
+        )}
+      </td>
+      <td className="mono">{file.relPath}</td>
+      <td className="num">{humanBytes(file.sizeBytes)}</td>
+      <td>
+        {file.probe?.format == null ? (
+          <span className="faint">—</span>
+        ) : (
+          <span className="badge">{file.probe.format}</span>
+        )}
+      </td>
+      <td>
+        <FileStateBadge state={file.state} />
+      </td>
+      <td className="mono faint">{file.sourceHash ?? dash}</td>
+    </tr>
+  )
+})
 
 export function QueueView({
   onCreate,
@@ -426,6 +477,14 @@ export function QueueView({
                 const pct = percent(bytesDone, total)
                 const phase = jobProgress?.phase ?? 'done'
                 const active = selected.state === 'running' || selected.state === 'queued'
+                // 任务不跑的时候 activeFiles 是陈旧数据，别显示
+                const activeFiles = active ? (jobProgress?.activeFiles ?? []) : []
+                // 已用时按任务真实的 startedAt 算，而不是从界面挂载算起 ——
+                // 切走再切回来，这个数字不能归零
+                const elapsedSeconds =
+                  selected.startedAt === null
+                    ? null
+                    : Math.max(0, (Date.now() - Date.parse(selected.startedAt)) / 1000)
                 return (
                   <>
                     {active && (
@@ -447,9 +506,32 @@ export function QueueView({
                         },
                         { label: t('common.bytes'), value: `${humanBytes(bytesDone)} / ${humanBytes(total)}` },
                         { label: t('queue.speed'), value: humanRate(jobProgress?.bytesPerSecond ?? null) },
+                        { label: t('queue.elapsed'), value: humanDuration(elapsedSeconds) },
                         { label: t('queue.eta'), value: humanDuration(jobProgress?.etaSeconds ?? null) }
                       ]}
                     />
+
+                    {/* 正在处理中的文件。
+                        整条进度只回答"还剩多久"，回答不了"现在到底在动没有" ——
+                        大文件拷贝期间字节数会长时间不动，没有这一块用户会以为卡死了。
+                        串行时通常只有一条，并发时最多等于文件级并发数。 */}
+                    {activeFiles.length > 0 && (
+                      <div className="active-files">
+                        <div className="field-label">{t('queue.activeFiles')}</div>
+                        <ul>
+                          {activeFiles.map((item) => (
+                            <li key={item.relPath}>
+                              <span className="mono" title={item.relPath}>
+                                {item.relPath}
+                              </span>
+                              <span className="num faint">
+                                {humanBytes(item.bytesRead)} / {humanBytes(item.sizeBytes)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     {/* 素材分析是拷贝之后一段不短的工作，单独给一条进度，
                         否则进度条停在 100% 不动会让人以为程序卡死了 */}
@@ -565,34 +647,7 @@ export function QueueView({
                       </thead>
                       <tbody>
                         {jobFiles.map((file) => (
-                          <tr key={file.id}>
-                            <td>
-                              {file.probe?.firstFrame == null ? (
-                                <span className="faint">—</span>
-                              ) : (
-                                <img
-                                  className="thumb"
-                                  src={frameUrl(selected.id, file.probe.firstFrame)}
-                                  alt=""
-                                  loading="lazy"
-                                  title={file.probe.note ?? undefined}
-                                />
-                              )}
-                            </td>
-                            <td className="mono">{file.relPath}</td>
-                            <td className="num">{humanBytes(file.sizeBytes)}</td>
-                            <td>
-                              {file.probe?.format == null ? (
-                                <span className="faint">—</span>
-                              ) : (
-                                <span className="badge">{file.probe.format}</span>
-                              )}
-                            </td>
-                            <td>
-                              <FileStateBadge state={file.state} />
-                            </td>
-                            <td className="mono faint">{file.sourceHash ?? t('common.dash')}</td>
-                          </tr>
+                          <FileRow key={file.id} file={file} jobId={selected.id} dash={t('common.dash')} />
                         ))}
                       </tbody>
                     </table>

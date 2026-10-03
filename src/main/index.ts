@@ -4,12 +4,13 @@
  * 职责边界很清楚：**只做装配**。
  * 建窗口、装服务、注册 IPC，业务逻辑一律不在这个文件里。
  */
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, powerSaveBlocker, shell } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS, THEMES, type AppSettings } from '@shared/types'
 import { APP_NAME, APP_VERSION } from '@shared/version'
 import { buildAppPaths } from './paths'
+import { legacyUserDataDirOf, migrateLegacyUserData, type MigrationResult } from './core/data-migration'
 import { Logger } from './logger'
 import { Store } from './db/store'
 import { FfprobeRunner } from './media/probe'
@@ -18,6 +19,7 @@ import { ReportStore } from './reports/report-store'
 import { JobManager, TOOL_NAME } from './core/job-manager'
 import { emitToWindows, registerIpcHandlers } from './ipc/handlers'
 import { ensureDir } from './fs-utils'
+import { IS_MAC, IS_WINDOWS, TITLE_BAR_HEIGHT, USE_OVERLAY_TITLEBAR } from './platform'
 import { registerFrameProtocol, registerFrameScheme } from './protocol'
 
 app.setName(APP_NAME)
@@ -36,7 +38,46 @@ let store: Store | null = null
 
 const paths = buildAppPaths(app.getPath('userData'))
 
+/**
+ * 启动时的窗口底色（深色模式用竹林的深色底，避免白屏闪一下）。
+ *
+ * 这两个值同时充当 Windows 标题栏叠加层的**初始**颜色。主进程刻意不持有
+ * 整套调色板 —— 配色的唯一真源是渲染层的 `styles/tokens.css`。界面画出来后
+ * 会立刻通过 IPC 把真实主题色同步过来（见 theme.ts），用户看不到跳变。
+ */
+const WINDOW_BOOT_BG = { dark: '#141a17', light: '#f7f6f1' } as const
+
+/**
+ * 标题栏选项。
+ *
+ * - macOS：无边框 + 内缩的红绿灯（x=14,y=18 是现在视觉定下来的位置）
+ * - Windows：无边框 + 右上角**系统原生**的最小化/最大化/关闭按钮
+ *   （`titleBarOverlay` 由 Chromium 绘制，三态、DPI 缩放、高对比度模式、
+ *   `Alt+F4`/`Win+↑` 全都是免费的；自绘按钮要把这些都自己实现一遍）
+ * - 其他平台 / 关掉开关：什么都不传 = 系统原生标题栏
+ *
+ * 三者的顶部留白都是 40px，所以渲染层的布局在两个平台上完全共用。
+ */
+function titleBarOptions(backgroundColor: string): Electron.BrowserWindowConstructorOptions {
+  if (IS_MAC) {
+    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 18 } }
+  }
+  if (IS_WINDOWS && USE_OVERLAY_TITLEBAR) {
+    return {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        color: backgroundColor,
+        // 中性灰，浅底深底都看得见。它只活到界面把真实主题色报回来为止（约一帧）。
+        symbolColor: '#8a8a8a',
+        height: TITLE_BAR_HEIGHT
+      }
+    }
+  }
+  return {}
+}
+
 function createWindow(settings: AppSettings): BrowserWindow {
+  const bootBackground = settings.themeMode === 'dark' ? WINDOW_BOOT_BG.dark : WINDOW_BOOT_BG.light
   const window = new BrowserWindow({
     width: 1320,
     height: 880,
@@ -44,10 +85,8 @@ function createWindow(settings: AppSettings): BrowserWindow {
     minHeight: 680,
     show: false,
     title: TOOL_NAME,
-    // 深色模式下用竹林的深色底，避免白屏闪一下
-    backgroundColor: settings.themeMode === 'dark' ? '#141a17' : '#f7f6f1',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 18 },
+    backgroundColor: bootBackground,
+    ...titleBarOptions(bootBackground),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // AGENTS.md 硬性要求：渲染进程跑在沙箱里，开启上下文隔离，关闭 Node 集成
@@ -55,7 +94,11 @@ function createWindow(settings: AppSettings): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      spellcheck: false
+      spellcheck: false,
+      // 拷贝跑在主进程，本来就不会被 Chromium 节流；关掉渲染层的节流是为了
+      // 窗口被挡在后面时进度数字照常刷新。**它不影响拷贝吞吐** —— 别指望
+      // 靠这一行提速，提升速度的旋钮在文件级并发里。
+      backgroundThrottling: false
     }
   })
 
@@ -239,10 +282,31 @@ function createWindow(settings: AppSettings): BrowserWindow {
 async function bootstrap(): Promise<void> {
   await app.whenReady()
 
+  // 1.x → 2.0 的数据迁移。**必须赶在 Store.open() 之前**：数据库一旦被打开，
+  // 再复制就只能拿到一半旧一半新的状态。结果先存着，等 logger 建好再记
+  // （日志本身要落在新目录里，而新目录正是这一步建出来的）。
+  let migration: MigrationResult = { status: 'skipped', reason: '未执行', copied: [] }
+  try {
+    await ensureDir(paths.userDataDir)
+    migration = await migrateLegacyUserData(paths.userDataDir, legacyUserDataDirOf(paths.userDataDir))
+  } catch (error) {
+    migration = {
+      status: 'failed',
+      reason: error instanceof Error ? error.message : String(error),
+      copied: []
+    }
+  }
+
   await Promise.all([ensureDir(paths.logsDir), ensureDir(paths.reportsDir), ensureDir(paths.hdeWorkDir)])
 
   logger = new Logger({ dir: paths.logsDir, mirrorToConsole: !app.isPackaged })
   logger.info('app', `${APP_NAME} 启动，版本 ${APP_VERSION}`)
+
+  if (migration.status === 'migrated') logger.info('app', migration.reason)
+  if (migration.status === 'failed') {
+    // 迁移是可选的舒适项：失败只丢历史记录，素材与拷贝能力一切照旧，绝不阻断启动
+    logger.warn('app', `1.x 数据迁移失败（不影响使用）：${migration.reason}`)
+  }
 
   // 顺手清掉 30 天前的按天日志 —— 平时量不大，但没有清理策略的话
   // 几年就是一堆没人看的文件。失败不影响启动。
@@ -289,7 +353,15 @@ async function bootstrap(): Promise<void> {
     probeRunner,
     hde,
     getSettings: () => store?.getSettings() ?? settings,
-    emit: (event) => emitToWindows(event, () => mainWindow)
+    emit: (event) => emitToWindows(event, () => mainWindow),
+    // 真实实现只在装配层出现，JobManager 本身不 import electron ——
+    // 否则跑在 node 环境里的单元测试会被这一行拖垮。
+    // 用 prevent-app-suspension 而非 prevent-display-sleep：屏幕该黑就黑。
+    sleepBlocker: {
+      start: () => powerSaveBlocker.start('prevent-app-suspension'),
+      stop: (id) => powerSaveBlocker.stop(id),
+      isStarted: (id) => powerSaveBlocker.isStarted(id)
+    }
   })
 
   registerIpcHandlers({

@@ -40,6 +40,7 @@ const api: SecureReelApi = {
     cancel: (jobId) => invoke(IPC.jobCancel, { jobId }),
     remove: (jobId) => invoke(IPC.jobDelete, { jobId }),
     recoverable: () => invoke(IPC.jobRecoverable),
+    lastDraft: () => invoke(IPC.jobLastDraft),
     addTarget: (jobId, path) => invoke(IPC.jobAddTarget, { jobId, path }),
     setParent: (jobId, parentProjectId) => invoke(IPC.jobSetParent, { jobId, parentProjectId })
   },
@@ -53,7 +54,8 @@ const api: SecureReelApi = {
     get: (parentProjectId) => invoke(IPC.parentGet, { parentProjectId }),
     create: (name, details) => invoke(IPC.parentCreate, { name, details }),
     update: (parentProjectId, patch) => invoke(IPC.parentUpdate, { parentProjectId, ...patch }),
-    remove: (parentProjectId) => invoke(IPC.parentDelete, { parentProjectId })
+    remove: (parentProjectId) => invoke(IPC.parentDelete, { parentProjectId }),
+    recall: (parentProjectId) => invoke(IPC.parentRecall, { parentProjectId })
   },
   reports: {
     list: (jobId) => invoke(IPC.reportsList, { jobId }),
@@ -76,6 +78,9 @@ const api: SecureReelApi = {
     return () => {
       ipcRenderer.removeListener(IPC.event, listener)
     }
+  },
+  window: {
+    setTitleBarOverlay: (colors) => invoke(IPC.windowSetTitleBar, colors)
   }
 }
 

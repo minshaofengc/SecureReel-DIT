@@ -8,7 +8,6 @@
  */
 import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { randomBytes } from 'node:crypto'
-import { readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { AppInfo } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
@@ -28,6 +27,7 @@ import {
   setJobParentSchema,
   settingsPatchSchema,
   tailSchema,
+  titleBarOverlaySchema,
   updateParentProjectSchema
 } from '@shared/schemas'
 import type { Store } from '@main/db/store'
@@ -38,7 +38,9 @@ import type { ReportStore } from '@main/reports/report-store'
 import type { FfprobeRunner } from '@main/media/probe'
 import type { HdeAdapter } from '@main/adapters/hde'
 import { inspectSource, scanSource } from '@main/core/source-scan'
-import { describeVolume, ejectVolume } from '@main/fs-utils'
+import { describeError, describeVolume } from '@main/fs-utils'
+import { ejectVolume, listVolumeEntries } from '@main/volumes'
+import { TITLE_BAR_HEIGHT } from '@main/platform'
 import { usageForTargets } from '@main/core/source-scan'
 import { createDiagnosticsZip } from '@main/diagnostics'
 
@@ -144,15 +146,11 @@ export function registerIpcHandlers(services: Services): void {
 
   register<SourceDrive[]>(IPC.volumesList, async () => {
     const volumes: SourceDrive[] = []
-    try {
-      const entries = await readdir('/Volumes', { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
-        const path = join('/Volumes', entry.name)
-        volumes.push(await inspectSource(path))
-      }
-    } catch {
-      /* /Volumes 读不到就返回空列表 */
+    // 平台差异收在 listVolumeEntries 里：
+    // macOS 读 /Volumes，Windows 枚举盘符（并用 PowerShell 补卷标）。
+    // 拿不到卷标时传 null，inspectSource 会回退到盘符，列表不会因此变空。
+    for (const entry of await listVolumeEntries()) {
+      volumes.push(await inspectSource(entry.root, entry.label))
     }
     // 允许用户直接选任意目录，因此也把家目录列出来作为入口
     volumes.push(await inspectSource(app.getPath('home')))
@@ -199,10 +197,38 @@ export function registerIpcHandlers(services: Services): void {
     const { path } = parseOrThrow<{ path: string }>(reportPathSchema, payload)
     const description = await describeVolume(path)
     if (description === null) throw new Error(m('ipc.pathNotVolume'))
-    const result = await ejectVolume(description.mountPoint)
+    const result = await ejectVolume(description.mountPoint, services.getSettings().language)
     if (!result.ok) throw new Error(result.message)
     return true
   })
+
+  /* ---------------- 窗口外观 ---------------- */
+
+  /**
+   * 同步 Windows 无边框标题栏的按钮区配色。
+   *
+   * 颜色是渲染层从当前主题的 CSS 变量里算出来再传过来的 —— 主进程
+   * **不持有任何调色板**，这样 tokens.css 仍然是配色的唯一真源。
+   * 非 Windows 平台上静默接受并返回 true，渲染层因此不需要先判断平台。
+   */
+  register<boolean>(IPC.windowSetTitleBar, (payload) => {
+    const { color, symbolColor } = parseOrThrow<{ color: string; symbolColor: string }>(
+      titleBarOverlaySchema,
+      payload
+    )
+    const window = services.getMainWindow()
+    if (window !== null && !window.isDestroyed() && process.platform === 'win32') {
+      try {
+        window.setTitleBarOverlay({ color, symbolColor, height: TITLE_BAR_HEIGHT })
+      } catch (error) {
+        // 配色同步失败只影响标题栏好不好看，绝不该把主题切换本身搞挂
+        services.logger.warn('window', `标题栏配色同步失败：${describeError(error)}`)
+      }
+    }
+    return true
+  })
+
+  /* ---------------- 路径选择 ---------------- */
 
   register<string | null>(IPC.pathPick, async (payload) => {
     const { kind, title } = parseOrThrow<{ kind: 'directory' | 'file'; title?: string }>(
@@ -277,6 +303,10 @@ export function registerIpcHandlers(services: Services): void {
 
   register(IPC.jobRecoverable, () => store.listResumableJobs())
 
+  // 上次任务用过的来源 / 目标 / 选项。读到就预填；读到 null 就按全新一次处理 ——
+  // 预填只是便利，不能因为它自己坏了而挡住拷贝。
+  register(IPC.jobLastDraft, () => store.getLastJobDraft())
+
   register(IPC.jobAddTarget, async (payload) => {
     const body = payload as { jobId?: unknown; path?: unknown }
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, { jobId: body?.jobId })
@@ -289,6 +319,19 @@ export function registerIpcHandlers(services: Services): void {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
     const job = store.getJob(jobId)
     if (job === null) throw new Error(m('job.notFound'))
+
+    /*
+     * 优先给引擎真实上报过的那一份 —— 里面有当前阶段、实时速度、剩余时间，
+     * 以及"正在处理哪几个文件"（activeFiles）。
+     *
+     * 下面那个手拼的兜底只在任务从未跑过时才用得到：它没有任何实时信息，
+     * phase 只能写 done、速度只能写 0、currentFile 只能是 null。
+     * 曾经这里**只有**兜底，于是界面切走再切回来时问到的是一份
+     * "看起来已经结束"的快照，与旁边正在跳的进度完全是两回事。
+     */
+    const live = jobManager.getProgress(jobId)
+    if (live !== null) return live
+
     return {
       jobId,
       state: job.state,
@@ -300,6 +343,7 @@ export function registerIpcHandlers(services: Services): void {
       bytesDone: job.bytesDone,
       bytesPerSecond: 0,
       currentFile: null,
+      activeFiles: [],
       targets: store.listTargetProgress(jobId),
       etaSeconds: null,
       analyzeDone: 0,
@@ -358,6 +402,18 @@ export function registerIpcHandlers(services: Services): void {
       payload
     )
     return store.getParentProject(parentProjectId)
+  })
+
+  // 拷贝页选中母项目时用它取"该带什么进去"：档案缺的部分由历史任务快照补上。
+  // 只读不落库 —— 用户没编辑过，档案就不该变。
+  register(IPC.parentRecall, (payload) => {
+    const { parentProjectId } = parseOrThrow<{ parentProjectId: string }>(
+      parentProjectIdOnlySchema,
+      payload
+    )
+    const details = store.recallParentDetails(parentProjectId)
+    if (details === null) throw new Error(m('ipc.parentMissing'))
+    return details
   })
 
   register(IPC.parentCreate, (payload) => {

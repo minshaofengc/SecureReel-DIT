@@ -27,6 +27,7 @@ function makeJob(id = 'job_abcdef1234'): CopyJob {
     name: 'A002 卡备份',
     mode: 'copy',
     sourcePath: '/Volumes/A002',
+    sourceRootName: '',
     sourceKind: 'generic',
     isCodExVfs: false,
     parentProjectId: null,

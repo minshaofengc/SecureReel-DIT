@@ -1,10 +1,13 @@
 /**
  * 文件系统底层工具。
  *
- * 这一层只做「安全的机械动作」：遍历、容量探测、原子改名、卷标推断、弹出。
+ * 这一层只做「安全的机械动作」：遍历、容量探测、原子改名、卷标推断。
  * 业务语义（校验、断点、报告）不在这里，全部在 core/ 下。
+ *
+ * 平台差异：所有与路径/卷有关的判断都问 `platform.ts` 要一个决定，
+ * 并且每个接受 `platform` 的函数都把它做成**可选尾参、默认本机**——
+ * 这样 Windows 分支在 macOS 上就能被 vitest 直接断言（见 tests/platform.test.ts）。
  */
-import { spawn } from 'node:child_process'
 import { constants, type Dirent } from 'node:fs'
 import {
   access,
@@ -17,11 +20,31 @@ import {
   statfs,
   unlink
 } from 'node:fs/promises'
-import { basename, dirname, join, posix, relative, sep } from 'node:path'
+import { basename, dirname, join, posix, relative, sep, win32 } from 'node:path'
+import {
+  executableExtensions,
+  HOST,
+  type HostPlatform,
+  pathListSeparator,
+  pathRootLength,
+  samePathName,
+  systemVolumeLabel
+} from './platform'
 
 /* ------------------------------------------------------------------ *
  * 路径规范化与安全
  * ------------------------------------------------------------------ */
+
+/**
+ * 按**目标**平台选 path 模块。
+ *
+ * 必须显式选，不能靠宿主机的 `join`/`baseName`：在 macOS 上测 Windows 分支时，
+ * 宿主的 `join('D:\\Cards', 'a/b')` 会拼出 `/` 分隔的结果，测出来的东西
+ * 跟真正在 Windows 上跑的不是一回事。
+ */
+function pathModuleOf(platform: HostPlatform): typeof posix {
+  return platform === 'win32' ? win32 : posix
+}
 
 /**
  * 把路径统一成清单里要用的 POSIX 风格。
@@ -29,7 +52,11 @@ import { basename, dirname, join, posix, relative, sep } from 'node:path'
  * 注意：**只替换平台分隔符**，不把反斜杠当分隔符转换。
  * 原因是 macOS 上 `\` 是合法的文件名字符（HFS+/APFS 允许），
  * 如果无差别地把 `\` 换成 `/`，清单里就会写出一个不存在的路径 ——
- * 那比格式不统一严重得多。本应用只面向 macOS，分隔符本来就是 `/`。
+ * 那比格式不统一严重得多。
+ *
+ * Windows 上这个顾虑不存在（文件名里不允许出现 `\`），所以那边
+ * `toPosix` 会把分隔符全部换掉，正是我们想要的。
+ * 「相对路径」本身不带盘符，两个平台拼出来的结果一致。
  */
 export function toPosix(path: string): string {
   if (sep === '/') return path
@@ -48,12 +75,96 @@ export function toPosix(path: string): string {
  * 入口是界面上的路径输入框，用户从访达「拷贝路径」或终端粘贴时
  * 极容易带上尾斜杠，所以这里必须兜住，而不是指望用户不犯错。
  *
- * 根目录 `/` 是特例：不能削成空串（那样就变成相对路径了）。
+ * **下限是「根」而不是 1**：根目录不能削成空串（那样就变成相对路径了），
+ * 而且 Windows 的 `D:\` 是个更长的根 —— 旧的 `while (end > 1)` 会把它
+ * 削成 `D:`，那是「D 盘当前目录」的意思，跟「D 盘根」完全不是一回事，
+ * 拿它去 join 出来的路径全是错的。
  */
-export function stripTrailingSeparators(path: string): string {
+export function stripTrailingSeparators(path: string, platform: HostPlatform = HOST): string {
+  const separator = platform === 'win32' ? '\\' : '/'
+  const minLength = pathRootLength(path, platform)
   let end = path.length
-  while (end > 1 && (path[end - 1] === '/' || path[end - 1] === sep)) end--
+  while (end > minLength && (path[end - 1] === '/' || path[end - 1] === separator)) end--
   return path.slice(0, end)
+}
+
+/**
+ * 从来源路径里取出「该在目标盘上保留的那一层目录名」。
+ *
+ * 目标盘的落盘结构是 `<目标盘根>/<这一层>/<源内相对路径>`。
+ * 取不到一个像样的名字时返回空串 = 「不额外建这一层」：
+ * 宁可维持旧行为，也绝不能把 `/`、`.`、`..` 这种段拼进目标路径里 ——
+ * 那会让文件落到盘外或语义不明的地方。
+ *
+ * 用 `basename()` 而不是「找最后一个 `/` 再切」：后者在 Windows 上
+ * 对 `D:\Cards\A001` 一个 `/` 都找不到，会把**整条路径（含盘符）**
+ * 当成目录名，落盘结构直接错乱。
+ */
+export function safeSourceRootName(path: string, platform: HostPlatform = HOST): string {
+  const normalized = stripTrailingSeparators(path, platform)
+  const name = pathModuleOf(platform).basename(normalized)
+  if (name === '' || name === '.' || name === '..') return ''
+  // 只剩分隔符（`/`、`\`、`C:\` 这种根本身）也算取不到像样的名字
+  if (name.replace(/[\\/]/g, '') === '') return ''
+  return name
+}
+
+/**
+ * 文件在目标盘上的相对路径 = `<来源目录名>/<源内相对路径>`。
+ *
+ * **只有这一处实现**，因为它有两个调用方，而两者必须永远一致：
+ *   · 拷贝引擎用它拼实际写入的路径（`CopyEngine.targetRelPath`）
+ *   · 报告层用它拼清单里的路径（清单要能拿去核对目标盘上的真实文件）
+ * 两边算得不一样，就会出现"清单里列的文件在盘上找不到"这种最难查的问题。
+ *
+ * `sourceRootName` 为空串（1.x 的存量任务）时原样返回。
+ */
+export function targetRelativePath(sourceRootName: string, relPath: string): string {
+  return sourceRootName === '' ? relPath : posix.join(sourceRootName, relPath)
+}
+
+/**
+ * Windows 保留设备名。
+ *
+ * 这些名字（含带扩展名的形式，如 `CON.txt`）在 Windows 上**永远不能**
+ * 用作文件或目录名，创建会直接失败。危险在于它们看起来完全正常。
+ */
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+/**
+ * 把任意文本（通常是任务名）转成可以安全做目录名的形式。
+ *
+ * 与清单文件名的"安全化"刻意不同：那个为了符合 ASC 规范只留 ASCII，
+ * 这里的目录是给现场的人看的，**要保留中文**，只清掉会破坏路径结构的东西：
+ *   · `/` 与 `\` —— 会把目录名拆成两级
+ *   · `:` —— macOS 的访达会把它显示成 `/`，看上去像两层，极易误判
+ *   · `< > " | ? *` —— Windows 上非法，会让 mkdir / 写报告直接失败
+ *   · 控制字符与 NUL
+ *   · 前导点 —— 会成为隐藏目录，在访达里"看不见"，最难排查
+ *   · 尾随点与空格 —— 部分文件系统会静默吞掉
+ * 返回空串表示没剩可用内容，调用方自行回退。
+ *
+ * ⚠️ 这张过滤表**两个平台统一使用**，没有做平台分支，这是有意的：
+ * 目标盘（现场几乎都是 exFAT）会在 Mac 与 Windows 之间来回插，
+ * 而「旧报告修订永不覆盖」这条产品红线依赖「同一个任务名永远算出
+ * 同一个目录名」。若两个平台各过滤一套，同一块卡上就会长出
+ * `采访"终版"_R001` 和 `采访_终版_R001` 两个平行目录。
+ * 代价是 macOS 上一个含 `"` 的任务名，目录名会比 2.0.1 之前多一个下划线。
+ */
+export function safeFolderName(name: string): string {
+  const cleaned = name
+    .replace(/[/\\:<>"|?*]/g, '_')
+    // eslint-disable-next-line no-control-regex -- 清掉控制字符正是这个正则存在的唯一用途
+    .replace(/[\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
+    .trim()
+  if (cleaned === '') return ''
+  // 保留设备名判定看的是第一个点之前的主干：`CON.txt` 同样是保留名
+  const stem = cleaned.split('.')[0] ?? ''
+  return WINDOWS_RESERVED_NAMES.test(stem) ? `_${cleaned}` : cleaned
 }
 
 /**
@@ -83,12 +194,20 @@ export function normalizeRelPath(relPath: string): string {
 }
 
 /** 把规范化后的相对路径还原成绝对路径，并再次确认没有逃逸。 */
-export function resolveInside(root: string, relPath: string): string {
+export function resolveInside(root: string, relPath: string, platform: HostPlatform = HOST): string {
   const normalized = normalizeRelPath(relPath)
-  const base = stripTrailingSeparators(root)
-  const absolute = join(base, normalized)
-  const rootWithSep = base.endsWith(sep) ? base : base + sep
-  if (absolute !== base && !absolute.startsWith(rootWithSep)) {
+  const pathModule = pathModuleOf(platform)
+  const base = stripTrailingSeparators(root, platform)
+  const absolute = pathModule.join(base, normalized)
+  const rootWithSep = base.endsWith(pathModule.sep) ? base : base + pathModule.sep
+  // NTFS 大小写不敏感，比较必须忽略大小写，否则 `C:\Cards` 与 `c:\cards`
+  // 之间会误报「路径逃逸」，把合法任务拦下来
+  const inside =
+    samePathName(absolute, base, platform) ||
+    (platform === 'win32'
+      ? absolute.toLowerCase().startsWith(rootWithSep.toLowerCase())
+      : absolute.startsWith(rootWithSep))
+  if (!inside) {
     throw new Error(`路径逃逸检测：${absolute} 不在 ${root} 之内`)
   }
   return absolute
@@ -349,7 +468,16 @@ export async function volumeUsage(path: string): Promise<VolumeUsage | null> {
 }
 
 /** 两个路径是否在同一个卷上（用设备号判断）。 */
-export async function isSameVolume(a: string, b: string): Promise<boolean> {
+export async function isSameVolume(a: string, b: string, platform: HostPlatform = HOST): Promise<boolean> {
+  if (platform === 'win32') {
+    // 盘符不同 ⇒ 一定是不同卷，不必去 stat（对刚拔掉/刚插入的盘也更稳）。
+    // 盘符相同的情况仍交给下面的 dev 比较，好让「同一盘符下的不同装载点」
+    // 之类的边角情由设备号兜住。
+    const pathModule = pathModuleOf(platform)
+    const rootA = pathModule.parse(a).root
+    const rootB = pathModule.parse(b).root
+    if (rootA !== '' && rootB !== '' && !samePathName(rootA, rootB, platform)) return false
+  }
   try {
     const [infoA, infoB] = await Promise.all([stat(a), stat(b)])
     return infoA.dev === infoB.dev
@@ -359,14 +487,25 @@ export async function isSameVolume(a: string, b: string): Promise<boolean> {
 }
 
 /** 源目录是否位于目标目录内部 —— 这种布局会把文件拷到自己里面，必须拦下。 */
-export async function isNestedPath(child: string, parent: string): Promise<boolean> {
-  const normalizedChild = child.endsWith(sep) ? child : child + sep
-  const normalizedParent = parent.endsWith(sep) ? parent : parent + sep
-  if (normalizedChild.startsWith(normalizedParent)) return true
-  if (normalizedParent.startsWith(normalizedChild)) return true
-  // 不同挂载点但实际是同一个目录时，用 inode 再确认一次
+export async function isNestedPath(
+  child: string,
+  parent: string,
+  platform: HostPlatform = HOST
+): Promise<boolean> {
+  const separator = pathModuleOf(platform).sep
+  const normalizedChild = child.endsWith(separator) ? child : child + separator
+  const normalizedParent = parent.endsWith(separator) ? parent : parent + separator
+  const fold = (value: string): string => (platform === 'win32' ? value.toLowerCase() : value)
+  if (fold(normalizedChild).startsWith(fold(normalizedParent))) return true
+  if (fold(normalizedParent).startsWith(fold(normalizedChild))) return true
+  // 不同挂载点但实际是同一个目录时，用 inode 再确认一次。
+  //
+  // ⚠️ 必须挡住 ino === 0：exFAT / FAT32（**摄影机卡的主流格式**）的 st_ino
+  // 恒为 0，守卫缺失时「0 === 0 且 dev 相同」会对**任意两个同卷路径**成立，
+  // 把完全合法的目标盘判成「源目录套在目标里」—— 拷贝页会无缘无故拒绝开工。
   try {
     const [a, b] = await Promise.all([stat(child), stat(parent)])
+    if (a.ino === 0 || b.ino === 0) return false
     return a.ino === b.ino && a.dev === b.dev
   } catch {
     return false
@@ -388,14 +527,36 @@ export interface VolumeDescription {
 const mountPointCache = new Map<string, string>()
 
 /**
+ * 清空挂载点缓存。
+ *
+ * 盘符会被系统复用：拔掉 E: 盘再插一块新盘，它还是 E:。
+ * 所以每次重新枚举卷之前必须清一次，否则会拿上一块盘的挂载点去操作新盘。
+ */
+export function invalidateVolumeCache(): void {
+  mountPointCache.clear()
+}
+
+/**
  * 向上回溯找出挂载点。
  *
- * 做法是不断向上取父目录，直到设备号发生变化，那么上一级就是挂载点。
+ * macOS 的做法是不断向上取父目录，直到设备号发生变化，那么上一级就是挂载点。
  * 结果按路径缓存，避免在进度回调里反复 stat。
+ *
+ * Windows 上不需要这么绕：卷一定挂在盘符根（`D:\`），直接取 `parse().root` 即可。
  */
-export async function findMountPoint(path: string): Promise<string> {
-  const cached = mountPointCache.get(path)
+export async function findMountPoint(path: string, platform: HostPlatform = HOST): Promise<string> {
+  // 缓存键带上平台：同一台机器上两个平台分支的结果是两回事，
+  // 不能互相覆盖（注入平台跑测试时会撞上）
+  const cacheKey = `${platform}\u0000${path}`
+  const cached = mountPointCache.get(cacheKey)
   if (cached !== undefined) return cached
+
+  if (platform === 'win32') {
+    const root = pathModuleOf(platform).parse(path).root
+    const resolved = root === '' ? path : root
+    mountPointCache.set(cacheKey, resolved)
+    return resolved
+  }
 
   const start = await stat(path)
   let current = path
@@ -421,18 +582,36 @@ export async function findMountPoint(path: string): Promise<string> {
     }
   }
 
-  mountPointCache.set(path, mountPoint)
+  mountPointCache.set(cacheKey, mountPoint)
   return mountPoint
 }
 
-export async function describeVolume(path: string): Promise<VolumeDescription | null> {
+/**
+ * 卷在界面上显示的名字。
+ *
+ * - macOS：`/Volumes/A001` → `A001`；根目录 → 「启动磁盘」（沿用旧文案）
+ * - Windows：`E:\` → `E:`。真实的**卷标**（像 `A001` 这种）Node 拿不到，
+ *   需要 PowerShell，由 `volumes.ts` 在枚举卷列表时补上并覆盖这里的结果。
+ */
+function describeVolumeLabel(mountPoint: string, platform: HostPlatform): string {
+  if (platform === 'win32') {
+    const root = pathModuleOf(platform).parse(mountPoint).root
+    const bare = (root === '' ? mountPoint : root).replace(/[\\/]+$/, '')
+    return bare === '' ? mountPoint : bare
+  }
+  if (mountPoint === '/') return systemVolumeLabel(platform)
+  return basename(mountPoint)
+}
+
+export async function describeVolume(
+  path: string,
+  platform: HostPlatform = HOST
+): Promise<VolumeDescription | null> {
   try {
-    const [info, mountPoint] = await Promise.all([stat(path), findMountPoint(path)])
-    const inVolumes = mountPoint.startsWith('/Volumes/')
-    const label = inVolumes ? basename(mountPoint) : mountPoint === '/' ? '启动磁盘' : basename(mountPoint)
+    const [info, mountPoint] = await Promise.all([stat(path), findMountPoint(path, platform)])
     return {
       path,
-      label,
+      label: describeVolumeLabel(mountPoint, platform),
       mountPoint,
       device: info.dev,
       readOnly: await isReadOnly(mountPoint)
@@ -452,60 +631,54 @@ async function isReadOnly(path: string): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ *
- * 弹出卷（macOS）
- * ------------------------------------------------------------------ */
-
-/**
- * 弹出目标盘。
- *
- * 只用参数数组 + `shell: false` —— 路径里出现空格、引号、`$(...)` 都不会被解释。
- * 这是本项目对所有外部命令调用的统一姿势。
- */
-export function ejectVolume(mountPoint: string): Promise<{ ok: boolean; message: string }> {
-  return new Promise((resolve) => {
-    if (process.platform !== 'darwin') {
-      resolve({ ok: false, message: '当前系统不支持自动弹出，请手动推出磁盘。' })
-      return
-    }
-    const child = spawn('/usr/sbin/diskutil', ['eject', mountPoint], { shell: false })
-    let stderr = ''
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
-    })
-    child.on('error', (error) => {
-      resolve({ ok: false, message: `无法调用 diskutil：${describeError(error)}` })
-    })
-    child.on('close', (code) => {
-      if (code === 0) resolve({ ok: true, message: '已弹出' })
-      else resolve({ ok: false, message: stderr.trim() || `diskutil 退出码 ${code}` })
-    })
-  })
-}
-
-/* ------------------------------------------------------------------ *
  * 可执行文件查找
  * ------------------------------------------------------------------ */
 
-/** 在 PATH 里查找可执行文件；不启动任何子进程，纯查目录。 */
-export async function whichInPath(name: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  const rawPath = env.PATH ?? ''
-  for (const dir of rawPath.split(':')) {
+/**
+ * 在 PATH 里查找可执行文件；不启动任何子进程，纯查目录。
+ *
+ * Windows 上有两处跟 POSIX 不一样，都必须处理：
+ *   · PATH 的分隔符是 `;` 而不是 `:` —— 按 `:` 切会把整条 PATH 当成一个目录，
+ *     结果是「永远找不到」；
+ *   · 可执行文件靠扩展名（`PATHEXT`）识别，所以 `ffmpeg` 要去挨个试
+ *     `ffmpeg.COM` / `ffmpeg.EXE` / …
+ */
+export async function whichInPath(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: HostPlatform = HOST
+): Promise<string | null> {
+  // Windows 上环境变量的键名大小写并不固定（`PATH` / `Path` 都见过），两个都认
+  const rawPath = env.PATH ?? env['Path'] ?? ''
+  const pathModule = pathModuleOf(platform)
+  const separator = pathListSeparator(platform)
+  // 调用方已经写了后缀（例如 `ffprobe.exe`）就不要再追加一次
+  const candidates = name.includes('.') ? [name] : executableExtensions(platform, env).map((ext) => `${name}${ext}`)
+
+  for (const dir of rawPath.split(separator)) {
     if (dir === '') continue
-    const candidate = join(dir, name)
-    try {
-      await access(candidate, constants.X_OK)
-      return candidate
-    } catch {
-      continue
+    for (const candidate of candidates) {
+      const full = pathModule.join(dir, candidate)
+      if (await isExecutableFile(full, platform)) return full
     }
   }
   return null
 }
 
-export async function isExecutableFile(path: string): Promise<boolean> {
+/**
+ * 一个路径是否指向「可执行文件」。
+ *
+ * POSIX 看文件模式位（X_OK）；Windows 没有执行位，X_OK 在那里近似 F_OK、
+ * 等于没检查 —— 只能按 `PATHEXT` 的扩展名约定判断。
+ */
+export async function isExecutableFile(path: string, platform: HostPlatform = HOST): Promise<boolean> {
   try {
     const info = await stat(path)
     if (!info.isFile()) return false
+    if (platform === 'win32') {
+      const lower = path.toLowerCase()
+      return executableExtensions(platform).some((ext) => ext !== '' && lower.endsWith(ext))
+    }
     await access(path, constants.X_OK)
     return true
   } catch {

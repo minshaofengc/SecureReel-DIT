@@ -8,8 +8,19 @@ import { hostname } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { AppSettings, CopyJob, CopyJobFile, CopyTarget, MainEvent, ProjectInfo, ReportSummary, ScanResult } from '@shared/types'
+import type {
+  AppSettings,
+  CopyJob,
+  CopyJobFile,
+  CopyTarget,
+  JobProgress,
+  MainEvent,
+  ProjectInfo,
+  ReportSummary,
+  ScanResult
+} from '@shared/types'
 import { msg, type MsgKey } from '@shared/messages'
+import { todayLocalDate } from '@shared/format'
 import type { CreateJobRequest } from '@shared/ipc'
 import { APP_NAME, APP_VERSION } from '@shared/version'
 import { emptyProjectDraft, emptyProjectInfo } from '@shared/project'
@@ -18,12 +29,13 @@ import type { Logger } from '@main/logger'
 import type { AppPaths } from '@main/paths'
 import {
   describeVolume,
-  ejectVolume,
   isNestedPath,
   pathExists,
+  safeSourceRootName,
   stripTrailingSeparators,
   walkFiles
 } from '@main/fs-utils'
+import { ejectVolume } from '@main/volumes'
 import { CopyEngine } from './copy-engine'
 import { PauseGate } from './concurrency'
 import { inspectSource, scanSource, usageForTargets } from './source-scan'
@@ -35,6 +47,21 @@ import { renderHtmlToPdf } from '@main/reports/pdf'
 export const TOOL_NAME = APP_NAME
 export const TOOL_VERSION = APP_VERSION
 
+/**
+ * 防休眠的最小接口。
+ *
+ * 刻意不在这里直接 `import { powerSaveBlocker } from 'electron'`：
+ * JobManager 是被 vitest 直接 new 出来的纯逻辑类（跑在 node 环境），
+ * 模块顶层一旦 import electron，整个测试文件就起不来。
+ * 真实的 powerSaveBlocker 由主进程装配层注入。
+ */
+export interface SleepBlocker {
+  /** 开始阻止空闲挂起，返回句柄 id */
+  start(): number
+  stop(id: number): void
+  isStarted(id: number): boolean
+}
+
 export interface JobManagerDeps {
   store: Store
   logger: Logger
@@ -44,6 +71,8 @@ export interface JobManagerDeps {
   hde: HdeAdapter
   getSettings: () => AppSettings
   emit: (event: MainEvent) => void
+  /** 缺省 = 不阻止休眠（测试环境即如此） */
+  sleepBlocker?: SleepBlocker
 }
 
 interface RunHandle {
@@ -55,8 +84,51 @@ interface RunHandle {
 
 export class JobManager {
   private readonly runs = new Map<string, RunHandle>()
+  /**
+   * 每个运行中的任务持有一个防休眠句柄。
+   *
+   * 用引用计数而不是一个布尔量：多个任务可以同时在跑，谁先结束都不该
+   * 把别人的防休眠关掉。暂停中的任务**不释放** —— 它随时会继续，
+   * 仍属于"用户正在等待的一次交付"。
+   */
+  private readonly sleepBlockers = new Map<string, number>()
+  /**
+   * 每个任务最近一次上报的进度快照。
+   *
+   * 存在的理由：`job:progress` 是**推送**，界面切到别的页面再切回来时
+   * 手上什么都没有，只能主动来问一次。此前那个问的接口是手拼的静态快照
+   * （phase 恒为 done、速度恒为 0、currentFile 恒为 null），问到的结果
+   * 与界面上正在看的实时进度完全是两回事。这里存下引擎的真话，
+   * 让"问一次"和"等推送"拿到同一个东西。
+   */
+  private readonly latestProgress = new Map<string, JobProgress>()
 
   constructor(private readonly deps: JobManagerDeps) {}
+
+  /**
+   * 任务开跑时阻止系统进入空闲挂起。
+   *
+   * 用 `prevent-app-suspension` 而不是 `prevent-display-sleep`：长拷贝动辄
+   * 几小时，屏幕该黑就黑，我们要保的是"数据一直在流"以及应用不被
+   * macOS 的 App Nap 降频。
+   *
+   * 崩溃或强制退出时**不需要任何清理代码**：这是进程级的 OS 断言
+   * （macOS 走 IOPMAssertion），进程消失即被系统回收，不存在跨进程残留。
+   * 唯一要守的是同一进程内 acquire / release 配对。
+   */
+  private acquireSleepBlocker(jobId: string): void {
+    const blocker = this.deps.sleepBlocker
+    if (blocker === undefined || this.sleepBlockers.has(jobId)) return
+    this.sleepBlockers.set(jobId, blocker.start())
+  }
+
+  private releaseSleepBlocker(jobId: string): void {
+    const blocker = this.deps.sleepBlocker
+    const id = this.sleepBlockers.get(jobId)
+    if (blocker === undefined || id === undefined) return
+    this.sleepBlockers.delete(jobId)
+    if (blocker.isStarted(id)) blocker.stop(id)
+  }
 
   /** 按当前设置的语言取引擎文案。 */
   private m(key: MsgKey, params: Record<string, string | number> = {}): string {
@@ -65,6 +137,16 @@ export class JobManager {
 
   isRunning(jobId: string): boolean {
     return this.runs.has(jobId)
+  }
+
+  /**
+   * 某个任务最近一次上报的进度快照；这个任务从未跑过时为 null。
+   *
+   * 任务不在跑时，缓存里留的仍是最后一拍（phase 为 done、activeFiles 已清空）——
+   * 那比凭空拼一个"看起来已经结束"的对象诚实得多。
+   */
+  getProgress(jobId: string): JobProgress | null {
+    return this.latestProgress.get(jobId) ?? null
   }
 
   /** 任务开始前补加一个目标盘。已开跑的任务不允许改，避免中途改变语义。 */
@@ -209,6 +291,10 @@ export class JobManager {
       name: request.name,
       mode: verifyOnly ? 'verify' : 'copy',
       sourcePath,
+      // 目标盘上为这个来源目录保留一层同名文件夹。见 CopyJob.sourceRootName 的说明：
+      // walkFiles 的相对路径不含"用户选中的那一层"，不补回来的话，
+      // 选卡内子文件夹时目标盘上会平白少一层，文件全摊在盘根。
+      sourceRootName: safeSourceRootName(sourcePath),
       sourceKind: scan.kind,
       isCodExVfs: scan.isCodExVfs,
       parentProjectId: parent,
@@ -242,7 +328,7 @@ export class JobManager {
     const details = request.project ?? emptyProjectDraft()
     const plain: ProjectInfo = {
       projectName: details.projectName,
-      shootDay: details.shootDay === '' ? new Date().toISOString().slice(0, 10) : details.shootDay,
+      shootDay: details.shootDay === '' ? todayLocalDate() : details.shootDay,
       camera: details.camera,
       lenses: details.lenses,
       notes: details.notes,
@@ -254,6 +340,45 @@ export class JobManager {
       updatedAt: null
     }
     store.saveProjectInfo(jobId, plain)
+
+    /*
+     * 把这次填的职员与镜头记进母项目档案，下次选它就能直接带出来。
+     *
+     * 为什么放在这里而不是界面上：任务快照只服务这一份报告，
+     * 而"这部戏的主创和镜头"是要跨很多张卡复用的 —— 用户填过一次，
+     * 显然不希望下一张卡再从零开始。这是**拷贝流程的收尾动作**，
+     * 所以落在创建任务的必经路径上，无论从哪个入口建任务都生效。
+     *
+     * 三条边界（见 `mergeTalentIntoParent`）：
+     *   · 只动 lenses / crew，机型、项目名、备注、拍摄日不碰
+     *   · 本次没填的项保持档案原样，绝不用空值覆盖
+     *   · 没有实际变化就不写库
+     * 已经出过的报告不受影响 —— 它们存的是当时的快照。
+     */
+    if (parent !== null) {
+      const remembered = store.rememberParentTalent(parent, {
+        lenses: plain.lenses,
+        crew: plain.crew
+      })
+      if (remembered?.changed === true) {
+        logger.info(
+          'project',
+          `已把本次填写的职员与镜头记入母项目「${remembered.project.name}」，下次选它自动带入。`
+        )
+      }
+    }
+
+    /*
+     * 记下这次用过的来源、目标与选项，下次打开拷贝页时预填。
+     * 现场常是同一张卡连拷到几块盘，每次都重新选一遍路径纯属浪费。
+     * 刻意**不记任务名**：那个每次都不一样（换卡就要改），
+     * 自动填一个错的比空着更烦人。
+     */
+    store.saveLastJobDraft({
+      sourcePath,
+      targetPaths: targets.map((target) => target.path),
+      projectName: plain.projectName
+    })
 
     logger.info(
       'job',
@@ -314,13 +439,29 @@ export class JobManager {
       onFileSettled: (file: CopyJobFile) => {
         this.deps.emit({ type: 'job:file', payload: { jobId, file } })
       },
+      // 中间态变更（已按 200ms 合并）。与 job:file 的分工：
+      // 这条只负责让界面看到"文件在动"，最终事实以 job:file 为准。
+      onFilesChanged: (deltas) => {
+        this.deps.emit({ type: 'job:files-delta', payload: { jobId, deltas } })
+      },
+      // 引擎把一批中间态改回了 pending（任务开始时的 resetInFlightFiles）。
+      // 这种"往回退"界面自己发现不了，必须显式请它重拉。
+      onFilesResync: () => {
+        this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
+      },
       onProgress: (progress) => {
+        // 存一份给"主动来问"的调用方（见 latestProgress 的说明）
+        this.latestProgress.set(jobId, progress)
         this.deps.emit({ type: 'job:progress', payload: progress })
       }
     })
 
     store.updateJob(jobId, { state: 'queued' })
     this.emitState(jobId)
+
+    // 从这一刻起不让系统空闲挂起：任务刚排进队列，用户很可能就切去干别的了，
+    // 而后续几小时的拷贝全靠这台机器不要睡着。
+    this.acquireSleepBlocker(jobId)
 
     const promise = (async (): Promise<void> => {
       let terminalState: CopyJob['state'] = 'failed'
@@ -334,6 +475,8 @@ export class JobManager {
         terminalState = 'failed'
       } finally {
         this.runs.delete(jobId)
+        // 与 acquire 的唯一配对点：正常完成、引擎抛错、被取消都会走到这里
+        this.releaseSleepBlocker(jobId)
         this.emitState(jobId)
       }
 
@@ -383,8 +526,11 @@ export class JobManager {
   cancel(jobId: string): CopyJob {
     const handle = this.runs.get(jobId)
     if (handle === undefined) {
-      // 没在运行也要把状态修正，避免界面卡在"运行中"
+      // 没在运行也要把状态修正，避免界面卡在"运行中"。
+      // 顺带释放防休眠：正常路径下它早该被 finally 收掉了，
+      // 这里只是防御 —— 万一某条异常路径漏了配对，也别让机器一直醒着。
       this.deps.store.updateJob(jobId, { state: 'cancelled', finishedAt: new Date().toISOString() })
+      this.releaseSleepBlocker(jobId)
       this.emitState(jobId)
       return this.requireJob(jobId)
     }
@@ -524,6 +670,36 @@ export class JobManager {
       }
     }
 
+    /*
+     * 最后一步：把整份修订复制到各目标盘。
+     *
+     * 必须放在这里 —— 要等 PDF 生成与首帧内联都做完，盘上那一份才是完整的
+     * 单文件报告。复制失败只记日志与提示，绝不让它把已经成功的拷贝任务
+     * 变成一次"失败"（它只是交付便利，不是交付本身）。
+     */
+    try {
+      const result = await reportStore.publishToTargets({
+        job,
+        revision,
+        targets: job.targets,
+        hostname: hostname(),
+        toolName: TOOL_NAME,
+        toolVersion: TOOL_VERSION,
+        now: new Date()
+      })
+      if (result.published.length > 0) {
+        logger.info('job', this.m('job.reportPublished', { targets: result.published.join('、') }))
+      }
+      for (const item of result.failed) {
+        const message = this.m('job.reportPublishFail', { label: item.label, reason: item.reason })
+        logger.warn('job', message)
+        this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn('job', `报告复制到目标盘失败（本机报告已生成）：${message}`)
+    }
+
     this.deps.emit({ type: 'reports:changed', payload: { jobId } })
     return revision.summary
   }
@@ -533,7 +709,7 @@ export class JobManager {
       if (!target.enabled) continue
       const description = await describeVolume(target.path)
       if (description === null) continue
-      const result = await ejectVolume(description.mountPoint)
+      const result = await ejectVolume(description.mountPoint, this.deps.getSettings().language)
       if (result.ok) {
         this.deps.logger.info('job', this.m('job.ejected', { label: target.label }))
       } else {

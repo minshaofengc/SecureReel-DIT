@@ -1,7 +1,7 @@
 {
   "name": "securereel-dit",
-  "productName": "SecureReel DIT",
-  "version": "1.2.5",
+  "productName": "SecureReel DIT 2",
+  "version": "2.0.1",
   "description": "免费开源的摄影机素材拷贝与校验工具：多目标拷贝、xxHash64 复核、ASC MHL、不可变报告。",
   "license": "GPL-3.0-only",
   "author": {
@@ -18,6 +18,8 @@
     "preview": "electron-vite preview",
     "build": "electron-vite build",
     "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && sh scripts/dist-win.sh",
+    "check:win-assets": "sh scripts/check-win-assets.sh",
     "type-check": "npm run type-check:node && npm run type-check:web",
     "type-check:node": "tsc -p tsconfig.node.json --noEmit",
     "type-check:web": "tsc -p tsconfig.web.json --noEmit",

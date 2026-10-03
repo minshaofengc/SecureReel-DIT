@@ -35,6 +35,13 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
+  /*
+   * Windows 标题栏叠加层的高度（与 src/main/platform.ts 的 TITLE_BAR_HEIGHT 必须一致）。
+   *
+   * 它不是颜色，所以放在 :root 一份就够 —— 不需要在六个主题块里重复。
+   * macOS 上不生效：用到它的规则都被 [data-platform='windows'] 限定了。
+   */
+  --titlebar-height: 40px;
   --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
     'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AppStateProvider, useAppState } from './state/AppState'
 import { I18nProvider, useI18n } from './i18n'
-import { applyTheme, useResolvedMode } from './theme'
+import { applyPlatform, applyTheme, syncNativeTitleBar, useResolvedMode } from './theme'
 import { CopyView } from './views/CopyView'
 import { QueueView } from './views/QueueView'
 import { ReportsView } from './views/ReportsView'
@@ -28,9 +28,20 @@ function Shell(): ReactNode {
   const [page, setPage] = useState<Page>('copy')
   const resolved = useResolvedMode(settings.themeMode)
 
+  // 平台标记先挂上：CSS 里 `[data-platform='windows']` 的规则（标题栏留白、
+  // 拖拽条）依赖它，晚一步就会出现一帧的布局跳变。
+  useEffect(() => {
+    applyPlatform(appInfo?.platform)
+  }, [appInfo?.platform])
+
   useEffect(() => {
     applyTheme(settings.themeId, resolved)
-  }, [settings.themeId, resolved])
+    // 主题换了要顺手把 Windows 标题栏按钮区的颜色也换掉。
+    // 读 CSS 变量必须在 applyTheme **之后**，否则读到的是上一套配色。
+    // 等一帧再读，确保样式已经重算完。
+    const frame = requestAnimationFrame(() => syncNativeTitleBar(appInfo?.platform))
+    return () => cancelAnimationFrame(frame)
+  }, [settings.themeId, resolved, appInfo?.platform])
 
   const runningCount = jobs.filter((job) => job.state === 'running' || job.state === 'queued').length
   const showRecovery = recovered.length > 0 && page !== 'queue'

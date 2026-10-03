@@ -55,3 +55,21 @@ export function truncateMiddle(value: string, maxLength = 48): string {
   const tail = Math.floor((maxLength - 1) / 2)
   return `${value.slice(0, head)}…${value.slice(value.length - tail)}`
 }
+
+/**
+ * 今天的日期，`YYYY-MM-DD`，**按本机时区**。
+ *
+ * 为什么不直接用 `new Date().toISOString().slice(0, 10)`：
+ * `toISOString()` 走的是 UTC。东八区的凌晨 0 点到 8 点之间，UTC 还停在前一天 ——
+ * 于是通宵拍完、凌晨拷卡的时候，"今天"会变成"昨天"，
+ * 拍摄日默默错一天，而且因为格式合法，谁都不会发现。
+ * 剧组恰恰最爱在这个时间段拷卡。
+ *
+ * 日期取整用本地字段拼，不走任何 Date 序列化。
+ */
+export function todayLocalDate(now: Date = new Date()): string {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}

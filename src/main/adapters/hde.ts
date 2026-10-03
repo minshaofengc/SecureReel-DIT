@@ -10,27 +10,65 @@
  * HDE 编码能力由 ARRI / CODEX 官方免费工具提供。本应用只做编排。
  */
 import { readdir } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import type { AppSettings, HdeCameraModel, HdeCapabilityDecision, HdeToolStatus, ScanResult } from '@shared/types'
 import { resolveExecutable, runCommand } from '@main/exec'
 import { pathExists, whichInPath } from '@main/fs-utils'
+import { IS_WINDOWS } from '@main/platform'
+import { listVolumeEntries } from '@main/volumes'
 import type { Logger } from '@main/logger'
 
-/** CODEX Device Manager 应用包可能出现的位置。 */
-const CODEX_BUNDLE_CANDIDATES = [
-  '/Applications/CODEX Device Manager.app',
-  '/Applications/Codex Device Manager.app',
-  '/Applications/CODEX Device Manager',
-  '/Applications/CODEXDeviceManager.app'
-]
+/**
+ * Windows 上「程序装在哪」的几个标准目录。
+ *
+ * 用环境变量而不是写死 `C:\Program Files`：系统盘不一定是 C，而且
+ * 32 位程序在 64 位系统上会被装到 Program Files (x86)。
+ * 拿不到的键（比如某些精简环境）直接跳过，不猜路径。
+ */
+function windowsProgramDirs(): string[] {
+  const dirs: string[] = []
+  for (const key of ['ProgramW6432', 'ProgramFiles', 'ProgramFiles(x86)']) {
+    const value = process.env[key]
+    if (value !== undefined && value !== '') dirs.push(value)
+  }
+  const localAppData = process.env['LOCALAPPDATA']
+  if (localAppData !== undefined && localAppData !== '') dirs.push(join(localAppData, 'Programs'))
+  return dirs
+}
 
-/** 官方 ARRIRAW HDE Transcoder 可执行文件常见位置。 */
-const ARRIRAW_HDE_CANDIDATES = [
-  '/usr/local/bin/arrirawhde',
-  '/opt/homebrew/bin/arrirawhde',
-  '/Applications/ARRIRAW HDE Transcoder.app/Contents/MacOS/arrirawhde',
-  '/Applications/ARRI/ARRIRAW HDE Transcoder.app/Contents/MacOS/arrirawhde'
-]
+/**
+ * CODEX Device Manager 应用可能出现的位置。
+ *
+ * ⚠️ Windows 这一串是**按常见安装约定猜的，没有在真机上验证过** ——
+ * 我们查不到 ARRI / CODEX 官方工具是否提供 Windows 版本。所以这里的策略是
+ * 「多猜几个位置 + 兜底去 PATH 里找」，找不到就老实走降级链，
+ * 绝不因为「路径没猜中」而假报成工具不存在。
+ * 真机上准确的安装位置，由 `windows 版本/Windows 自检清单.md` 的 H 组反馈回来。
+ */
+const CODEX_BUNDLE_CANDIDATES = IS_WINDOWS
+  ? windowsProgramDirs().flatMap((dir) => [
+      join(dir, 'CODEX Device Manager'),
+      join(dir, 'Codex Device Manager')
+    ])
+  : [
+      '/Applications/CODEX Device Manager.app',
+      '/Applications/Codex Device Manager.app',
+      '/Applications/CODEX Device Manager',
+      '/Applications/CODEXDeviceManager.app'
+    ]
+
+/** 官方 ARRIRAW HDE Transcoder 可执行文件常见位置（Windows 部分同样是猜测，见上）。 */
+const ARRIRAW_HDE_CANDIDATES = IS_WINDOWS
+  ? windowsProgramDirs().flatMap((dir) => [
+      join(dir, 'ARRI', 'ARRIRAW HDE Transcoder', 'arrirawhde.exe'),
+      join(dir, 'ARRIRAW HDE Transcoder', 'arrirawhde.exe')
+    ])
+  : [
+      '/usr/local/bin/arrirawhde',
+      '/opt/homebrew/bin/arrirawhde',
+      '/Applications/ARRIRAW HDE Transcoder.app/Contents/MacOS/arrirawhde',
+      '/Applications/ARRI/ARRIRAW HDE Transcoder.app/Contents/MacOS/arrirawhde'
+    ]
 
 /** 文件名里出现这些关键字，通常意味着 HDE 卷。 */
 const HDE_NAME_HINTS = ['hde', 'codex', 'arriraw', 'arx']
@@ -254,18 +292,12 @@ export class HdeAdapter {
    * ---------------------------------------------------------------- */
 
   private async detectVfsVolumes(): Promise<string[]> {
+    // 走统一的卷枚举：macOS 是 /Volumes 下的挂载目录，Windows 是盘符。
+    // HDE 卷的名字特征（hde / codex / arriraw / arx）两个平台一样，规则不变。
     const found: string[] = []
-    try {
-      const entries = await readdir('/Volumes', { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
-        const lower = entry.name.toLowerCase()
-        if (HDE_NAME_HINTS.some((hint) => lower.includes(hint))) {
-          found.push(`/Volumes/${entry.name}`)
-        }
-      }
-    } catch {
-      /* /Volumes 读不到就当作没有 */
+    for (const entry of await listVolumeEntries()) {
+      const lower = basename(entry.root).toLowerCase()
+      if (HDE_NAME_HINTS.some((hint) => lower.includes(hint))) found.push(entry.root)
     }
     return found
   }
@@ -275,6 +307,7 @@ export class HdeAdapter {
       const resolved = await resolveExecutable(candidate)
       if (resolved !== null) return resolved
     }
+    // Windows 上 whichInPath 会按 PATHEXT 找到 arrirawhde.exe
     const inPath = await whichInPath('arrirawhde')
     return resolveExecutable(inPath)
   }

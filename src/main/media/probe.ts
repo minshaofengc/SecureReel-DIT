@@ -19,6 +19,7 @@ import { open, readFile, writeFile } from 'node:fs/promises'
 import type { FrameSource, MediaProbe } from '@shared/types'
 import { resolveExecutable, runCommand } from '@main/exec'
 import { ensureDir, whichInPath } from '@main/fs-utils'
+import { executableName, IS_WINDOWS } from '@main/platform'
 import type { Logger } from '@main/logger'
 import { extractEmbeddedPreview, type EmbeddedPreview } from './embedded-preview'
 import {
@@ -205,6 +206,27 @@ function safeStem(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, '_')
 }
 
+/**
+ * 随包二进制在资源目录里的候选文件名，**按平台不同**。
+ *
+ * - macOS：一份 universal 安装包里 x64 与 arm64 两套二进制都在，
+ *   所以运行时必须带架构后缀去挑（`ffprobe-darwin-arm64`）。
+ * - Windows：只出 x64，就是一个普通的 `ffprobe.exe`。
+ *
+ * 两边都额外保留「无后缀名」的兜底，方便用户自己往资源目录里放一份文件。
+ */
+function bundledBinaryNames(base: string): string[] {
+  if (IS_WINDOWS) return [`${base}.exe`, base]
+  return [`${base}-darwin-${process.arch}`, base]
+}
+
+/** 让用户自己装 FFmpeg 时的提示按平台给对命令。 */
+function installHint(): string {
+  return IS_WINDOWS
+    ? '可自行安装 FFmpeg（例如在终端执行 winget install Gyan.FFmpeg），或在设置里指定其所在目录。'
+    : '可自行安装 FFmpeg（例如 brew install ffmpeg），或在设置里指定其所在目录。'
+}
+
 export class FfprobeRunner implements MediaProbeRunner {
   private ffprobePath: string | null = null
   private ffmpegPath: string | null = null
@@ -235,7 +257,8 @@ export class FfprobeRunner implements MediaProbeRunner {
       '因此无法读取拍摄时间、时长、时码与编码信息。' +
       '这部分属于报告的附加内容，缺失不会影响拷贝与哈希校验结果。' +
       'R3D / BRAW 这类私有格式即使没有 ffprobe，也能从文件内嵌预览图取到首帧。' +
-      '如需完整元数据，可自行安装 FFmpeg（例如 brew install ffmpeg），或在设置里指定其所在目录。'
+      '如需完整元数据，' +
+      installHint()
     )
   }
 
@@ -244,22 +267,23 @@ export class FfprobeRunner implements MediaProbeRunner {
   }
 
   async refresh(): Promise<void> {
-    // 随包二进制按架构命名（ffmpeg-darwin-arm64 / ffmpeg-darwin-x64），
-    // 因为 universal 安装包里两套架构都会带上，运行时按本机架构选用。
-    // 同时保留无后缀名作为兜底（用户自行往资源目录放文件的情形）。
-    const archSuffix = `darwin-${process.arch}`
-    const bundledCandidates = this.deps.bundledDir === null
-      ? []
-      : [
-          join(this.deps.bundledDir, `ffprobe-${archSuffix}`),
-          join(this.deps.bundledDir, 'ffprobe'),
-          join(this.deps.bundledDir, `ffmpeg-${archSuffix}`),
-          join(this.deps.bundledDir, 'ffmpeg')
-        ]
+    // 随包二进制的命名按平台不同（见 bundledBinaryNames）：
+    // macOS 是 `ffprobe-darwin-<arch>`，Windows 是 `ffprobe.exe`。
+    const bundledCandidates =
+      this.deps.bundledDir === null
+        ? []
+        : [
+            ...bundledBinaryNames('ffprobe').map((name) => join(this.deps.bundledDir as string, name)),
+            ...bundledBinaryNames('ffmpeg').map((name) => join(this.deps.bundledDir as string, name))
+          ]
 
     const candidates: string[] = []
     if (this.deps.userDir !== null) {
-      candidates.push(join(this.deps.userDir, 'ffprobe'), join(this.deps.userDir, 'ffmpeg'))
+      // 用户在设置里指定的目录：按裸名字找（Windows 上会自动补 .exe）
+      candidates.push(
+        join(this.deps.userDir, executableName('ffprobe')),
+        join(this.deps.userDir, executableName('ffmpeg'))
+      )
     }
     candidates.push(...bundledCandidates)
 

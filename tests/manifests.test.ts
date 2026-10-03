@@ -57,6 +57,7 @@ function makeJob(): CopyJob {
     name: 'A002 卡备份',
     mode: 'copy',
     sourcePath: '/Volumes/A002R2EC',
+    sourceRootName: '',
     sourceKind: 'generic',
     isCodExVfs: false,
     parentProjectId: null,
@@ -159,6 +160,14 @@ describe('ASC MHL 2.0 结构与命名', () => {
 
   it('盘名里的非法字符会被替换，不会产生非法文件名', () => {
     expect(ascMhlFilename(1, 'a/b:c d', NOW)).toBe('0001_a_b_c_d_2026-09-15_043000Z.mhl')
+  })
+
+  it('全非 ASCII 的盘名（中文卷名）回退成 root，而不是一串下划线', () => {
+    // 曾经这里产出 `0001___2026-09-15_043000Z.mhl`：整个中文卷名被过滤干净，
+    // 只剩分隔符 —— 既难看，也完全认不出这是哪张卡的清单
+    expect(ascMhlFilename(1, '启动磁盘', NOW)).toBe('0001_root_2026-09-15_043000Z.mhl')
+    expect(ascMhlFilename(1, '   ', NOW)).toBe('0001_root_2026-09-15_043000Z.mhl')
+    expect(ascMhlFilename(1, '___', NOW)).toBe('0001_root_2026-09-15_043000Z.mhl')
   })
 
   it('清单落在 ascmhl/ 目录下，根元素与命名空间正确', async () => {

@@ -23,11 +23,13 @@ import { open, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
 import type {
+  ActiveFileProgress,
   AppSettings,
   CopyJob,
   CopyJobFile,
   CopyTarget,
   FileState,
+  FileStateDelta,
   FileTargetResult,
   JobPhase,
   JobProgress,
@@ -47,12 +49,24 @@ import {
   pathExists,
   removeQuietly,
   resolveInside,
-  syncDirectory
+  syncDirectory,
+  targetRelativePath
 } from '@main/fs-utils'
 import { PauseGate, RateMeter, Semaphore } from './concurrency'
+import { FileDeltaBuffer } from './file-delta-buffer'
 import type { MediaProbeRunner } from '@main/media/probe'
 
 export const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
+
+/**
+ * 中间态变更的合并窗口。
+ *
+ * 取 200ms 的理由：人对"进度在动"的感知阈值大约就是这个量级，
+ * 再密也不会让人看得更清楚；而一个上千文件的卡如果每文件推两条
+ * （copying + verifying），不合并就是几千条 IPC —— 界面会被自己的
+ * 状态更新拖垮，真正的大文件拷贝反而更慢。
+ */
+export const FILE_DELTA_FLUSH_MS = 200
 
 export interface CopyEngineDeps {
   job: CopyJob
@@ -67,9 +81,34 @@ export interface CopyEngineDeps {
   onFileSettled?: (file: CopyJobFile) => void
   /** 进度变化 */
   onProgress?: (progress: JobProgress) => void
+  /**
+   * 一批中间态变更（`copying` / `verifying`），已按 `FILE_DELTA_FLUSH_MS` 合并。
+   *
+   * 与 `onFileSettled` 的分工：这条只负责"让界面看到文件在动"，
+   * 最终事实仍以 `onFileSettled` 推的完整行为准。
+   */
+  onFilesChanged?: (deltas: FileStateDelta[]) => void
+  /**
+   * 要求界面重新拉取文件清单。
+   *
+   * 只在主进程把一批中间态**改回 pending** 之后发（任务开始时的
+   * `resetInFlightFiles`）。界面侧无法自己发现这种回退，
+   * 不发的话会一直挂着上次中断时的那几个"拷贝中"。
+   */
+  onFilesResync?: () => void
   /** 媒体探测；为 null 表示不做探测 */
   probeRunner?: MediaProbeRunner | null
+  /**
+   * 进度上报的最小间隔（毫秒），默认 250。
+   *
+   * 允许调小只为测试：端到端跑一次拷贝时，小文件可能几十毫秒就全部完成，
+   * 250ms 的窗口会让"正在处理哪个文件"这类瞬时状态完全观察不到。
+   */
+  progressThrottleMs?: number
 }
+
+/** 进度上报的默认节流窗口。 */
+export const DEFAULT_PROGRESS_THROTTLE_MS = 250
 
 export interface CopyEngineResult {
   state: JobState
@@ -176,8 +215,22 @@ export class CopyEngine {
   private readonly rate = new RateMeter()
   private cancelled = false
   private lastProgressAt = 0
-  /** 当前正在读取的文件已读字节（用于大文件拷贝时的实时进度） */
-  private inFlightBytes = 0
+  /**
+   * 当前正在处理的文件 → 已读字节数。
+   *
+   * 取代了从前的全局单计数器 `inFlightBytes`：那个计数器一旦遇到文件级并发
+   * 就会把多个文件的字节混在一起，既算不准速率，也说不清"现在在动的是哪个"。
+   */
+  private readonly activeFiles = new Map<string, { sizeBytes: number; bytesRead: number }>()
+  /**
+   * 中间态变更的合并缓冲。
+   *
+   * 用 `Map` 而不是数组，让同一个文件在一个窗口内的多次变更
+   * **天然折叠**成一条（`copying → verifying` 只剩最后那个状态）。
+   * 上千文件的卡上，这一步能把 IPC 条数压掉一个数量级。
+   */
+  private readonly deltas: FileDeltaBuffer
+  private readonly progressThrottleMs: number
   /** 已经提取过首尾帧的文件数，用于限制总提取量 */
   private frameExtractions = 0
   /** 已排入探测队列 / 已完成探测的文件数，用于「分析素材」阶段进度 */
@@ -187,6 +240,8 @@ export class CopyEngine {
 
   constructor(deps: CopyEngineDeps) {
     this.deps = deps
+    this.deltas = new FileDeltaBuffer(FILE_DELTA_FLUSH_MS, (list) => deps.onFilesChanged?.(list))
+    this.progressThrottleMs = deps.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
     this.verifySemaphore = new Semaphore(Math.max(1, deps.settings.maxParallelTargets))
     this.probeSemaphore = new Semaphore(Math.max(1, deps.settings.frameConcurrency))
     for (const target of deps.job.targets) {
@@ -221,6 +276,10 @@ export class CopyEngine {
     const resetCount = store.resetInFlightFiles(job.id)
     if (resetCount > 0) {
       this.log('warn', this.m('engine.resumeReset', { count: resetCount }))
+      // 上面这一步把上次中断留下的 copying/verifying 归零了。界面无从自己发现
+      // 这种"往回退"的变更，必须让它重拉一次 —— 否则会一直挂着
+      // 上次崩溃时卡住的那几个"拷贝中"，用户会以为任务还在跑。
+      this.deps.onFilesResync?.()
     }
 
     await this.prepareSlots()
@@ -230,6 +289,7 @@ export class CopyEngine {
     if (this.slots.filter((slot) => slot.enabled).every((slot) => slot.failed)) {
       store.updateJob(job.id, { state: 'failed', finishedAt: new Date().toISOString() })
       this.log('error', this.m('engine.allTargetsUnavailable'))
+      this.flushFileDeltas()
       return { state: 'failed', filesDone: 0, filesFailed: job.totalFiles, bytesDone: 0, processed: 0 }
     }
 
@@ -246,7 +306,6 @@ export class CopyEngine {
         for (const file of batch) {
           this.throwIfCancelled()
           await this.deps.gate.waitIfPaused(this.deps.signal)
-          this.inFlightBytes = 0
           await this.processFile(file)
           processed++
           this.emitProgress()
@@ -279,6 +338,7 @@ export class CopyEngine {
       })
       const snapshot = store.getJob(job.id)
       this.emitProgress(true)
+      this.flushFileDeltas()
       return {
         state: cancelled ? 'cancelled' : 'failed',
         filesDone: snapshot?.filesDone ?? 0,
@@ -318,6 +378,10 @@ export class CopyEngine {
     } else {
       this.log('info', this.m('engine.jobDoneClean'))
     }
+
+    // 收尾：把还在合并窗口里排队的中间态送出去。
+    // 没有这一步，任务结束时最后 200ms 内的状态变更就永远到不了界面。
+    this.flushFileDeltas()
 
     return {
       state,
@@ -367,11 +431,26 @@ export class CopyEngine {
    * 单文件处理
    * ---------------------------------------------------------------- */
 
+  /**
+   * 文件在目标盘上的相对路径。
+   *
+   * 比 `file.relPath` 多一层来源目录名 —— 因为 `walkFiles` 算出来的相对路径
+   * 是相对**用户选中的那一层**的，那一层本身不会出现在任何 relPath 里。
+   * 选卡根时它正好是 DCIM 这些内容目录的父亲，看不出问题；
+   * 选卡内的子文件夹时就会平白少一层，现场看到的是"文件全摊在目标盘根"。
+   *
+   * 拼接规则统一在 `targetRelativePath()` 里，报告层拼清单路径用的是同一个函数。
+   */
+  private targetRelPath(relPath: string): string {
+    return targetRelativePath(this.deps.job.sourceRootName, relPath)
+  }
+
   private async processFile(file: PendingFile): Promise<void> {
     const { job, store } = this.deps
     const sourceAbs = resolveInside(job.sourcePath, file.relPath)
 
     store.updateFile(job.id, file.relPath, { state: 'copying', error: null })
+    this.recordFileDelta(file.relPath, { state: 'copying', error: null })
 
     let sourceSize = file.sizeBytes
     try {
@@ -407,7 +486,15 @@ export class CopyEngine {
       // 哈希器必须在进入读取循环之前就绪（xxHash64 的 WASM 初始化是异步的），
       // 否则 update() 就只能把数据暂存在内存里 —— 上百 GB 的素材会直接撑爆内存。
       const hasher = await createStreamingHasher(job.hashAlgorithm)
-      outcome = await this.streamAndFanOut(sourceAbs, works, hasher)
+      // 登记为「正在处理」，界面据此显示"现在在动的是哪几个文件"。
+      // 只覆盖真正读写字节的这一段：撤得早了进度上会留一堆"已读完但没校验完"的
+      // 幽灵条目，撤得晚了又会把校验阶段也算进去 —— 那个阶段并没有在读源盘。
+      this.activeFiles.set(file.relPath, { sizeBytes: file.sizeBytes, bytesRead: 0 })
+      try {
+        outcome = await this.streamAndFanOut(file.relPath, sourceAbs, works, hasher)
+      } finally {
+        this.activeFiles.delete(file.relPath)
+      }
     } else {
       // 目标上文件都已完整，无需写入；但源侧校验值仍然必须算出来，
       // 否则"重读校验"就变成了"自说自话"。
@@ -443,7 +530,7 @@ export class CopyEngine {
     const works: FileTargetWork[] = []
 
     for (const slot of this.slots) {
-      const finalPath = resolveInside(slot.target.path, file.relPath)
+      const finalPath = resolveInside(slot.target.path, this.targetRelPath(file.relPath))
       const partialPath = partialPathFor(finalPath)
       const work: FileTargetWork = {
         slot,
@@ -585,6 +672,7 @@ export class CopyEngine {
    * 已完成的头部无需重写。
    */
   private async streamAndFanOut(
+    relPath: string,
     sourceAbs: string,
     works: FileTargetWork[],
     hasher: StreamingHasher
@@ -611,7 +699,8 @@ export class CopyEngine {
         hasher.update(chunk)
 
         this.rate.add(bytesRead)
-        this.inFlightBytes += bytesRead
+        const active = this.activeFiles.get(relPath)
+        if (active !== undefined) active.bytesRead += bytesRead
 
         for (const work of works) {
           if (work.fatalError !== null || work.adopted || work.completeBeforeWrite) continue
@@ -646,6 +735,11 @@ export class CopyEngine {
         }
 
         position += bytesRead
+
+        // 让进度在拷一条大素材的过程中持续动起来。数据库里的 bytesDone 只在
+        // 文件结清时才跳一次，大文件期间它会长时间停在原处 —— 那正是用户
+        // 以为"卡死了"的时刻。emitProgress 自带 250ms 节流，不会打爆 IPC。
+        this.emitProgress()
       }
     } catch (error) {
       sourceError = this.m('engine.sourceReadFailShort', { reason: describeError(error) })
@@ -721,6 +815,11 @@ export class CopyEngine {
     const { job, store } = this.deps
 
     store.updateFile(job.id, file.relPath, {
+      state: 'verifying',
+      sourceHash: outcome.sourceHash === '' ? null : outcome.sourceHash,
+      bytesCopied: outcome.actualBytes
+    })
+    this.recordFileDelta(file.relPath, {
       state: 'verifying',
       sourceHash: outcome.sourceHash === '' ? null : outcome.sourceHash,
       bytesCopied: outcome.actualBytes
@@ -904,6 +1003,13 @@ export class CopyEngine {
   ): Promise<void> {
     const { job, store } = this.deps
 
+    /*
+     * 这里**刻意不撤销**还在合并窗口里排队的中间态。
+     *
+     * 撤销看着更省流量，但它要在每一条结清路径上都记得调一次 ——
+     * 漏掉任何一条（冲突、取消、异常分支），界面就会显示"校验完了又倒回去"。
+     * 迟到的中间态改由 `shouldApplyFileStateChange()` 在界面侧无状态地挡掉。
+     */
     const failedResults = results.filter((result) => result.state === 'failed')
     const verifiedCount = results.filter((result) => result.state === 'verified').length
     const state: FileState = failedResults.length === 0 && verifiedCount > 0 ? 'verified' : 'failed'
@@ -1033,6 +1139,7 @@ export class CopyEngine {
   ): Promise<void> {
     const { job, store } = this.deps
 
+    // 同 settleFile：不在这里撤销中间态，理由见那一处的说明
     store.updateFile(job.id, file.relPath, { state: 'failed', error: reason })
     store.incrementJobCounters(job.id, { filesFailed: 1, bytesDone: file.sizeBytes })
 
@@ -1119,12 +1226,31 @@ export class CopyEngine {
   }
 
   /* ---------------------------------------------------------------- *
+   * 中间态推送
+   * ---------------------------------------------------------------- */
+
+  /**
+   * 记一次文件状态变更，交由合并窗口批量送出。
+   *
+   * 同一个文件在窗口内的多次变更会自然折叠，所以调用方可以放心地
+   * 在每个状态转换点都调一次，不必自己节流。
+   */
+  private recordFileDelta(relPath: string, patch: Omit<FileStateDelta, 'relPath'>): void {
+    this.deltas.record(relPath, patch)
+  }
+
+  /** 立刻把攒下的变更送出去。任务收尾时必须调，否则最后一拍永远发不出去。 */
+  private flushFileDeltas(): void {
+    this.deltas.flush()
+  }
+
+  /* ---------------------------------------------------------------- *
    * 进度上报
    * ---------------------------------------------------------------- */
 
   private emitProgress(force = false): void {
     const now = Date.now()
-    if (!force && now - this.lastProgressAt < 250) return
+    if (!force && now - this.lastProgressAt < this.progressThrottleMs) return
     this.lastProgressAt = now
 
     const { job, store } = this.deps
@@ -1132,7 +1258,15 @@ export class CopyEngine {
     if (snapshot === null) return
 
     const totalBytes = snapshot.totalBytes
-    const bytesDone = Math.min(snapshot.bytesDone + this.inFlightBytes, Math.max(totalBytes, snapshot.bytesDone))
+    // 正在读、但还没落库的字节要单独加进来：数据库里的 bytesDone 只在文件
+    // 结清时才动，拷一条上百 GB 的素材期间它会一直停在原处，看着像卡住了。
+    let inFlightBytes = 0
+    const activeFiles: ActiveFileProgress[] = []
+    for (const [relPath, active] of this.activeFiles) {
+      inFlightBytes += active.bytesRead
+      activeFiles.push({ relPath, sizeBytes: active.sizeBytes, bytesRead: active.bytesRead })
+    }
+    const bytesDone = Math.min(snapshot.bytesDone + inFlightBytes, Math.max(totalBytes, snapshot.bytesDone))
     const rate = this.rate.rate()
 
     const targets: TargetProgress[] = this.slots.map((slot) => ({
@@ -1168,7 +1302,8 @@ export class CopyEngine {
       bytesDone,
       // 分析阶段源盘已经不读了，此时再显示字节速率只会误导
       bytesPerSecond: analyzing ? 0 : rate,
-      currentFile: null,
+      currentFile: activeFiles[0]?.relPath ?? null,
+      activeFiles,
       targets,
       etaSeconds: !analyzing && rate > 0 && totalBytes > bytesDone ? (totalBytes - bytesDone) / rate : null,
       analyzeDone: this.analyzeDone,

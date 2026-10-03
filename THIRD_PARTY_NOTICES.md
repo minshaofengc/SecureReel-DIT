@@ -26,8 +26,14 @@ SecureReel DIT 本体以 **GPL-3.0-only** 发布，许可证正文见 [`LICENSE`
 
 ### 关于随包分发的 FFmpeg
 
-安装包内包含 FFmpeg 6.0 的 **静态编译二进制**（`ffmpeg` 与 `ffprobe`，
-打包时由 Apple 芯片与 Intel 芯片两个构建合并为通用二进制），
+安装包内包含 FFmpeg 6.0 的 **静态编译二进制**（`ffmpeg` 与 `ffprobe`）。每个平台/架构各带一份，
+打进应用资源的 `bin/` 目录：
+
+| 平台 | 随包文件 | 说明 |
+|---|---|---|
+| macOS（Apple 芯片 + Intel） | `bin/ffmpeg`、`bin/ffprobe` | 打包时由 arm64 与 x64 两个构建合并为**通用二进制** |
+| Windows（x64） | `bin/ffmpeg.exe`、`bin/ffprobe.exe` | PE32+ 静态构建 |
+
 用于读取素材元数据（拍摄时间、时长、时码、编码）与提取首尾帧。
 
 - **来源**：https://github.com/eugeneware/ffmpeg-static （FFmpeg 6.0 静态构建）
@@ -37,6 +43,8 @@ SecureReel DIT 本体以 **GPL-3.0-only** 发布，许可证正文见 [`LICENSE`
   未做任何修改。
 - 本项目**未修改、未逆向** FFmpeg；仅以参数化方式调用其命令行接口。
 - 获取脚本：`scripts/fetch-ffmpeg.sh`。
+- 打包前请用 `npm run check:win-assets` 核对 Windows 那两份确实是 PE 可执行文件 ——
+  macOS 与 Windows 的二进制体积接近、文件名又相同，只看 `ls` 是分不出来的。
 
 ### 关于哈希算法实现
 

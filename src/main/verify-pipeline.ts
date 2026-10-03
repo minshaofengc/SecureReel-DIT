@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CopyJob, MediaProbe, ProjectInfo } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import { todayLocalDate } from '@shared/format'
 import { buildAppPaths } from './paths'
 import { Logger } from './logger'
 import { Store } from './db/store'
@@ -284,6 +285,7 @@ async function main(): Promise<number> {
       name: '端到端验证任务',
       mode: 'copy',
       sourcePath: source,
+      sourceRootName: '',
       sourceKind: 'generic',
       isCodExVfs: false,
       parentProjectId: null,
@@ -434,7 +436,7 @@ async function main(): Promise<number> {
     process.stdout.write('\n[6] 报告与清单\n')
     const project: ProjectInfo = {
       projectName: '端到端验证',
-      shootDay: new Date().toISOString().slice(0, 10),
+      shootDay: todayLocalDate(),
       camera: 'ALEXA 35',
       cardLabel: 'A002',
       lenses: [
@@ -579,7 +581,7 @@ async function main(): Promise<number> {
       name: '母亲',
       details: {
         projectName: '母亲',
-        shootDay: new Date().toISOString().slice(0, 10),
+        shootDay: todayLocalDate(),
         camera: 'ALEXA 35',
         lenses: [
           { model: 'Cooke S7/i', detail: '40mm' },
