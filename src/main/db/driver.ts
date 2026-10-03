@@ -127,7 +127,7 @@ export async function openDatabase(path: string): Promise<SqlDatabase> {
   } catch (error) {
     throw new Error(
       `当前运行环境缺少 node:sqlite 模块，无法建立任务数据库。` +
-        `请确认 Node.js 版本不低于 22.12。原始错误：${String(error)}`
+        `请确认 Node.js 版本不低于 22.13。原始错误：${String(error)}`
     )
   }
 

@@ -14,6 +14,7 @@ import {
   emptyProjectDetails,
   emptyProjectDraft,
   mergeTalentIntoParent,
+  nextAutoShootDay,
   normalizeProjectDetails
 } from '@shared/project'
 import { Card, Field, Note, PathPicker, Progress, Toggle } from '../components/ui'
@@ -39,6 +40,26 @@ const NEW_PARENT_VALUE = '__new_parent__'
  */
 function lastPathSegment(path: string): string | null {
   return path.split(/[/\\]/).filter((part) => part !== '').slice(-1)[0] ?? null
+}
+
+/**
+ * 上一次**自动**填进「拍摄日」的值。
+ *
+ * 它只回答一个问题：这个框里现在的内容是程序填的，还是人改过的？
+ * 只有"程序填的"才允许被新的日期覆盖 —— 有人故意填昨天的日期去补拷昨天的卡，
+ * 那种值绝不能因为过了半夜就被悄悄改掉。
+ *
+ * 放模块级而不是组件 ref：拷贝页切页时会整个卸载，组件级 ref 跟着丢，
+ * 于是"切到别的页跨过午夜、再切回来"就找不回判断依据了。
+ * 它不参与任何业务计算，只在这一处判断里用。
+ */
+let lastAutoShootDay: string | null = null
+
+/** 取这台电脑今天的日期，并记下"这次是程序填的"。 */
+function freshShootDay(): string {
+  const today = todayLocalDate()
+  lastAutoShootDay = today
+  return today
 }
 
 const KIND_LABEL: Record<VolumeKind, string> = {
@@ -101,7 +122,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
 
       const base =
         template === null
-          ? { ...emptyProjectDraft(), shootDay: todayLocalDate() }
+          ? { ...emptyProjectDraft(), shootDay: freshShootDay() }
           : {
               projectName: template.projectName,
               /*
@@ -109,10 +130,10 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
                *
                * 它记的是"上一回拷的那批卡是哪天拍的"，隔天再拷就必然错一天 ——
                * 而且格式完全合法（`2026-9-30`），不报任何错，一路错进报告和清单，
-               * 等发现时报告已经发出去了。默认永远是当天，要改随手改。
+               * 等发现时报告已经发出去了。默认永远是这台电脑今天的日期，要改随手改。
                * 也正因此 `hasSubstance()` 不看这个字段。
                */
-              shootDay: todayLocalDate(),
+              shootDay: freshShootDay(),
               camera: template.camera,
               lenses: template.lenses,
               notes: template.notes,
@@ -165,7 +186,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
       setProjectDraft({
         ...draft,
         ...(parentDetails === null ? emptyProjectDraft() : parentDetails),
-        shootDay: todayLocalDate(),
+        shootDay: freshShootDay(),
         // 卡号与本次备注不受母项目影响
         cardLabel: draft.cardLabel,
         copyNotes: draft.copyNotes
@@ -218,7 +239,48 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
 
   const clearAll = useCallback(() => {
     setParentId(null)
-    setProjectDraft({ ...emptyProjectDraft(), shootDay: todayLocalDate() })
+    setProjectDraft({ ...emptyProjectDraft(), shootDay: freshShootDay() })
+  }, [setProjectDraft])
+
+  /*
+   * 开着软件跨过午夜时，把「拍摄日」跟上电脑的日期。
+   *
+   * 为什么需要它：日期是在**进拷贝页那一刻**填好的。现场很常见的是
+   * "晚上把软件打开放那儿不动，凌晨/第二天接着拷" —— 那时框里还停在前一天，
+   * 谁也不会想到去改它，于是整批卡的拍摄日默默错一天，格式还完全合法。
+   *
+   * 只改**程序填的值**：`lastAutoShootDay` 对得上才动。有人故意填昨天的日期
+   * 去补拷昨天的卡，那种值必须原样留着。
+   *
+   * 三个触发点缺一不可：挂载时（切页面回来）、窗口重新获得焦点（盖着盖子打开）、
+   * 以及每分钟一次（一直开着不动的机器）。拷贝是长跑，中途没人会去点窗口。
+   */
+  useEffect(() => {
+    const syncShootDay = (): void => {
+      const today = todayLocalDate()
+      const previous = lastAutoShootDay
+      if (previous === null || today === previous) return
+      /*
+       * 先记账再改表单。`setProjectDraft` 的更新函数必须是纯的（React 可能调用两次），
+       * 所以"这次是程序填的"这个记录只能写在外面。
+       *
+       * 即使最终没改表单也要记账：那说明用户手动填过日期了，不该再每分钟去撞他的输入。
+       */
+      lastAutoShootDay = today
+      setProjectDraft((current) => {
+        if (current === null) return current
+        const next = nextAutoShootDay(current.shootDay, previous, today)
+        return next === null ? current : { ...current, shootDay: next }
+      })
+    }
+
+    syncShootDay()
+    const timer = window.setInterval(syncShootDay, 60_000)
+    window.addEventListener('focus', syncShootDay)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', syncShootDay)
+    }
   }, [setProjectDraft])
 
   const refreshUsage = useCallback(

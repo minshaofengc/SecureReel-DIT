@@ -11,7 +11,7 @@
   "private": true,
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "electron-vite dev",

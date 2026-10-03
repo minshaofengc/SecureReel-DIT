@@ -13,7 +13,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction
 } from 'react'
 import type { AppInfo } from '@shared/ipc'
 import type {
@@ -60,7 +62,7 @@ interface AppStateValue {
   projectDraft: ProjectDraft | null
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   refreshParents: () => Promise<void>
-  setProjectDraft: (draft: ProjectDraft | null) => void
+  setProjectDraft: Dispatch<SetStateAction<ProjectDraft | null>>
   refreshJobs: () => Promise<void>
   refreshReports: (jobId: string) => Promise<void>
   loadFiles: (jobId: string, limit?: number) => Promise<void>

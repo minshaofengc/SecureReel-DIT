@@ -14,6 +14,7 @@ import {
   emptyProjectDraft,
   emptyProjectInfo,
   hasSubstance,
+  nextAutoShootDay,
   normalizeProjectDetails,
   normalizeProjectDraft,
   normalizeProjectInfo
@@ -213,5 +214,44 @@ describe('职务预置', () => {
 
   it('没有重复项', () => {
     expect(new Set(CREW_ROLE_PRESET_KEYS).size).toBe(CREW_ROLE_PRESET_KEYS.length)
+  })
+})
+
+/*
+ * 「拍摄日」跨午夜自动推进。
+ *
+ * 这块的风险很特别：写错了**不会报任何错**，日期格式完全合法，
+ * 只是默默错一天，等到报告发出去才发现。所以五种情况全钉住。
+ */
+describe('拍摄日跨午夜自动推进', () => {
+  it('过了半夜、且值还是程序填的 → 推进到新的一天', () => {
+    expect(nextAutoShootDay('2026-10-03', '2026-10-03', '2026-10-04')).toBe('2026-10-04')
+  })
+
+  it('还没跨天 → 不动', () => {
+    expect(nextAutoShootDay('2026-10-03', '2026-10-03', '2026-10-03')).toBeNull()
+  })
+
+  it('被人改过 → 不动（补拷昨天的卡就是故意填旧日期）', () => {
+    // 程序填的是 10-03，用户手动改成 09-28 去补拷那天的卡，跨天时绝不能覆盖它
+    expect(nextAutoShootDay('2026-09-28', '2026-10-03', '2026-10-04')).toBeNull()
+  })
+
+  it('值被清空 → 不动', () => {
+    expect(nextAutoShootDay('', '2026-10-03', '2026-10-04')).toBeNull()
+  })
+
+  it('不知道这值是谁填的（没有记录）→ 不动，宁可不动也不猜', () => {
+    expect(nextAutoShootDay('2026-10-03', null, '2026-10-04')).toBeNull()
+    expect(nextAutoShootDay(null, null, '2026-10-04')).toBeNull()
+  })
+
+  it('没有草稿时（还没进拷贝页）不报错', () => {
+    expect(nextAutoShootDay(null, '2026-10-03', '2026-10-04')).toBeNull()
+  })
+
+  it('跨月、跨年也能推进', () => {
+    expect(nextAutoShootDay('2026-10-31', '2026-10-31', '2026-11-01')).toBe('2026-11-01')
+    expect(nextAutoShootDay('2026-12-31', '2026-12-31', '2027-01-01')).toBe('2027-01-01')
   })
 })

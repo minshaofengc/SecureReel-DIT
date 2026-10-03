@@ -20,7 +20,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12'
+          # node:sqlite 自 22.13 起才默认可用（22.12 需手动开实验开关），
+          # 低于 22.13 会导致 163 条数据库相关测试全数失败
+          node-version: '22.13'
           cache: npm
 
       - name: 安装依赖

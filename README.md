@@ -49,7 +49,7 @@ HDE 编码能力由 ARRI/CODEX 官方免费工具提供。SecureReel DIT 不随�
 
 ## 开发
 
-要求 Node.js 22.12+ 与 npm 10+。
+要求 Node.js 22.13+（`node:sqlite` 默认可用的最低版本）与 npm 10+。
 
 > `启动 SecureReel DIT.command` 是**开发者用的本地启动脚本**（依赖本机 Node.js 环境）。
 > 给别人用请一律走上面的安装包，不要引导用户跑脚本。
