@@ -30,8 +30,19 @@ import {
 
 const run = promisify(execFile)
 
+/*
+ * XSD 校验需要一个带 lxml 的 Python。这里刻意**不写死任何绝对路径** ——
+ * 仓库是公开的，把某个开发机上的解释器路径（往往还带着用户名）提交进去，
+ * 对别人没用，对自己也只是运气好。要固定用某个解释器就设环境变量：
+ *
+ *   SECUREREEL_XSD_PYTHON=/path/to/python npm test
+ *
+ * 找不到可用的解释器时这组用例会**跳过**，而不是假装通过（见 lxmlAvailable）。
+ */
 const PYTHON_CANDIDATES = [
-  'python3'
+  ...(process.env['SECUREREEL_XSD_PYTHON'] === undefined ? [] : [process.env['SECUREREEL_XSD_PYTHON']]),
+  'python3',
+  'python'
 ]
 
 const XSD_PATH = join(__dirname, 'fixtures', 'ASCMHL.xsd')

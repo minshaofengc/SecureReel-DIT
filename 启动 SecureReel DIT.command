@@ -94,7 +94,7 @@ STATUS=$?
 if [ $STATUS -ne 0 ]; then
   echo ""
   echo "${RED}应用退出，返回码 $STATUS${RESET}"
-  echo "日志在：~/Library/Application Support/SecureReel DIT/logs/"
+  echo "日志在：~/Library/Application Support/SecureReel DIT 2/logs/"
   echo ""
   read -r -p "按回车键关闭…" _
 fi

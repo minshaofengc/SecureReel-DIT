@@ -2,6 +2,46 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)；版本号遵循语义化版本。
 
+## [2.0.2] - 2026-10-03
+
+> Theme / 本版主题: **the shoot day always equals this computer's current date.**
+> **拍摄日永远等于这台电脑今天的日期。**
+
+### Fixed / 修复
+
+- **Crossing midnight with the app open now rolls the "shoot day" over to the new day.**
+  The date used to be filled in only **at the moment you entered the copy page**. A very
+  common pattern on set is to leave the app open in the evening and keep offloading
+  through the night or the next morning — the field would still hold the previous day,
+  nobody would think to change it, and a whole batch of cards would silently be dated
+  one day off. The format stays perfectly valid and no error is raised.
+
+  It now catches up at three moments: returning to the copy page, the window regaining
+  focus, and once a minute (an offload is a long run; nobody touches the window).
+
+- **But it only rewrites a value the app itself filled in.** If that field was edited by
+  hand, not a character is touched — someone re-checking yesterday's cards deliberately
+  enters an older date, and that must never be overwritten just because midnight passed.
+
+- **开着软件跨过午夜时，「拍摄日」会自己跟上新的一天。**
+
+  日期原本只在**进拷贝页那一刻**填好。现场很常见的是"晚上把软件打开放那儿、
+  凌晨或第二天接着拷" —— 那时框里还停在前一天，没人会想到去改它，
+  于是整批卡的拍摄日默默错一天，而且格式完全合法、不报任何错。
+
+  现在会在三个时点自动跟上：切回拷贝页、窗口重新获得焦点、以及每分钟一次
+  （拷贝是长跑，中途没人会去点窗口）。
+
+- **但只改"程序填的值"。** 如果那个框被人手动改过，一个字都不动 ——
+  补拷昨天卡的人会故意填昨天的日期，那种值绝不能因为过了半夜被悄悄改掉。
+
+### Notes / 说明
+
+- This finishes what 2.0.1 started: that release guaranteed the date was correct
+  **when you opened the page**; this one guarantees it stays correct.
+  这条是上一版"拍摄日默认当天"的收尾：上一版保证**进页面那一刻**是当天，
+  这一版保证**一直**是当天。
+
 ## [2.0.1] - 2026-10-01
 
 > 本版主题：**母项目真的记住东西了**，外加拍摄日不再默默错一天。
