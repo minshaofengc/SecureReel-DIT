@@ -2,6 +2,114 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)；版本号遵循语义化版本。
 
+## [2.0.3] - 2026-10-04
+
+> Theme / 本版主题: **a splash screen, seven checksum algorithms, four manifest formats,
+> two clearly different blues — and a progress bar that finally tells the truth.**
+> **开屏动画、七种校验算法、四种清单格式、两套真正分得开的蓝，以及一条终于说真话的进度条。**
+
+### Added / 新增
+
+- **A start-up screen: film perforations rolling, timecode running.** The main window
+  cannot paint until a whole chain has finished (1.x data migration, opening SQLite,
+  creating log directories, assembling services). That gap is several seconds on a real
+  set machine, and a blank screen is what makes people click the icon a second time.
+  The splash appears the instant the app is ready and reports the **actual** steps it is
+  on. It stays for at least 1.5 s so it never just flickers, and it waits for the main
+  window to be visible before fading out — otherwise the desktop flashes in between.
+
+- **新增开屏动画：胶片齿孔走动、时码跳动。** 主窗口要等一长串事情做完才能画
+  （1.x 数据迁移、打开 SQLite、建日志目录、装配服务），现场机器上这段有好几秒——
+  而黑屏正是让人"再点一次图标"的原因。开屏在应用就绪的瞬间出现，
+  并且显示**真实**进行到哪一步。最短停留 1.5 秒，不会一闪而过；
+  淡出前会先等主窗口显示出来，否则中间会闪一下桌面。
+
+- **Six more checksum algorithms** — xxHash3, xxHash128 (same speed family as the
+  default xxHash64, newer), SHA-1, SHA-256 (portable, universally recognised) —
+  alongside the existing xxHash64, MD5 and ASC C4.
+
+- **新增六种校验算法**：xxHash3、xxHash128（与默认的 xxHash64 同一条速度路线，
+  版本更新）、SHA-1、SHA-256（对外通用、谁都能核），加上原有的 xxHash64、MD5、ASC C4。
+
+- **Two more manifest formats: CSV and JSON.** CSV is a plain table — byte-order mark
+  included, so Windows Excel renders Chinese clip paths correctly — and it is the
+  fastest thing to hand to another department. Cell values are quoted per RFC 4180 and
+  values starting with `=` `+` `-` `@` are prefixed, because a filename on a camera card
+  is external input and Excel will happily execute `=cmd|...` as a formula.
+
+- **新增两种清单格式：CSV 与 JSON。** CSV 就是一张表——带 BOM，这样 Windows 版
+  Excel 才能正确显示中文素材路径——是丢给别的部门最快的东西。单元格按 RFC 4180
+  转义，以 `=` `+` `-` `@` 开头的值会加前缀：相机卡上的文件名是外部输入，
+  而 Excel 真的会把 `=cmd|...` 当公式执行。
+
+- **Developer and acknowledgement credits** on the help page, and on the splash screen.
+
+- **帮助页与开屏动画上加上开发者与鸣谢署名。**
+
+### Changed / 变更
+
+- **Progress now counts verification as work.** Every file was already read once, written
+  to every target, and then **read back from every target** to compare. The bar only ever
+  counted the first of those three, so at the tail of a job — copy finished, verification
+  still draining — it sat just under 100% and did not move, which looks exactly like a
+  hang. Total work is now `bytes × (1 + targets to verify)` and the percentage is
+  computed once, in the main process.
+
+- **进度条现在把校验也算作工作量。** 每个文件本来就要读一遍、写进每个目标、
+  再从每个目标**完整重读一遍**比对。老口径只算了第一件，于是收尾阶段
+  （拷贝读完、校验还在排队）会停在接近 100% 一动不动，看起来跟卡死一样。
+  现在总工作量是「字节 × (1 + 要校验的目标数)」，百分比由主进程算一次。
+
+- **The progress bar is a solid colour, not a gradient.** Pink Blue's blue-to-pink sweep
+  spanned 137° of hue and rendered as a coloured stripe — busy to look at, and easy to
+  misread as meaning something. Same lesson as the primary button two releases ago.
+
+- **进度条改成纯色，不再用渐变。** 雾光的蓝→粉色相横跨 137°，渲染成一条彩色斜纹，
+  既晃眼又容易被误读成有别的含义——和两个版本前主按钮那次是同一个教训。
+
+- **“Pink Blue” and “Blue Violet” were too close to tell apart.** Blue Violet's primary
+  was an indigo only 30° from Pink Blue's. Pink Blue is now a genuine **sky blue**
+  (hue 203°) with its warm pink, and Blue Violet is now **violet** (hue 265°). 62° apart,
+  and their backgrounds and overall temperature differ too.
+
+- **粉蓝「雾光」和蓝紫「鸢尾」原本分不出来。** 鸢尾的主色是靛蓝，和雾光只差 30°。
+  现在雾光是真正的**天青蓝**（色相 203°）配暖粉，鸢尾是**紫罗兰**（色相 265°），
+  主色相差 62°，底色与整体冷暖也一起拉开了。
+
+- **The copy page no longer shows a fake 40% bar** while scanning the source. Scanning a
+  full card takes minutes and that duration is genuinely unknown, so it is now an
+  indeterminate bar with a plain sentence — "still working", not a number pretending to
+  be a measurement.
+
+- **拷贝页扫源盘时不再显示写死的 40%。** 扫一张满卡要几分钟，时长本来就未知，
+  所以改成不定态进度条 + 一句说明：只表达"还在动"，不假装那个数字是测出来的。
+
+### Fixed / 修复
+
+- **CSV and JSON manifests were rejected for `SHA-256` + `ASC MHL` before you could
+  create a bad job**: the settings page greys out impossible combinations and states the
+  reason, and the writer refuses independently — a greyed-out option cannot stop a value
+  that came from an older database or straight over IPC.
+
+- **在生成出坏清单之前就挡住了 `SHA-256` + `ASC MHL` 这种组合**：设置页把不成立的
+  组合标灰并写明原因，写入器也会独立拒绝——灰选项挡不住旧数据库里的值，
+  也挡不住直接通过 IPC 传进来的参数。
+
+### Notes / 说明
+
+- The splash screen's few inline colours are a **deliberate exception** to the
+  "every colour comes from tokens.css" rule: that window exists before the theme system
+  does. If you pin a non-default theme, the splash's accent may briefly differ.
+
+- 开屏窗里那几个内联色值是"所有颜色都走 tokens.css"这条规矩的**刻意例外**：
+  那个窗口出现在主题系统就绪之前。如果把主题钉成非默认配色，
+  开屏那一两秒的主色可能与界面不一致。
+
+- macOS build is 2.0.3; the Windows build stays at 2.0.2 (public Beta, still pending
+  real-machine verification) and will catch up with the next Windows build.
+  macOS 版为 2.0.3；Windows 版仍是 2.0.2（公开测试版，尚待真机验证），
+  会随下一次 Windows 打包跟上。
+
 ## [2.0.2] - 2026-10-03
 
 > Theme / 本版主题: **the shoot day always equals this computer's current date.**

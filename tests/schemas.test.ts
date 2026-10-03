@@ -80,7 +80,20 @@ describe('任务创建校验', () => {
 
   it('只接受已定义的校验算法', () => {
     expect(createJobSchema.safeParse({ ...base, hashAlgorithm: 'xxhash64' }).success).toBe(true)
-    expect(createJobSchema.safeParse({ ...base, hashAlgorithm: 'sha256' }).success).toBe(false)
+    // 2.0.3 起新增的六种都必须被接受（枚举由 HASH_ALGORITHMS 推导，不该漏）
+    for (const algorithm of ['xxh3', 'xxh128', 'md5', 'sha1', 'sha256', 'asc-c4'] as const) {
+      expect(createJobSchema.safeParse({ ...base, hashAlgorithm: algorithm }).success).toBe(true)
+    }
+    // 表里没有的就是没有
+    expect(createJobSchema.safeParse({ ...base, hashAlgorithm: 'crc32' }).success).toBe(false)
+    expect(createJobSchema.safeParse({ ...base, hashAlgorithm: 'sha512' }).success).toBe(false)
+  })
+
+  it('只接受已定义的清单格式', () => {
+    for (const format of ['asc-mhl-2.0', 'mhl-v1', 'csv', 'json'] as const) {
+      expect(createJobSchema.safeParse({ ...base, manifestFormat: format }).success).toBe(true)
+    }
+    expect(createJobSchema.safeParse({ ...base, manifestFormat: 'xml' }).success).toBe(false)
   })
 })
 

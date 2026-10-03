@@ -17,13 +17,17 @@ clear desktop interface.
   stop the healthy ones.
 - Verification values are computed while reading the source; the target copy is then
   **read back independently** and renamed atomically only once it matches. Standard
-  jobs support xxHash64 (default), MD5 (legacy) and ASC C4 (archival).
+  jobs support xxHash64 (default), xxHash3, xxHash128, MD5, SHA-1, SHA-256 and ASC C4.
+  SHA-256 is not an element in the official ASC MHL 2.0 schema, so it can only be paired
+  with the CSV / JSON manifests — the settings page greys out the impossible
+  combinations and says why, rather than letting you write a list nobody can read.
 - **Verify-only mode**: reads the source and an existing copy and compares them —
   writes and deletes nothing. Useful for a next-day re-check, or for auditing a drive
   someone else offloaded.
 - File-level SQLite checkpoints, a job queue, pause/resume/cancel, and recovery after
   an app restart.
-- ASC MHL 2.0 (default) and legacy MHL v1 manifests.
+- ASC MHL 2.0 (default), legacy MHL v1, plus CSV (opens straight in Excel) and JSON
+  hash lists for handoff and for scripts.
 - Immutable PDF/JSON/offline-HTML report revisions: R001, R002, … Older reports are
   never overwritten. First-frame thumbnails are inlined into the HTML so the report
   stays self-contained when emailed.
@@ -32,8 +36,8 @@ clear desktop interface.
   never affects the hash report.
 - Custom "role + name" crew list (up to 50 rows) and a 4000-character project note;
   edits made during a run are saved and land in the next report revision.
-- Three themes — "Qinghe" (bamboo), "Wuguang" (pink/blue) and "Shucheng" (cheese) —
-  each with system, light and dark modes.
+- Four themes — "Qinghe" (bamboo), "Wuguang" (pink/blue), "Shucheng" (cheese) and
+  "Iris" (blue violet) — each with system, light and dark modes.
 - Simplified Chinese and English interface, plus a built-in help centre.
 
 ### Installation
@@ -172,14 +176,14 @@ SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的免�
 ### 核心能力
 
 - 单个源卷同步拷贝至 1–8 个目标，单盘故障不会中断其他健康目标。
-- 源文件读取时计算所选校验值，目标写入后独立重读校验，再原子改名。普通任务支持 xxHash64（默认）、MD5（兼容）和 ASC C4（归档）。
+- 源文件读取时计算所选校验值，目标写入后独立重读校验，再原子改名。普通任务支持 xxHash64（默认）、xxHash3、xxHash128、MD5、SHA-1、SHA-256 和 ASC C4（归档）。SHA-256 不在 ASC MHL 2.0 的官方架构里，只能配 CSV / JSON 清单——设置页会把不成立的组合标灰并写明原因，不让你生成一份别人读不进来的清单。
 - **仅校验模式**：只读取源与已有拷贝并比对校验值，不写入、不删除任何数据——用于隔天复检或核对别人拷好的盘。
 - 文件级 SQLite 检查点、任务队列、暂停/继续/取消与应用重启恢复。
-- ASC MHL 2.0（默认）和传统 MHL v1 清单。
+- ASC MHL 2.0（默认）、传统 MHL v1，以及 CSV（Excel 直接打开）与 JSON 哈希清单，便于现场交付和脚本处理。
 - 不可变的 PDF/JSON/离线 HTML 报告修订：R001、R002……旧报告不会被覆盖。首帧图内联进 HTML，报告单独发送也能看到画面。
 - 通过随应用分发的开源 FFmpeg/ffprobe 读取可支持素材的拍摄时间、时长、时码并提取首尾帧；解析失败不会影响哈希报告。
 - 自定义“职务 + 所属人”（最多 50 行）及 4000 字项目备注；执行期间自动保存并进入新报告修订。
-- 三个主题：竹林「清和」、粉蓝「雾光」、奶酪「熟成」，均支持跟随系统、明亮和黑暗模式。
+- 四个主题：竹林「清和」、粉蓝「雾光」、奶酪「熟成」、蓝紫「鸢尾」，均支持跟随系统、明亮和黑暗模式。
 - 简体中文和英文界面，以及内置帮助中心。
 
 ### 安装

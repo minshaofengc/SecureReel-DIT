@@ -6,6 +6,7 @@ import {
   MANIFEST_FORMATS,
   THEMES,
   THEME_MODES,
+  supportsAlgorithm,
   type HashAlgorithm,
   type ManifestFormat
 } from '@shared/types'
@@ -73,19 +74,56 @@ export function SettingsView(): ReactNode {
   const { settings, updateSettings, appInfo, pushToast } = useAppState()
   const [diagBusy, setDiagBusy] = useState(false)
 
+  const manifestLabel = (format: ManifestFormat): string => t(`manifest.${format}` as never)
+
+  /*
+   * 校验算法与清单格式是一对**互相约束**的选项，原因是官方的、不是我们偷懒：
+   * ASC MHL 2.0 的 XSD 里只定义了 c4 / md5 / sha1 / xxh128 / xxh3 / xxh64
+   * 六种校验值，**没有 sha256**；MHL v1 更窄，只有三种。
+   * 判据放在 shared/types 的 `supportsAlgorithm()`，界面和主进程共用同一条规则。
+   *
+   * 这里刻意**把选项标灰并写明原因，而不是让它从列表里消失** ——
+   * 选项凭空少一个，用的人只会以为软件坏了，然后来找我们。
+   * 当前值恰好不能用的极端情况（旧版本存下来的组合）也能退出来：
+   * 两个下拉里总有一个还留着可用项，点掉一边就成立了。
+   */
   const hashOptions = useMemo<ComboOption<HashAlgorithm>[]>(
-    () => HASH_ALGORITHMS.map((algorithm) => ({ value: algorithm, label: HASH_ALGORITHM_LABELS[algorithm] })),
-    []
+    () =>
+      HASH_ALGORITHMS.map((algorithm) => {
+        const usable = supportsAlgorithm(settings.manifestFormat, algorithm)
+        return {
+          value: algorithm,
+          disabled: !usable,
+          label: usable
+            ? HASH_ALGORITHM_LABELS[algorithm]
+            : `${HASH_ALGORITHM_LABELS[algorithm]}${t('settings.hashUnsupported', {
+                format: manifestLabel(settings.manifestFormat)
+              })}`
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.manifestFormat, t]
   )
 
   const manifestOptions = useMemo<ComboOption<ManifestFormat>[]>(
     () =>
-      MANIFEST_FORMATS.map((format) => ({
-        value: format,
-        label: t(format === 'asc-mhl-2.0' ? 'manifest.asc-mhl-2.0' : 'manifest.mhl-v1')
-      })),
-    [t]
+      MANIFEST_FORMATS.map((format) => {
+        const usable = supportsAlgorithm(format, settings.hashAlgorithm)
+        return {
+          value: format,
+          disabled: !usable,
+          label: usable
+            ? manifestLabel(format)
+            : `${manifestLabel(format)}${t('settings.formatUnsupported', {
+                algorithm: HASH_ALGORITHM_LABELS[settings.hashAlgorithm]
+              })}`
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings.hashAlgorithm, t]
   )
+
+  const pairUsable = supportsAlgorithm(settings.manifestFormat, settings.hashAlgorithm)
 
   return (
     <div className="page">
@@ -166,7 +204,7 @@ export function SettingsView(): ReactNode {
       </Card>
 
       <Card title={t('settings.defaults')}>
-        <Field label={t('copy.hashAlgorithm')}>
+        <Field label={t('copy.hashAlgorithm')} hint={t('copy.hashHint')}>
           <SelectBox<HashAlgorithm>
             value={settings.hashAlgorithm}
             ariaLabel={t('copy.hashAlgorithm')}
@@ -175,7 +213,7 @@ export function SettingsView(): ReactNode {
           />
         </Field>
 
-        <Field label={t('copy.manifestFormat')}>
+        <Field label={t('copy.manifestFormat')} hint={t('settings.manifestHint')}>
           <SelectBox<ManifestFormat>
             value={settings.manifestFormat}
             ariaLabel={t('copy.manifestFormat')}
@@ -183,6 +221,20 @@ export function SettingsView(): ReactNode {
             onChange={(next) => void updateSettings({ manifestFormat: next })}
           />
         </Field>
+
+        {/*
+         * 只有在"存下来的那一对本来就不成立"时才会出现（例如从旧版本数据库
+         * 带过来的组合，或者设置被外部 IPC 直接改过）。正常从界面上点，点不出
+         * 这个组合 —— 不成立的那一项是灰的。留这条是因为**灰选项挡不住旧数据**。
+         */}
+        {!pairUsable && (
+          <Note tone="warn">
+            {t('settings.incompatiblePair', {
+              format: manifestLabel(settings.manifestFormat),
+              algorithm: HASH_ALGORITHM_LABELS[settings.hashAlgorithm]
+            })}
+          </Note>
+        )}
 
         <label className="row-actions" style={{ cursor: 'pointer' }}>
           <input

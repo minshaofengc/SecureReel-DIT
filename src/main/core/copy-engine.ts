@@ -38,6 +38,7 @@ import type {
   TargetProgress
 } from '@shared/types'
 import { NAME_CONFLICT_PREFIXES, msg, type MsgKey } from '@shared/messages'
+import { computeOverallPercent } from '@shared/progress'
 import type { PendingFile, Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
 import { createStreamingHasher, type StreamingHasher } from '@main/hashing'
@@ -236,6 +237,21 @@ export class CopyEngine {
   /** 已排入探测队列 / 已完成探测的文件数，用于「分析素材」阶段进度 */
   private analyzeTotal = 0
   private analyzeDone = 0
+  /**
+   * 拷贝阶段已完成读取的字节数（读完就算，不等判定）。
+   *
+   * 存在的理由：数据库里的 `bytesDone` 只在文件**判定之后**才跳一次，
+   * 而"读完 → 校验 → 判定"之间有真实的时间差。少了这个计数器，
+   * 每个文件读完的那一刻进度会掉一截，整条卡看起来在往后退。
+   */
+  private copiedBytesDone = 0
+  /**
+   * 校验阶段已完成重读的字节数。
+   *
+   * 这是"进度条卡在 100% 不动"的解药：拷贝读完后，每个目标盘上的成品
+   * 还要被完整重读一遍才能判定，那段工作在老口径里完全不计入。
+   */
+  private verifyBytesDone = 0
   private phase: JobPhase = 'copying'
 
   constructor(deps: CopyEngineDeps) {
@@ -487,8 +503,12 @@ export class CopyEngine {
       // 否则 update() 就只能把数据暂存在内存里 —— 上百 GB 的素材会直接撑爆内存。
       const hasher = await createStreamingHasher(job.hashAlgorithm)
       // 登记为「正在处理」，界面据此显示"现在在动的是哪几个文件"。
-      // 只覆盖真正读写字节的这一段：撤得早了进度上会留一堆"已读完但没校验完"的
-      // 幽灵条目，撤得晚了又会把校验阶段也算进去 —— 那个阶段并没有在读源盘。
+      //
+      // 这个表只负责**正在读、还没读完**的那一段（给进度条补一小段平滑量，
+      // 否则大文件期间数字会长时间不动）。读完之后的去向分两处：
+      //   · 已判定 → 数据库里的 bytesDone
+      //   · 读完但还在校验 → copiedBytesDone（见下面）
+      // 三者合起来才是"拷贝阶段完成了多少"，缺一段进度就会往后退。
       this.activeFiles.set(file.relPath, { sizeBytes: file.sizeBytes, bytesRead: 0 })
       try {
         outcome = await this.streamAndFanOut(file.relPath, sourceAbs, works, hasher)
@@ -500,6 +520,16 @@ export class CopyEngine {
       // 否则"重读校验"就变成了"自说自话"。
       outcome = await this.hashSourceOnly(sourceAbs)
     }
+
+    /*
+     * 这一段读取到此结束，无论后面判成什么，读掉的字节都算数。
+     *
+     * 必须**在**取消 `activeFiles` 之后、**在**判定之前记 ——
+     * 这是唯一一个"读完了但还没判定"的时点。漏了这一步，进度会在
+     * 每个文件读完时掉一截（activeFiles 里那份没了，bytesDone 又还没涨），
+     * 大文件多的卡上表现为进度条一跳一跳地往后退。
+     */
+    this.copiedBytesDone += Math.max(0, outcome.actualBytes)
 
     if (outcome.sourceError !== null) {
       await this.closeHandles(works)
@@ -867,6 +897,12 @@ export class CopyEngine {
     return this.verifySemaphore.run(async (): Promise<FileTargetResult> => {
       try {
         const targetHash = await hashFileAt(work.verifyPath, job.hashAlgorithm)
+        /*
+         * 目标盘上的这一遍重读到此结束，无论比对结果如何，这段工作量都发生了。
+         * 记在比对**之前**：比对不符时说明这个文件是坏的，但读它的时间一样花掉了 ——
+         * 计在比对之后的话，失败的文件会让进度条永远差最后一截。
+         */
+        this.verifyBytesDone += Math.max(0, file.sizeBytes)
         const match = targetHash === outcome.sourceHash
 
         if (!match) {
@@ -1269,6 +1305,28 @@ export class CopyEngine {
     const bytesDone = Math.min(snapshot.bytesDone + inFlightBytes, Math.max(totalBytes, snapshot.bytesDone))
     const rate = this.rate.rate()
 
+    /*
+     * 总进度在**主进程**算，界面只负责画。
+     *
+     * 放在这里的原因很实际：只有这一侧同时知道"读完但没判定"的字节、
+     * "已重读校验"的字节、以及目标盘数量。让渲染层拿几个半成品数字自己拼，
+     * 迟早会拼出一个和实际不一致的口径 —— 而且换一处就漏一处。
+     */
+    const enabledTargets = this.slots.filter((slot) => slot.enabled).length
+    const verifyPasses =
+      job.mode === 'verify' || job.verifyAfterWrite ? enabledTargets : 0
+    const overallPercent = computeOverallPercent({
+      totalBytes,
+      // 拷贝阶段的完成量 = 已读完的 + 正在读的那一段。
+      // 用 copiedBytesDone 而不是数据库里的 bytesDone：后者要等校验完才涨，
+      // 中间那一大段真空会让进度往回退（原因见字段上的注释）。
+      copiedBytes: this.copiedBytesDone + inFlightBytes,
+      verifyBytesDone: this.verifyBytesDone,
+      verifyPasses,
+      filesSettled: snapshot.filesDone + snapshot.filesFailed,
+      totalFiles: snapshot.totalFiles
+    })
+
     const targets: TargetProgress[] = this.slots.map((slot) => ({
       targetId: slot.target.id,
       label: slot.target.label,
@@ -1300,6 +1358,8 @@ export class CopyEngine {
       filesFailed: snapshot.filesFailed,
       totalBytes,
       bytesDone,
+      // 界面用它画进度条。已经算好、且含校验阶段，界面不要再自己拼一份。
+      overallPercent,
       // 分析阶段源盘已经不读了，此时再显示字节速率只会误导
       bytesPerSecond: analyzing ? 0 : rate,
       currentFile: activeFiles[0]?.relPath ?? null,

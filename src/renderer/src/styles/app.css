@@ -629,7 +629,7 @@ select {
  * 曾经这里写的是 linear-gradient(..., var(--accent), var(--accent-2))
  * —— 主色到辅色的对角微渐变。对竹林 / 奶酪来说那等于平色（它们的辅色
  * 就是主色），但雾光会渲染成明显的蓝→粉斜纹，观感偏"网页模板"，
- * 所以按需求去掉了渐变，三套主题统一成实心块。
+ * 所以按需求去掉了渐变，各套主题统一成实心块。
  */
 .btn-primary {
   background: var(--accent);
@@ -747,16 +747,65 @@ select {
   overflow: hidden;
 }
 
-/* 进度条：主色 → 辅色。DIT 会长时间盯着它，渐变让"还在走"更容易被余光捕捉到 */
+/*
+ * 进度条用**纯主色**，不做渐变。
+ *
+ * 曾经写的是 linear-gradient(90deg, var(--accent), var(--accent-2))，理由是
+ * "DIT 会长时间盯着它，渐变便于余光捕捉到它在动"。现场反馈是相反的：
+ * 雾光的青→粉横跨 137°，渲染成一条彩色斜纹，既晃眼，又容易让人误以为
+ * 它在表达别的东西（比如"两个阶段混在一起"）。
+ * 按需求改成实心主色 —— 与主按钮（见 .btn-primary）同一次教训。
+ *
+ * 一条要长时间盯着的进度条，信息量应当尽量低：一个颜色 + 一个长度。
+ */
 .progress > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   transition: width var(--dur-base) var(--ease);
 }
 
 .progress.warn > span {
   background: var(--warn);
+}
+
+/*
+ * 不定态：一条来回走的滑块，只表达"在动"，不假装知道还剩多久。
+ *
+ * 用 transform 而不是改 width —— transform 走合成层，不触发布局。
+ * 拷贝正在满速吃磁盘和读卡器的时候，界面不该再抢一份渲染开销。
+ */
+.progress.indeterminate > span {
+  width: 40%;
+  animation: progress-sweep 1.15s var(--ease) infinite;
+}
+
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    /* 滑块自身宽 40%：250% × 40% = 100%，正好滑出容器右侧 */
+    transform: translateX(250%);
+  }
+}
+
+/* 系统开了「减弱动态效果」时不来回滑，改成呼吸式明暗 —— 仍在动，但不晃眼 */
+@media (prefers-reduced-motion: reduce) {
+  .progress.indeterminate > span {
+    width: 100%;
+    animation: progress-breath 1.8s ease-in-out infinite;
+  }
+
+  @keyframes progress-breath {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
 }
 
 .progress.danger > span {

@@ -38,7 +38,14 @@ import {
 import { StreamWriter } from '@main/stream-writer'
 import { humanBytes } from '@shared/format'
 import { renderHtmlReport } from './html-report'
-import { writeAscMhlManifest, writeMhlV1Manifest, type ManifestContext, type ManifestResult } from './manifests'
+import {
+  writeAscMhlManifest,
+  writeCsvManifest,
+  writeJsonManifest,
+  writeMhlV1Manifest,
+  type ManifestContext,
+  type ManifestResult
+} from './manifests'
 
 /**
  * 清单条目的路径转换：把"源内相对路径"换成"目标盘上的相对路径"。
@@ -245,10 +252,29 @@ export class ReportStore {
     const manifestPaths: string[] = []
     let manifestResult: ManifestResult | null = null
 
-    const writeManifest = async (root: string): Promise<ManifestResult> =>
-      job.manifestFormat === 'asc-mhl-2.0'
-        ? writeAscMhlManifest(root, manifestContext, manifestEntries(job, store))
-        : writeMhlV1Manifest(root, manifestContext, manifestEntries(job, store))
+    /*
+     * 清单格式的分发。
+     *
+     * 每次都重新调 `manifestEntries()` —— 它是 async generator，
+     * 一次调用只能被消费一遍。写成"先在外面建好 iterable 再复用"会在
+     * 写第二个目标盘时得到一份**空清单**，而且不报错。
+     */
+    const writeManifest = async (root: string): Promise<ManifestResult> => {
+      switch (job.manifestFormat) {
+        case 'asc-mhl-2.0':
+          return writeAscMhlManifest(root, manifestContext, manifestEntries(job, store))
+        case 'mhl-v1':
+          return writeMhlV1Manifest(root, manifestContext, manifestEntries(job, store))
+        case 'csv':
+          return writeCsvManifest(root, manifestContext, manifestEntries(job, store))
+        case 'json':
+          return writeJsonManifest(root, manifestContext, manifestEntries(job, store))
+        default: {
+          const never: never = job.manifestFormat
+          throw new Error(`未知清单格式：${String(never)}`)
+        }
+      }
+    }
 
     if (input.writeManifestToTargets) {
       for (const target of input.targets) {

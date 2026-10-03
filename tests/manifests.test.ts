@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CopyJob, CopyJobFile, ProjectInfo } from '../src/shared/types'
+import { HASH_ALGORITHMS } from '../src/shared/types'
 import { Store } from '../src/main/db/store'
 import {
   ASC_MHL_FOLDER_NAME,
@@ -25,6 +26,8 @@ import {
   ascMhlFilename,
   escapeXml,
   writeAscMhlManifest,
+  writeCsvManifest,
+  writeJsonManifest,
   writeMhlV1Manifest
 } from '../src/main/reports/manifests'
 
@@ -434,3 +437,212 @@ function assertFileShape(file: CopyJobFile): void {
   expect(typeof file.relPath).toBe('string')
 }
 void assertFileShape
+
+/* ------------------------------------------------------------------ *
+ * CSV / JSON 清单
+ * ------------------------------------------------------------------ */
+
+/** 用与生产一致的上下文调 CSV 写入器。 */
+async function buildCsv(
+  jobId: string,
+  overrides: Partial<CopyJob> = {}
+): Promise<{ text: string; entries: number; path: string }> {
+  const job = { ...(store.getJob(jobId) as CopyJob), ...overrides }
+  const result = await writeCsvManifest(
+    rootPath,
+    {
+      job,
+      project: PROJECT,
+      sourceLabel: 'A002R2EC',
+      revision: 'R001',
+      hostname: 'dit-mac.local',
+      toolName: 'SecureReel DIT',
+      toolVersion: '1.0.0',
+      now: NOW,
+      targetLabels: ['BackupA']
+    },
+    store.iterateFiles(jobId)
+  )
+  return { text: await readFile(result.path, 'utf8'), entries: result.entries, path: result.path }
+}
+
+async function buildJson(
+  jobId: string,
+  overrides: Partial<CopyJob> = {}
+): Promise<{ text: string; entries: number; path: string }> {
+  const job = { ...(store.getJob(jobId) as CopyJob), ...overrides }
+  const result = await writeJsonManifest(
+    rootPath,
+    {
+      job,
+      project: PROJECT,
+      sourceLabel: 'A002R2EC',
+      revision: 'R001',
+      hostname: 'dit-mac.local',
+      toolName: 'SecureReel DIT',
+      toolVersion: '1.0.0',
+      now: NOW,
+      targetLabels: ['BackupA']
+    },
+    store.iterateFiles(jobId)
+  )
+  return { text: await readFile(result.path, 'utf8'), entries: result.entries, path: result.path }
+}
+
+describe('CSV 清单', () => {
+  it('带 UTF-8 BOM、英文表头，且只收录通过校验的文件', async () => {
+    await seedFiles('job_csv01', ENTRIES)
+    const { text, entries } = await buildCsv('job_csv01')
+
+    // BOM 必须在最前面：少了它 Windows 版 Excel 会把中文路径显示成乱码
+    expect(text.startsWith('\uFEFF')).toBe(true)
+
+    const lines = text.replace(/^\uFEFF/, '').split('\r\n')
+    expect(lines[0]).toBe('path,size_bytes,algorithm,hash,verified_targets')
+    expect(lines[1]).toBe('Clips/A002C006_141024_R2EC.mov,20,xxHash64,0ea03b369a463d9d,1')
+
+    // Sidecar.txt 是校验失败的条目，绝不能被写进清单
+    expect(text).not.toContain('Sidecar.txt')
+    expect(entries).toBe(2)
+  })
+
+  it('表头里的算法名会跟着实际选择变', async () => {
+    await seedFiles('job_csv02', ENTRIES)
+    const { text } = await buildCsv('job_csv02', { hashAlgorithm: 'sha256' })
+    expect(text).toContain(',SHA-256,')
+    expect(text).not.toContain('xxHash64')
+  })
+
+  it('含逗号 / 引号 / 换行的路径会按 RFC 4180 转义', async () => {
+    await seedFiles('job_csv03', [
+      ['Clips/带,逗号.mov', 10, 'aaaaaaaaaaaaaaaa', true],
+      ['Clips/带"引号".mov', 10, 'bbbbbbbbbbbbbbbb', true],
+      ['Clips/带\n换行.mov', 10, 'cccccccccccccccc', true]
+    ])
+    const { text } = await buildCsv('job_csv03')
+    expect(text).toContain('"Clips/带,逗号.mov",10,xxHash64,aaaaaaaaaaaaaaaa,1')
+    expect(text).toContain('"Clips/带""引号"".mov",10,xxHash64,bbbbbbbbbbbbbbbb,1')
+    expect(text).toContain('"Clips/带\n换行.mov",10,xxHash64,cccccccccccccccc,1')
+  })
+
+  it('以 = + - @ 开头的路径会加单引号前缀，挡住公式注入', async () => {
+    await seedFiles('job_csv04', [
+      ['=cmd|\'/c calc\'!A1', 10, 'dddddddddddddddd', true],
+      ['+1+1', 10, 'eeeeeeeeeeeeeeee', true],
+      ['@SUM(A1)', 10, 'ffffffffffffffff', true]
+    ])
+    const { text } = await buildCsv('job_csv04')
+    // 前缀是给 Excel 看的，不是给人看的 —— 关键是等号不再是第一个字符
+    expect(text).toContain("'=cmd|'/c calc'!A1,10,")
+    expect(text).toContain("'+1+1,10,")
+    expect(text).toContain("'@SUM(A1),10,")
+  })
+})
+
+describe('JSON 清单', () => {
+  it('是合法 JSON，带作业上下文，且只收录通过校验的文件', async () => {
+    await seedFiles('job_json01', ENTRIES)
+    const { text, entries } = await buildJson('job_json01')
+
+    const parsed = JSON.parse(text) as {
+      format: string
+      formatVersion: number
+      hashAlgorithm: string
+      source: string
+      revision: string
+      targets: string[]
+      project: { name: string; shootDay: string; camera: string; lenses: string; crew: unknown[] }
+      comment: string
+      files: { path: string; sizeBytes: number; hash: string; verifiedTargets: number }[]
+    }
+
+    expect(parsed.format).toBe('securereel-hashlist')
+    expect(parsed.formatVersion).toBe(1)
+    expect(parsed.hashAlgorithm).toBe('xxhash64')
+    expect(parsed.source).toBe('A002R2EC')
+    expect(parsed.revision).toBe('R001')
+    expect(parsed.targets).toEqual(['BackupA'])
+    expect(parsed.project.camera).toBe('ALEXA 35')
+    expect(parsed.project.lenses).toContain('Cooke S7/i')
+    expect(parsed.files).toHaveLength(2)
+    expect(entries).toBe(2)
+    expect(parsed.files[0]?.path).toBe('Clips/A002C006_141024_R2EC.mov')
+    expect(parsed.files.some((file) => file.path === 'Sidecar.txt')).toBe(false)
+  })
+
+  it('项目名里的 & 与尖括号不会破坏结构', async () => {
+    await seedFiles('job_json02', ENTRIES)
+    const { text } = await buildJson('job_json02')
+    const parsed = JSON.parse(text) as { project: { name: string }; comment: string }
+    expect(parsed.project.name).toBe(PROJECT.projectName)
+    expect(parsed.comment).toContain('母亲')
+  })
+
+  it('路径里带引号也能原样往返', async () => {
+    await seedFiles('job_json03', [['Clips/说"这个".mov', 10, 'aaaaaaaaaaaaaaaa', true]])
+    const { text } = await buildJson('job_json03')
+    const parsed = JSON.parse(text) as { files: { path: string }[] }
+    expect(parsed.files[0]?.path).toBe('Clips/说"这个".mov')
+  })
+})
+
+describe('算法与清单格式不相容时明确拒绝', () => {
+  /*
+   * 界面会把不成立的组合标灰，但**界面挡不住旧数据库里的值**，
+   * 也挡不住外部直接传进来的 IPC 参数。真正落笔之前必须再拦一道，
+   * 而且要说清"为什么不行" —— 抛一句"unsupported"等于什么都没说。
+   */
+  it('用 SHA-256 写 ASC MHL 会抛错并说明原因', async () => {
+    await seedFiles('job_bad01', ENTRIES)
+    const job = { ...(store.getJob('job_bad01') as CopyJob), hashAlgorithm: 'sha256' as const }
+    await expect(
+      writeAscMhlManifest(
+        rootPath,
+        {
+          job,
+          project: PROJECT,
+          sourceLabel: 'A002R2EC',
+          revision: 'R001',
+          hostname: 'dit-mac.local',
+          toolName: 'SecureReel DIT',
+          toolVersion: '1.0.0',
+          now: NOW,
+          targetLabels: ['BackupA']
+        },
+        store.iterateFiles('job_bad01')
+      )
+    ).rejects.toThrow(/ASC MHL 2\.0 清单不支持 SHA-256/)
+  })
+
+  it('用 SHA-1 写 MHL v1 同样会被拒绝', async () => {
+    await seedFiles('job_bad02', ENTRIES)
+    const job = { ...(store.getJob('job_bad02') as CopyJob), hashAlgorithm: 'sha1' as const }
+    await expect(
+      writeMhlV1Manifest(
+        rootPath,
+        {
+          job,
+          project: PROJECT,
+          sourceLabel: 'A002R2EC',
+          revision: 'R001',
+          hostname: 'dit-mac.local',
+          toolName: 'SecureReel DIT',
+          toolVersion: '1.0.0',
+          now: NOW,
+          targetLabels: ['BackupA']
+        },
+        store.iterateFiles('job_bad02')
+      )
+    ).rejects.toThrow(/MHL v1 清单不支持 SHA-1/)
+  })
+
+  it('CSV 与 JSON 接受全部七种算法', async () => {
+    await seedFiles('job_allfmt', [['a.mov', 10, 'aaaaaaaaaaaaaaaa', true]])
+    for (const algorithm of HASH_ALGORITHMS) {
+      const csv = await buildCsv('job_allfmt', { hashAlgorithm: algorithm })
+      expect(csv.entries).toBe(1)
+      const json = await buildJson('job_allfmt', { hashAlgorithm: algorithm })
+      expect(json.entries).toBe(1)
+    }
+  })
+})

@@ -88,12 +88,23 @@ export const zhCN = {
   'copy.advanced': '校验与清单',
   'copy.hashAlgorithm': '校验算法',
   'copy.manifestFormat': '清单格式',
+  'copy.hashHint':
+    'xxHash 三兄弟最快（现场大批量首选，xxHash3 在现代 CPU 上最快）；MD5 / SHA-1 / SHA-256 是对外通用的口径；ASC C4 是 ASC MHL 的原生标准。算法越"标准"越慢，但换来的盘谁都能核。',
   'manifest.asc-mhl-2.0': 'ASC MHL 2.0（推荐）',
   'manifest.mhl-v1': 'MHL v1（传统）',
+  'manifest.csv': 'CSV 表格（Excel 直接打开）',
+  'manifest.json': 'JSON（给脚本与自动化流程）',
+  'settings.hashUnsupported': '（{format} 的官方架构里没有这个元素）',
+  'settings.formatUnsupported': '（这种格式写不出 {algorithm} 的校验值）',
+  'settings.incompatiblePair':
+    '当前组合不可用：{format} 的官方架构里没有 {algorithm} 元素，硬写会产出一份别人读不进来的清单。请把清单格式换成 CSV / JSON，或把校验算法换成该格式支持的那几种。',
+  'settings.manifestHint':
+    'ASC MHL 是影视行业的事实标准；CSV 是一张能直接用 Excel 打开的表，适合现场交付与跨部门核对；JSON 字段最全，适合脚本处理。',
   'copy.verifyAfterWrite': '写入后独立重读校验',
   'copy.verifyHint': '强烈建议保持开启。关闭后目标副本不会被重新读取比对。',
   'copy.createAndStart': '创建并开始',
   'copy.createOnly': '仅创建任务',
+  'copy.creating': '正在扫描来源并创建任务…大卡可能需要几分钟，期间不要拔盘。',
   'copy.scanResult': '来源概况',
   'copy.fileCount': '文件数',
   'copy.totalSize': '总体积',
@@ -328,6 +339,7 @@ export const zhCN = {
     '本软件不上传遥测、不格式化磁盘、不删除源素材。所有数据都留在本机。',
 
   'settings.theme.cheese': '奶酪「熟成」',
+  'settings.theme.iris': '蓝紫「鸢尾」',
   'settings.frames': '素材首帧',
   'settings.extractFrames': '为视频素材提取首帧并写进报告',
   'settings.extractFramesHint':
@@ -380,6 +392,8 @@ export const zhCN = {
   'help.faq3Body':
     '能，但总线带宽是共享的。实际吞吐取决于最慢的那个盘和读卡器的上限，插得越多单个盘越慢，总时间不一定更短。',
   'help.about': '关于',
+  'help.developer': '开发者',
+  'help.thanks': '鸣谢',
   'help.platform': '平台',
   'help.license': '许可',
   'help.privacy': '隐私与免责',
@@ -472,12 +486,23 @@ export const en: Record<MessageKey, string> = {
   'copy.advanced': 'Verification & manifest',
   'copy.hashAlgorithm': 'Checksum',
   'copy.manifestFormat': 'Manifest format',
+  'copy.hashHint':
+    'The three xxHash variants are the fastest (the default for bulk on-set work; xxHash3 is fastest on modern CPUs). MD5 / SHA-1 / SHA-256 are the portable, universally recognised options. ASC C4 is the native format of ASC MHL. The more "standard" the algorithm, the slower it runs — in exchange, anyone can verify the drive.',
   'manifest.asc-mhl-2.0': 'ASC MHL 2.0 (recommended)',
   'manifest.mhl-v1': 'MHL v1 (legacy)',
+  'manifest.csv': 'CSV table (opens in Excel)',
+  'manifest.json': 'JSON (for scripts and automation)',
+  'settings.hashUnsupported': ' (not an element in the official {format} schema)',
+  'settings.formatUnsupported': ' (this format cannot express a {algorithm} checksum)',
+  'settings.incompatiblePair':
+    'This combination does not work: the official {format} schema has no {algorithm} element, so forcing it would produce a list other tools cannot read. Switch the manifest format to CSV / JSON, or pick one of the checksum algorithms that format supports.',
+  'settings.manifestHint':
+    'ASC MHL is the de-facto standard in film. CSV is a plain table you can open in Excel — best for on-set handoff and cross-department checks. JSON carries the most fields and is meant for scripts.',
   'copy.verifyAfterWrite': 'Re-read and verify after writing',
   'copy.verifyHint': 'Strongly recommended. If disabled, target copies are never re-read.',
   'copy.createAndStart': 'Create and start',
   'copy.createOnly': 'Create only',
+  'copy.creating': 'Scanning the source and creating the job… a full card can take minutes. Do not unplug the drive.',
   'copy.scanResult': 'Source summary',
   'copy.fileCount': 'Files',
   'copy.totalSize': 'Total size',
@@ -713,6 +738,7 @@ export const en: Record<MessageKey, string> = {
     'No telemetry, no disk formatting, no deleting source media. Everything stays on this machine.',
 
   'settings.theme.cheese': 'Cheese “Aged”',
+  'settings.theme.iris': 'Blue Violet “Iris”',
   'settings.frames': 'Clip first frames',
   'settings.extractFrames': 'Extract a first frame from every video clip',
   'settings.extractFramesHint':
@@ -767,6 +793,8 @@ export const en: Record<MessageKey, string> = {
   'help.faq3Body':
     'Yes, but bus bandwidth is shared. Real throughput depends on the slowest disk and on the card reader ceiling. More targets means each one is slower; total time is not necessarily shorter.',
   'help.about': 'About',
+  'help.developer': 'Developer',
+  'help.thanks': 'Acknowledgements',
   'help.platform': 'Platform',
   'help.license': 'License',
   'help.privacy': 'Privacy & disclaimer',

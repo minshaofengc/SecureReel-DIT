@@ -55,11 +55,33 @@ export function Field({
   )
 }
 
-export function Progress({ value, tone }: { value: number; tone?: 'warn' | 'danger' }): ReactNode {
-  const clamped = Math.max(0, Math.min(100, value))
+/**
+ * 进度条。
+ *
+ * `indeterminate` 是"在动、但说不清还剩多久"的那一档，用在扫源盘这类
+ * **时长完全未知**的等待上（大卡扫描可能几分钟）。
+ *
+ * 这里曾经为那种场景画过一个**写死的 40%**：条子稳稳停在那儿，
+ * 看起来像个真实读数，其实和实际进度毫无关系 —— 那比不画更容易误导人。
+ * 说不清就不说，只表达"在动"。
+ */
+export function Progress({
+  value,
+  tone,
+  indeterminate = false
+}: {
+  /** 0–100。不定态下会被忽略。 */
+  value?: number
+  tone?: 'warn' | 'danger'
+  indeterminate?: boolean
+}): ReactNode {
+  const clamped = Math.max(0, Math.min(100, value ?? 0))
+  const classes = ['progress']
+  if (tone !== undefined) classes.push(tone)
+  if (indeterminate) classes.push('indeterminate')
   return (
-    <div className={`progress${tone === undefined ? '' : ` ${tone}`}`}>
-      <span style={{ width: `${clamped}%` }} />
+    <div className={classes.join(' ')}>
+      <span style={indeterminate ? undefined : { width: `${clamped}%` }} />
     </div>
   )
 }

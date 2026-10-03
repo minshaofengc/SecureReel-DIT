@@ -474,7 +474,13 @@ export function QueueView({
                 const failed = jobProgress?.filesFailed ?? selected.filesFailed
                 const bytesDone = jobProgress?.bytesDone ?? selected.bytesDone
                 const total = jobProgress?.totalBytes ?? selected.totalBytes
-                const pct = percent(bytesDone, total)
+                /*
+                 * 进度条的口径由主进程给（含"每个目标盘重读一遍"的校验工作量），
+                 * 界面不再自己按字节拼 —— 自己拼的那一份漏掉校验阶段，
+                 * 收尾时会停在接近 100% 一动不动，看起来像卡死。
+                 * 没有实时进度时（任务没在跑）退回按字节算，给一个静态值。
+                 */
+                const pct = jobProgress?.overallPercent ?? percent(bytesDone, total)
                 const phase = jobProgress?.phase ?? 'done'
                 const active = selected.state === 'running' || selected.state === 'queued'
                 // 任务不跑的时候 activeFiles 是陈旧数据，别显示

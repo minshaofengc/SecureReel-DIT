@@ -1,23 +1,34 @@
 /**
  * 清单（manifest）生成。
  *
- * 支持两种格式：
+ * 支持四种格式：
  *   · asc-mhl-2.0 —— 默认。严格遵循 ASC 官方 XSD
  *     （targetNamespace `urn:ASC:MHL:v2.0`，根元素 `<hashlist version="2.0">`），
  *     元素顺序、哈希元素命名、文件命名规范都与官方参考实现一致。
  *   · mhl-v1 —— 传统 MHL 格式，用于对接仍在使用旧格式的流程。
+ *   · csv —— 一张表，Excel / Numbers 直接打开，现场交付与跨部门核对最快。
+ *   · json —— 给脚本和自动化流程用，字段最全。
  *
  * 关于官方 XSD 里 `roothash` 与 `directoryhash` 的处理：
  * 这两个元素在架构中是可选的，但它们的语义是"目录内容哈希 / 目录结构哈希"，
  * 具体算法未在公开架构中给出。本实现**刻意不输出**它们 ——
  * 与其写一个看起来像那么回事、实际对不上的哈希值，
  * 不如不写。缺字段是明确的，错字段是危险的。
+ *
+ * ⚠️ 哪些算法能进哪种格式，判据是 `ASC_MHL_HASH_ELEMENTS` 那张表
+ * （从官方 XSD 抄的，有 XSD 测试兜底）。写 XML 前必须过 `supportsAlgorithm()`，
+ * 否则会产出**架构校验不过的清单** —— 对方工具读不进来却不报错，只是少一半条目。
  */
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { mkdir, open, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { CopyJob, CopyJobFile, HashAlgorithm, ProjectInfo } from '@shared/types'
+import {
+  ASC_MHL_HASH_ELEMENTS,
+  MHL_V1_HASH_ELEMENTS,
+  HASH_ALGORITHM_LABELS
+} from '@shared/types'
 import { describeLenses } from '@shared/project'
 import { encodeC4Digest } from '@main/hashing/c4'
 import { StreamWriter } from '@main/stream-writer'
@@ -26,17 +37,37 @@ export const ASC_MHL_NAMESPACE = 'urn:ASC:MHL:v2.0'
 export const MHL_V1_NAMESPACE = 'http://mediahashlist.org/ns/1.0'
 export const ASC_MHL_FOLDER_NAME = 'ascmhl'
 
-/** 各校验算法在清单里的元素名。 */
-const ASC_HASH_ELEMENT: Record<HashAlgorithm, string> = {
-  xxhash64: 'xxh64',
-  md5: 'md5',
-  'asc-c4': 'c4'
+/**
+ * 取某个算法在指定格式里的元素名。取不到就是"这个组合本来就不该被选中"。
+ *
+ * 为什么在这里再拦一道：设置页已经会禁用非法组合，但两份配置（设置里的默认值、
+ * 任务里冻结的那一份）都可能来自旧版本数据库或外部传入的 IPC 参数。
+ * 界面能骗过，架构校验骗不过 —— 所以在真正落笔之前再确认一次。
+ */
+function requireHashElement(
+  table: Partial<Record<HashAlgorithm, string>>,
+  format: string,
+  algorithm: HashAlgorithm
+): string {
+  const element = table[algorithm]
+  if (element === undefined) {
+    throw new Error(
+      `${format} 清单不支持 ${HASH_ALGORITHM_LABELS[algorithm]} 校验值（该格式的官方架构里没有对应的哈希元素）`
+    )
+  }
+  return element
 }
 
-const MHL_V1_HASH_ELEMENT: Record<HashAlgorithm, string> = {
-  xxhash64: 'xxhash64',
-  md5: 'md5',
-  'asc-c4': 'c4'
+/**
+ * 取源盘展示名做文件名的安全基名。
+ *
+ * ⚠️ 不能只做字符替换：中文卷名（例如「启动磁盘」）会被整个过滤掉，
+ * 结果是一串下划线，既难看又完全认不出这是哪张卡。所以过滤后要去掉首尾
+ * 分隔符，空了就回退 root。
+ */
+function safeBaseName(sourceLabel: string): string {
+  const cleaned = sourceLabel.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '')
+  return cleaned === '' ? 'root' : cleaned
 }
 
 export function escapeXml(value: string): string {
@@ -91,16 +122,7 @@ export function ascMhlFilename(generation: number, sourceLabel: string, now: Dat
   const stamp = now.toISOString()
   const date = stamp.slice(0, 10)
   const time = stamp.slice(11, 19).replace(/:/g, '')
-  /*
-   * 基名只保留 ASCII 字母数字与 `._-`：清单文件名会被各家工具当路径解析，
-   * 混入中文与空格的风险不值得冒。
-   *
-   * ⚠️ 但**不能只做替换**。中文卷名（例如「启动磁盘」）会被整个过滤掉，
-   * 结果是 `0001___2026-09-19_152426Z.mhl` —— 一串下划线，既难看又完全
-   * 认不出这是哪张卡的清单。所以过滤后要再去掉首尾分隔符，空了就回退 root。
-   */
-  const safeLabel = sourceLabel.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '')
-  return `${String(generation).padStart(4, '0')}_${safeLabel === '' ? 'root' : safeLabel}_${date}_${time}Z.mhl`
+  return `${String(generation).padStart(4, '0')}_${safeBaseName(sourceLabel)}_${date}_${time}Z.mhl`
 }
 
 /**
@@ -121,7 +143,11 @@ export async function writeAscMhlManifest(
   const filename = ascMhlFilename(generation, context.sourceLabel, context.now)
   const absolute = join(folder, filename)
 
-  const hashElement = ASC_HASH_ELEMENT[context.job.hashAlgorithm]
+  const hashElement = requireHashElement(
+    ASC_MHL_HASH_ELEMENTS,
+    'ASC MHL 2.0',
+    context.job.hashAlgorithm
+  )
   const hashdate = xmlDateTime(context.now)
 
   const stream = createWriteStream(absolute, { encoding: 'utf8' })
@@ -201,10 +227,14 @@ export async function writeMhlV1Manifest(
   files: AsyncIterable<CopyJobFile>
 ): Promise<ManifestResult> {
   await mkdir(rootDir, { recursive: true })
-  const filename = `${context.sourceLabel.replace(/[^A-Za-z0-9._-]+/g, '_') || 'root'}_${context.revision}.mhl`
+  const filename = `${safeBaseName(context.sourceLabel)}_${context.revision}.mhl`
   const absolute = join(rootDir, filename)
 
-  const hashElement = MHL_V1_HASH_ELEMENT[context.job.hashAlgorithm]
+  const hashElement = requireHashElement(
+    MHL_V1_HASH_ELEMENTS,
+    'MHL v1',
+    context.job.hashAlgorithm
+  )
   const hashdate = xmlDateTime(context.now)
 
   const stream = createWriteStream(absolute, { encoding: 'utf8' })
@@ -238,6 +268,192 @@ export async function writeMhlV1Manifest(
 
     await writer.write('  </hashes>\n')
     await writer.write('</mhl>\n')
+  } finally {
+    await writer.end()
+  }
+
+  return {
+    path: absolute,
+    relPath: filename,
+    c4: await computeFileC4(absolute),
+    entries
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * CSV / JSON —— 给人和脚本看的表格清单
+ * ------------------------------------------------------------------ */
+
+/** 清单里的一行。CSV 与 JSON 共用同一套抽取规则，也共用同一个字段名。 */
+interface HashRow {
+  /** 目标盘上的相对路径（POSIX 风格） */
+  path: string
+  sizeBytes: number
+  hash: string
+  verifiedTargets: number
+}
+
+/**
+ * 从一个文件记录里抽出可写进清单的一行。
+ *
+ * 收录条件与两种 XML 格式**完全一致**：源哈希算出来了、且至少有一个目标
+ * 通过了独立重读校验。校验没过的一律不进清单 ——
+ * 清单是"这批素材原本是什么样"的记录，掺进没通过的行等于谎报。
+ * 失败的条目在报告里单独呈现，那里才有失败原因。
+ */
+function collectHashRow(file: CopyJobFile): HashRow | null {
+  if (file.sourceHash === null) return null
+  const verifiedTargets = file.results.filter((result) => result.state === 'verified').length
+  if (verifiedTargets === 0) return null
+  return {
+    path: file.relPath,
+    sizeBytes: file.sizeBytes,
+    hash: file.sourceHash,
+    verifiedTargets
+  }
+}
+
+/**
+ * CSV 单元格转义。两件事都要做，缺一不可：
+ *
+ *   1. 含逗号 / 引号 / 换行的值用双引号包起来，内部引号翻倍 —— RFC 4180
+ *   2. 以 `=` `+` `-` `@` 开头的值前面补一个单引号 —— 挡**公式注入**。
+ *      素材文件名是外部输入（相机卡上的名字、别人递过来的盘），
+ *      一份以 `=cmd|...` 开头的 CSV 被 Excel 打开会直接按公式执行。
+ *      加个前缀它就不执行了，而 Excel 也不会把那个单引号显示出来。
+ */
+function csvCell(value: string): string {
+  let text = value
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`
+  return text
+}
+
+/**
+ * 写入 CSV 清单。
+ *
+ * 一行一个文件，表头固定英文 ASCII（这份东西会被别的工具解析，
+ * 中文表头在某些老解析器上会出问题）；路径里可以有中文，所以带 BOM。
+ */
+export async function writeCsvManifest(
+  rootDir: string,
+  context: ManifestContext,
+  files: AsyncIterable<CopyJobFile>
+): Promise<ManifestResult> {
+  await mkdir(rootDir, { recursive: true })
+  const filename = `${safeBaseName(context.sourceLabel)}_${context.revision}.csv`
+  const absolute = join(rootDir, filename)
+
+  const algorithm = context.job.hashAlgorithm
+  const stream = createWriteStream(absolute, { encoding: 'utf8' })
+  const writer = new StreamWriter(stream)
+  let entries = 0
+
+  try {
+    /*
+     * UTF-8 BOM 不能省。
+     * Windows 版 Excel 打开不带 BOM 的 UTF-8 CSV 时按本地代码页解码，
+     * 中文路径会变成乱码 —— 而现场素材路径里出现中文是常态
+     * （「录音」「花絮」「第二机」「空镜」）。BOM 是这一个小字节唯一的解法。
+     */
+    await writer.write('\uFEFF')
+    // 行尾用 CRLF：RFC 4180 的规定，也是 Excel 最省事的那一种
+    await writer.write('path,size_bytes,algorithm,hash,verified_targets\r\n')
+    for await (const file of files) {
+      const row = collectHashRow(file)
+      if (row === null) continue
+      entries++
+      await writer.write(
+        [
+          csvCell(row.path),
+          String(row.sizeBytes),
+          csvCell(HASH_ALGORITHM_LABELS[algorithm]),
+          csvCell(row.hash),
+          String(row.verifiedTargets)
+        ].join(',') + '\r\n'
+      )
+    }
+  } finally {
+    await writer.end()
+  }
+
+  return {
+    path: absolute,
+    relPath: filename,
+    c4: await computeFileC4(absolute),
+    entries
+  }
+}
+
+/**
+ * 写入 JSON 清单。
+ *
+ * 与 CSV 的差别不只是"格式不同"：这里带**作业上下文**（任务名、拍摄日、
+ * 机型镜头、主创、目标盘、算法、备注），所以单独发一份出去也能自证来源。
+ * CSV 没有这一层，它只承担"一张能直接看的表"。
+ *
+ * 同样是流式：十万条素材的 JSON 一次性拼出来会有几十 MB 的内存峰值。
+ */
+export async function writeJsonManifest(
+  rootDir: string,
+  context: ManifestContext,
+  files: AsyncIterable<CopyJobFile>
+): Promise<ManifestResult> {
+  await mkdir(rootDir, { recursive: true })
+  const filename = `${safeBaseName(context.sourceLabel)}_${context.revision}.json`
+  const absolute = join(rootDir, filename)
+
+  const algorithm = context.job.hashAlgorithm
+  const stream = createWriteStream(absolute, { encoding: 'utf8' })
+  const writer = new StreamWriter(stream)
+  let entries = 0
+
+  try {
+    const head = {
+      format: 'securereel-hashlist',
+      formatVersion: 1,
+      created: context.now.toISOString(),
+      revision: context.revision,
+      tool: { name: context.toolName, version: context.toolVersion },
+      hostname: context.hostname,
+      source: context.sourceLabel,
+      hashAlgorithm: algorithm,
+      hashAlgorithmLabel: HASH_ALGORITHM_LABELS[algorithm],
+      targets: context.targetLabels,
+      job: { id: context.job.id, name: context.job.name },
+      project: {
+        name: context.project.projectName,
+        shootDay: context.project.shootDay,
+        camera: context.project.camera,
+        lenses: describeLenses(context.project),
+        crew: context.project.crew.map((member) => ({
+          role: member.role,
+          name: member.name
+        }))
+      },
+      comment: buildComment(context)
+    }
+
+    // 头部整体序列化后切掉收尾的 `}`，再手工接上 files 数组 ——
+    // 这样每个字段仍然由 JSON.stringify 转义，不必自己处理引号。
+    const headJson = JSON.stringify(head, null, 2)
+    await writer.write(`${headJson.slice(0, headJson.lastIndexOf('}')).trimEnd()},\n`)
+    await writer.write('  "files": [')
+
+    let first = true
+    for await (const file of files) {
+      const row = collectHashRow(file)
+      if (row === null) continue
+      entries++
+      const body = JSON.stringify(row, null, 2)
+        .split('\n')
+        .map((line) => `    ${line}`)
+        .join('\n')
+      await writer.write(`${first ? '\n' : ',\n'}${body}`)
+      first = false
+    }
+
+    await writer.write('\n  ]\n}\n')
   } finally {
     await writer.end()
   }

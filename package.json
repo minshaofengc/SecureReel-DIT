@@ -1,7 +1,7 @@
 {
   "name": "securereel-dit",
   "productName": "SecureReel DIT 2",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "免费开源的摄影机素材拷贝与校验工具：多目标拷贝、xxHash64 复核、ASC MHL、不可变报告。",
   "license": "GPL-3.0-only",
   "author": {
@@ -16,9 +16,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "preview": "electron-vite preview",
-    "build": "electron-vite build",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && sh scripts/dist-win.sh",
+    "build": "rm -rf out && electron-vite build",
+    "dist:mac": "npm run build && test ! -f out/main/verify.js && electron-builder --mac",
+    "dist:win": "npm run build && test ! -f out/main/verify.js && sh scripts/dist-win.sh",
     "check:win-assets": "sh scripts/check-win-assets.sh",
     "type-check": "npm run type-check:node && npm run type-check:web",
     "type-check:node": "tsc -p tsconfig.node.json --noEmit",
@@ -27,8 +27,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:pipeline": "SECUREREEL_VERIFY=1 electron-vite build && electron out/main/verify.js",
-    "verify:app": "electron-vite build && SECUREREEL_SMOKE_SCREENSHOT=.verify-output/app.png electron out/main/index.js",
+    "verify:pipeline": "rm -rf out && SECUREREEL_VERIFY=1 electron-vite build && env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS electron out/main/verify.js --no-sandbox",
+    "verify:app": "rm -rf out && electron-vite build && env -u ELECTRON_RUN_AS_NODE -u NODE_OPTIONS SECUREREEL_SMOKE_SCREENSHOT=.verify-output/app.png electron out/main/index.js --no-sandbox",
     "verify": "npm run type-check && npm run lint && npm run test && npm run verify:pipeline && npm run verify:app"
   },
   "dependencies": {

@@ -21,12 +21,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$(cd "$ROOT/.." && pwd)/windows 版本"
 
 # 国内镜像：没设才设，已设的尊重调用方
+# 国内镜像：没设才设，已设的尊重调用方。
+#
+# ⚠️ 必须用 registry.npmmirror.com/-/binary/，**不是** npmmirror.com/mirrors/。
+# 后一个（老地址、网上教程里到处都是）现在对具体版本固定返回 502 Bad Gateway，
+# 而 npm 包本身装得好好的 —— 现象是"npm install 成功、打包却卡在下载运行时"。
+# 2026-10-04 实测：只有 -/binary/ 那条路能出包。
 if [ -z "${ELECTRON_MIRROR:-}" ]; then
-  ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
+  ELECTRON_MIRROR='https://registry.npmmirror.com/-/binary/electron/'
   export ELECTRON_MIRROR
 fi
 if [ -z "${ELECTRON_BUILDER_BINARIES_MIRROR:-}" ]; then
-  ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'
+  ELECTRON_BUILDER_BINARIES_MIRROR='https://registry.npmmirror.com/-/binary/electron-builder-binaries/'
   export ELECTRON_BUILDER_BINARIES_MIRROR
 fi
 

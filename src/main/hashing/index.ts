@@ -9,12 +9,12 @@
  * 绝不能把分片暂存到内存里 —— 单条素材动辄上百 GB。
  *
  * 算法：
- *   - xxhash64：默认，速度快，适合现场大批量素材
- *   - md5：兼容既有流程
- *   - asc-c4：SMPTE ST 2114:2017，归档用
+ *   - xxhash64 / xxh3 / xxh128：速度快，适合现场大批量素材（xxh3 在现代 CPU 上最快）
+ *   - md5 / sha1 / sha256：通用与归档口径，对接外部流程（走 Node 内置 crypto）
+ *   - asc-c4：SMPTE ST 2114:2017，归档用，也是 ASC MHL 的原生口径
  */
 import { createHash } from 'node:crypto'
-import { createXXHash64 } from 'hash-wasm'
+import { createXXHash128, createXXHash3, createXXHash64 } from 'hash-wasm'
 import type { HashAlgorithm } from '@shared/types'
 import { HASH_VALUE_LENGTH } from '@shared/types'
 import { bytesToHex, decodeC4Id, encodeC4Digest } from './c4'
@@ -29,38 +29,22 @@ export interface StreamingHasher {
   digest(): string
 }
 
-class Md5Hasher implements StreamingHasher {
-  readonly algorithm = 'md5' as const
-  private readonly inner = createHash('md5')
-  private bytes = 0
-  private finalized = false
-
-  get bytesHashed(): number {
-    return this.bytes
-  }
-
-  update(chunk: Uint8Array): void {
-    if (this.finalized) throw new Error('哈希实例已结束，不能继续写入')
-    this.inner.update(chunk)
-    this.bytes += chunk.length
-  }
-
-  digest(): string {
-    if (this.finalized) throw new Error('哈希实例已结束，不能重复取值')
-    this.finalized = true
-    return this.inner.digest('hex')
-  }
-}
-
-class Sha512BasedHasher implements StreamingHasher {
+/**
+ * 走 Node 内置 crypto 的哈希器（md5 / sha1 / sha256）。
+ *
+ * 这三种是"外部流程认"的口径，速度不是重点，稳定性与标准一致性才是 ——
+ * 所以不用 WASM 实现，直接用 Node 自带的那份（FIPS 实现在系统里）。
+ */
+class NodeCryptoHasher implements StreamingHasher {
   readonly algorithm: HashAlgorithm
-  private readonly inner = createHash('sha512')
+  private readonly inner: ReturnType<typeof createHash>
   private readonly encoder: (digest: Uint8Array) => string
   private bytes = 0
   private finalized = false
 
-  constructor(algorithm: HashAlgorithm, encoder: (digest: Uint8Array) => string) {
+  constructor(algorithm: HashAlgorithm, name: string, encoder: (digest: Uint8Array) => string) {
     this.algorithm = algorithm
+    this.inner = createHash(name)
     this.encoder = encoder
   }
 
@@ -81,13 +65,25 @@ class Sha512BasedHasher implements StreamingHasher {
   }
 }
 
-class XxHash64Hasher implements StreamingHasher {
-  readonly algorithm = 'xxhash64' as const
+/** SHA-512 → C4 标识（SMPTE ST 2114 规定底层用 SHA-512）。 */
+class Sha512BasedHasher extends NodeCryptoHasher {
+  constructor(algorithm: HashAlgorithm, encoder: (digest: Uint8Array) => string) {
+    super(algorithm, 'sha512', encoder)
+  }
+}
+
+/** hash-wasm 的流式哈希器（xxhash64 / xxh3 / xxh128 共用同一套接口）。 */
+class WasmXxHasher implements StreamingHasher {
+  readonly algorithm: HashAlgorithm
   private bytes = 0
   private finalized = false
   private readonly hasher: { update(data: Uint8Array): void; digest(kind: 'hex'): string }
 
-  constructor(hasher: { update(data: Uint8Array): void; digest(kind: 'hex'): string }) {
+  constructor(
+    algorithm: HashAlgorithm,
+    hasher: { update(data: Uint8Array): void; digest(kind: 'hex'): string }
+  ) {
+    this.algorithm = algorithm
     this.hasher = hasher
   }
 
@@ -111,19 +107,34 @@ class XxHash64Hasher implements StreamingHasher {
 /**
  * 创建流式哈希器。
  *
- * 对 xxHash64 而言这个 Promise 会等到 WASM 实例就绪；
+ * 对 xxHash 三兄弟而言这个 Promise 会等到 WASM 实例就绪；
  * 因此请在每个文件开始拷贝**之前**创建，不要在拷贝循环中间创建。
+ *
+ * ⚠️ xxHash3 / xxHash128 的 `init()` 是必须调的，和唯一区别只在内部状态长度 ——
+ * 漏掉它不会报错，但会把第一个分片当种子用，结果是**每个文件都算出一个
+ * 稳定但错误的值**（自校验能对上，对外却不认得），属于最难发现的一类错。
  */
 export async function createStreamingHasher(algorithm: HashAlgorithm): Promise<StreamingHasher> {
   switch (algorithm) {
     case 'md5':
-      return new Md5Hasher()
+      return new NodeCryptoHasher('md5', 'md5', bytesToHex)
+    case 'sha1':
+      return new NodeCryptoHasher('sha1', 'sha1', bytesToHex)
+    case 'sha256':
+      return new NodeCryptoHasher('sha256', 'sha256', bytesToHex)
     case 'asc-c4':
       return new Sha512BasedHasher('asc-c4', (digest) => encodeC4Digest(digest))
-    case 'xxhash64': {
-      const wasm = await createXXHash64()
+    case 'xxhash64':
+    case 'xxh3':
+    case 'xxh128': {
+      const wasm =
+        algorithm === 'xxhash64'
+          ? await createXXHash64()
+          : algorithm === 'xxh3'
+            ? await createXXHash3()
+            : await createXXHash128()
       wasm.init()
-      return new XxHash64Hasher(wasm)
+      return new WasmXxHasher(algorithm, wasm)
     }
     default: {
       const never: never = algorithm
@@ -136,7 +147,7 @@ export async function createStreamingHasher(algorithm: HashAlgorithm): Promise<S
  * 校验值形态自检。
  *
  * 每种算法的文本形态不同，必须分开判断：
- *   · xxhash64 / md5 → 纯小写十六进制
+ *   · xxhash64 / xxh3 / xxh128 / md5 / sha1 / sha256 → 纯小写十六进制
  *   · ASC C4 → 90 字符、`c4` 开头、其余为 Base58（含大小写字母，不是十六进制）
  */
 export function hashLooksValid(algorithm: HashAlgorithm, value: string): boolean {

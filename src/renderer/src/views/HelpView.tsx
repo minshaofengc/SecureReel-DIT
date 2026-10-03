@@ -61,6 +61,16 @@ export function HelpView(): ReactNode {
         <dl className="kv">
           <dt>{t('app.name')}</dt>
           <dd>v{appInfo?.version ?? '—'}</dd>
+          {/*
+            署名放在「关于」里，和版本号同一块。
+            名字本身**不走 i18n** —— 人名与院系名不该被翻译，
+            走文案表反而会让英文界面里出现一个被改写的名字。
+            只有"开发者 / 鸣谢"这两个标签是文案。
+          */}
+          <dt>{t('help.developer')}</dt>
+          <dd>Shanfly 鱼鱼子</dd>
+          <dt>{t('help.thanks')}</dt>
+          <dd>吉林动画学院电影学院影制系</dd>
           <dt>Electron</dt>
           <dd>{appInfo?.electron ?? '—'}</dd>
           <dt>Chrome</dt>

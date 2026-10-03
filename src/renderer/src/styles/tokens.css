@@ -1,10 +1,11 @@
 /**
  * 主题令牌。
  *
- * 三套配色：
+ * 四套配色：
  *   · 竹林「清和」—— 青绿为主，低饱和，适合长时间盯进度条
- *   · 粉蓝「雾光」—— 冷蓝配暖粉，弱光环境下的观感更柔和
+ *   · 粉蓝「雾光」—— 青蓝配暖粉（色相差 137°），明亮通透，是两个颜色的对撞
  *   · 奶酪「熟成」—— 奶油底配琥珀金，暖色系，长时间看不刺眼
+ *   · 蓝紫「鸢尾」—— 紫罗兰配兰紫（色相差 22°），一个颜色的深浅，沉稳偏冷
  *
  * 每套都有 light / dark 两组值，由 <html data-theme data-mode> 切换。
  * 界面里任何颜色都必须走这里的变量 —— 不允许在组件里写死色值，
@@ -14,21 +15,26 @@
  * 所以全项目不再有任何内联色值。以后若又想加"预览别的主题"之类的组件，
  * 先想清楚它是不是又要破例 —— 能不破就不破。
  *
- * 每套配色有**主 / 辅两个强调色**：--accent 是主色（按钮、焦点环、徽标），
- * --accent-2 是辅色（进度条渐变的另一端、选中态的浅底与竖条）。
- * 辅色的用法是「点缀」，所以它只出现在渐变、浅底与竖条上，从不单独承载文字。
- * 主按钮**不用**辅色：它是实心的主色块（曾经做过主→辅渐变，已按需求去掉）。
+ * 每套配色有**主 / 辅两个强调色**：--accent 是主色（按钮、焦点环、徽标、
+ * 进度条），--accent-2 是辅色（选中态的 2px 竖条与浅底、动作型下拉项的文字）。
  *
- * ⚠️ 六个主题块必须**全部**定义 --accent-2 系列，一个都不能少：
- * 进度条写的是 linear-gradient(90deg, var(--accent), var(--accent-2))，
- * 若某个主题漏配 --accent-2，整条 background 会在计算值阶段变成
- * "invalid at computed-value time" 并被当成 unset —— 进度条会直接失去背景色。
- * 这种错 type-check 和 lint 都抓不到，只有截图能发现。
+ * 进度条**用纯色主色，不做渐变**。主按钮当年也是主→辅渐变，同样去掉了。
+ * 两次的理由一模一样：对竹林 / 奶酪等于平色，而雾光的青→粉会渲染成一条
+ * 彩色斜纹，观感偏"网页模板"。DIT 要长时间盯着它，实心块更稳。
+ *
+ * ⚠️ 八个主题块必须**全部**定义 --accent-2 系列，一个都不能少。
+ * 漏配的后果是**静默**的，而且分两处：
+ *   · 选中态写的是 box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2)，
+ *     变量取不到值 → 整条 box-shadow 在计算值阶段变成 "invalid at computed-value
+ *     time" 并被当成 unset → 竖条**直接消失**（只剩浅底）
+ *   · 动作型下拉项写的是 color: var(--accent-2) → 那条 color 同样失效，
+ *     文字退回继承色，和普通选项长得一样
+ * type-check 和 lint 都抓不到，只能靠冒烟探针把真实元素的计算值读出来。
  *
  * --accent-2-bar 是「选中态竖条」的宽度。
- * 单色主题（竹林、奶酪）沿等主色，渐变能自然退化成平色，
+ * 单色主题（竹林、奶酪）沿等主色，色块与浅底能自然退化成平色，
  * 但**竖条是离散元素，退化不了** —— 给它们留个 0px，选中态就完全维持原样：
- * 浅底 + 加粗，没有竖条。只有雾光吃得到这根 2px 的线。
+ * 浅底 + 加粗，没有竖条。雾光与鸢尾吃得到这根 2px 的线。
  */
 
 :root {
@@ -116,55 +122,60 @@ html[data-theme='qinghe'][data-mode='dark'] {
 /* ---------------- 粉蓝「雾光」 ---------------- */
 
 html[data-theme='wuguang'][data-mode='light'] {
-  --bg: #f6f6fa;
-  --bg-elevated: #fcfcfe;
+  --bg: #f4f8fa;
+  --bg-elevated: #fbfdfe;
   --surface: #ffffff;
-  --surface-2: #f0f1f8;
-  --border: #dedff0;
-  --border-strong: #c4c7e2;
-  --text: #232538;
-  --text-muted: #676b8b;
-  --text-faint: #8f93b0;
-  --accent: #586ec4;
-  --accent-hover: #4a5eb3;
-  --accent-soft: #e8ebf9;
+  --surface-2: #ecf2f6;
+  --border: #d8e3ea;
+  --border-strong: #bacdd9;
+  --text: #1e2a33;
+  --text-muted: #5d7181;
+  --text-faint: #8293a1;
+  /* 青蓝（色相 203°）。2026-10-04 从原来的靛蓝 #586ec4（色相 234°）挪过来 ——
+     它和鸢尾的紫罗兰只差 30°，两套主题摆在一起分不出谁是谁。
+     现在雾光是"青"，鸢尾是"紫"，主色相相差 62°。
+     对比度：5.32:1 vs 白。 */
+  --accent: #26719f;
+  --accent-hover: #1f6289;
+  --accent-soft: #e4eff6;
   --accent-contrast: #ffffff;
-  /* 暖粉。L* 48.1 与蓝的 48.5 几乎相等 —— 等明度、约 113° 纯色相差，
-     比「拉开明度」更好辨认，渐变也不会一头亮一头暗。
-     对比度：4.80:1 vs 白（蓝是 4.73:1）。 */
+  /* 暖粉（色相 340°）。和青蓝的色相差 137°，是全项目里拉得最开的一对 ——
+     雾光的身份就是"两个颜色"，不是"一个颜色的深浅"。
+     ⚠️ 它**会承载文字**（下拉里的「+ 新建母项目…」这类动作项就是辅色字），
+     所以 4.80:1 vs 白这条线不能松。 */
   --accent-2: #c2456f;
   --accent-2-soft: #fbeaf1;
   --accent-2-bar: 2px;
-  --ok: #3a7a68;
+  --ok: #2f7a68;
   --ok-soft: #e5f1ed;
-  --warn: #a0701f;
+  --warn: #9c6b1c;
   --warn-soft: #fbf1de;
   --danger: #bb4436;
   --danger-soft: #fbeae7;
-  --info: #5c74c9;
-  --info-soft: #e9ecfa;
-  --shadow-sm: 0 1px 2px rgba(35, 37, 56, 0.06);
-  --shadow-md: 0 6px 20px rgba(35, 37, 56, 0.1);
-  --grid-line: rgba(88, 110, 196, 0.08);
+  --info: #26719f;
+  --info-soft: #e6f0f6;
+  --shadow-sm: 0 1px 2px rgba(30, 42, 51, 0.06);
+  --shadow-md: 0 6px 20px rgba(30, 42, 51, 0.1);
+  --grid-line: rgba(38, 113, 159, 0.08);
 }
 
 html[data-theme='wuguang'][data-mode='dark'] {
-  --bg: #14151d;
-  --bg-elevated: #1a1b26;
-  --surface: #1e1f2b;
-  --surface-2: #24263a;
-  --border: #31334a;
-  --border-strong: #43466a;
-  --text: #e8e9f3;
-  --text-muted: #a0a3c0;
-  --text-faint: #7a7d99;
-  --accent: #8fa3e8;
-  --accent-hover: #a3b4f0;
-  --accent-soft: #262a45;
-  --accent-contrast: #14151d;
-  /* 深色下必须提亮，8.65:1 vs #14151d（蓝是 7.42:1） */
+  --bg: #101820;
+  --bg-elevated: #16202a;
+  --surface: #1a242e;
+  --surface-2: #202c38;
+  --border: #2b3946;
+  --border-strong: #3d4f60;
+  --text: #e6eef3;
+  --text-muted: #9db0bd;
+  --text-faint: #77899a;
+  --accent: #7cc0e8;
+  --accent-hover: #95cfef;
+  --accent-soft: #1b2c39;
+  --accent-contrast: #101820;
+  /* 深色下同样提亮，色相不变：9.15:1 vs #101820（粉是 8.65:1） */
   --accent-2: #ef9ab8;
-  --accent-2-soft: #3a2431;
+  --accent-2-soft: #38232e;
   --accent-2-bar: 2px;
   --ok: #7cc4ab;
   --ok-soft: #1f312c;
@@ -172,11 +183,11 @@ html[data-theme='wuguang'][data-mode='dark'] {
   --warn-soft: #33291a;
   --danger: #f29589;
   --danger-soft: #3a2320;
-  --info: #9db2ee;
-  --info-soft: #232840;
+  --info: #8cc6e8;
+  --info-soft: #1c2c38;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --grid-line: rgba(143, 163, 232, 0.1);
+  --grid-line: rgba(124, 192, 232, 0.1);
 }
 
 /* ---------------- 奶酪「熟成」 ---------------- */
@@ -240,4 +251,82 @@ html[data-theme='cheese'][data-mode='dark'] {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
   --grid-line: rgba(230, 178, 60, 0.1);
+}
+
+/* ---------------- 蓝紫「鸢尾」 ---------------- */
+
+/*
+ * 紫罗兰主题。2026-10-04 做了一次"拉开差距"的调整：
+ * 原来主色是靛蓝 #5560cf（色相 234°），和雾光的靛蓝只差 30° ——
+ * 两套都偏蓝，摆在一起分不清。现在整体推向紫：主色色相 265°，
+ * 辅色 287°，底色也更冷更深。雾光走的另一头（青蓝 203°），
+ * 两套主色相差 62°，一眼就能分开。
+ *
+ * 雾光的身份是"两个颜色"（青蓝配暖粉，差 137°），鸢尾是"一个颜色的深浅"
+ * （紫罗兰配兰紫，差 22°）—— 这是两套主题气质上的分工，别把两者调得雷同。
+ */
+html[data-theme='iris'][data-mode='light'] {
+  --bg: #f3f1fa;
+  --bg-elevated: #faf9fe;
+  --surface: #ffffff;
+  --surface-2: #ebe8f7;
+  --border: #dbd6ef;
+  --border-strong: #bfb8e2;
+  --text: #221f38;
+  --text-muted: #645e8c;
+  --text-faint: #8d87b0;
+  /* 对比度：6.06:1 vs 白 */
+  --accent: #7b3fd0;
+  --accent-hover: #6b34bb;
+  --accent-soft: #eee6fb;
+  --accent-contrast: #ffffff;
+  /* 兰紫（色相 287°）。明度比主色略高一点（L* 46.8 vs 41.7），
+     它只出现在 2px 竖条与选中浅底上，不承载文字也能被看见。
+     对比度：5.03:1 vs 白（万一将来被用作文字色，这条线也够）。 */
+  --accent-2: #a83fc4;
+  --accent-2-soft: #f9e9f9;
+  --accent-2-bar: 2px;
+  --ok: #2f7a63;
+  --ok-soft: #e4f1ee;
+  --warn: #9a6b1f;
+  --warn-soft: #fbf1de;
+  --danger: #b83b46;
+  --danger-soft: #fbe9ec;
+  --info: #6b4fc9;
+  --info-soft: #ece8fa;
+  --shadow-sm: 0 1px 2px rgba(34, 31, 56, 0.06);
+  --shadow-md: 0 6px 20px rgba(34, 31, 56, 0.1);
+  --grid-line: rgba(123, 63, 208, 0.08);
+}
+
+html[data-theme='iris'][data-mode='dark'] {
+  --bg: #130f22;
+  --bg-elevated: #1a162b;
+  --surface: #1e1a30;
+  --surface-2: #262040;
+  --border: #322b4d;
+  --border-strong: #453c6b;
+  --text: #e9e5f6;
+  --text-muted: #a39cc5;
+  --text-faint: #7d769e;
+  /* 深色下两头都提亮，明度几乎相等（L* 71.0 与 71.3）：
+     8.33:1 与 8.41:1 vs #1e1a30。 */
+  --accent: #b9a0f7;
+  --accent-hover: #c8b3f9;
+  --accent-soft: #2a2148;
+  --accent-contrast: #130f22;
+  --accent-2: #cf9af0;
+  --accent-2-soft: #3a2547;
+  --accent-2-bar: 2px;
+  --ok: #7cc9b0;
+  --ok-soft: #1f312d;
+  --warn: #e2be76;
+  --warn-soft: #33291a;
+  --danger: #f2969c;
+  --danger-soft: #3a2328;
+  --info: #b3a6f2;
+  --info-soft: #272148;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --grid-line: rgba(185, 160, 247, 0.1);
 }

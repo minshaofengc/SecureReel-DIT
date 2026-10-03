@@ -9,12 +9,39 @@
  * 校验算法
  * ------------------------------------------------------------------ */
 
-export const HASH_ALGORITHMS = ['xxhash64', 'md5', 'asc-c4'] as const
+/**
+ * 校验算法。
+ *
+ * 数组顺序 = 设置页下拉里的顺序，按"现场常用 → 兼容/归档"排：
+ * 前面三个是速度路线（xxHash 三兄弟），中间三个是通用/兼容路线，最后是归档。
+ *
+ * 怎么给现场的人讲这七种：
+ *   · xxHash64   —— 默认。速度快，值短（16 位），自家流程自洽，够用
+ *   · xxHash3    —— 同一条路线的新版本，现代 CPU 上比 xxHash64 更快
+ *   · xxHash128  —— 同一条路线，值 32 位，比 64 位的碰撞概率更低
+ *   · MD5        —— 老流程的通用语言，很多转录/交付环节只认它
+ *   · SHA-1      —— 老标准的归档口径。⚠️ 见下面 ASC MHL 的说明
+ *   · SHA-256    —— 归档与质检最常被要求的口径。⚠️ 只能配 CSV / JSON 清单
+ *   · ASC C4     —— SMPTE ST 2114 内容标识，ASC MHL 的原生口径
+ */
+export const HASH_ALGORITHMS = [
+  'xxhash64',
+  'xxh3',
+  'xxh128',
+  'md5',
+  'sha1',
+  'sha256',
+  'asc-c4'
+] as const
 export type HashAlgorithm = (typeof HASH_ALGORITHMS)[number]
 
 export const HASH_ALGORITHM_LABELS: Record<HashAlgorithm, string> = {
   xxhash64: 'xxHash64',
+  xxh3: 'xxHash3',
+  xxh128: 'xxHash128',
   md5: 'MD5',
+  sha1: 'SHA-1',
+  sha256: 'SHA-256',
   'asc-c4': 'ASC C4 (SMPTE ST 2114)'
 }
 
@@ -22,13 +49,20 @@ export const HASH_ALGORITHM_LABELS: Record<HashAlgorithm, string> = {
  * 各算法输出的**字符串长度**。
  *
  * 注意这里不是"十六进制字符数"：
- *   · xxhash64 / md5 输出小写十六进制
+ *   · 除 ASC C4 外，其余都输出小写十六进制
  *   · ASC C4 输出的是 90 字符的 C4 标识（`c4` + 88 位 Base58），
  *     这是 SMPTE ST 2114 规定的标准文本形态，用在清单的 `<c4>` 元素里
+ *
+ * ⚠️ 改这里之前先看 `hashLooksValid()`：长度对不上就等于校验值形态非法，
+ * 而形态非法会被当成"读到坏数据"处理，不是"配置错了"。
  */
 export const HASH_VALUE_LENGTH: Record<HashAlgorithm, number> = {
   xxhash64: 16,
+  xxh3: 16,
+  xxh128: 32,
   md5: 32,
+  sha1: 40,
+  sha256: 64,
   'asc-c4': 90
 }
 
@@ -36,8 +70,62 @@ export const HASH_VALUE_LENGTH: Record<HashAlgorithm, number> = {
  * 清单格式
  * ------------------------------------------------------------------ */
 
-export const MANIFEST_FORMATS = ['asc-mhl-2.0', 'mhl-v1'] as const
+/**
+ * 清单格式。
+ *
+ *   · asc-mhl-2.0 —— 默认。影视行业事实标准，校验值 + 目录结构 + 作业信息
+ *   · mhl-v1      —— 传统 MHL，对接还在用旧格式的流程
+ *   · csv         —— 一张表，Excel / Numbers 直接打开。现场交付、跨部门核对最快
+ *   · json        —— 给脚本和自动化流程用，字段完整、有序、可直接解析
+ */
+export const MANIFEST_FORMATS = ['asc-mhl-2.0', 'mhl-v1', 'csv', 'json'] as const
 export type ManifestFormat = (typeof MANIFEST_FORMATS)[number]
+
+/**
+ * ASC MHL 2.0 官方 XSD 里**允许出现**的哈希元素名。
+ *
+ * 这张表是从官方 `ASCMHL.xsd` 里抄下来的（`<sequence>` 内，元素名与顺序
+ * 都不能改），测试会拿 XSD 校验生成物，所以它同时也是"能不能选"的判据。
+ *
+ * ⚠️ 表里**没有 sha256**，这是官方架构的事实、不是我们的取舍：
+ * ASC MHL 2.0 只定义了 c4 / md5 / sha1 / xxh128 / xxh3 / xxh64 六种。
+ * 硬把 sha256 写成 `<sha256>` 会生成一份 XSD 校验不过的清单 ——
+ * 交给别人时对方工具直接读不进来，而且**不会报错**，只会少一半条目。
+ * 所以选 SHA-256 时界面上会把 ASC MHL 禁掉并写明原因（见 supportsAlgorithm）。
+ */
+export const ASC_MHL_HASH_ELEMENTS: Partial<Record<HashAlgorithm, string>> = {
+  'asc-c4': 'c4',
+  md5: 'md5',
+  sha1: 'sha1',
+  xxh128: 'xxh128',
+  xxh3: 'xxh3',
+  xxhash64: 'xxh64'
+}
+
+/** MHL v1 用的元素名（旧格式，沿用各家实现里的写法）。 */
+export const MHL_V1_HASH_ELEMENTS: Partial<Record<HashAlgorithm, string>> = {
+  'asc-c4': 'c4',
+  md5: 'md5',
+  xxhash64: 'xxhash64'
+}
+
+/**
+ * 某个「算法 × 清单格式」的组合能不能用。
+ *
+ * 存在的意义是让"不能用的组合"变成一条**可查询的规则**，而不是散落在
+ * 界面里的 if。界面的下拉据此禁用 + 显示原因，主进程据此兜底拒绝。
+ */
+export function supportsAlgorithm(format: ManifestFormat, algorithm: HashAlgorithm): boolean {
+  if (format === 'asc-mhl-2.0') return ASC_MHL_HASH_ELEMENTS[algorithm] !== undefined
+  if (format === 'mhl-v1') return MHL_V1_HASH_ELEMENTS[algorithm] !== undefined
+  // CSV / JSON 是我们自己定义的形态，七种算法都写得进去
+  return true
+}
+
+/** 某个格式能用的全部算法（界面据此过滤下拉项）。 */
+export function algorithmsForFormat(format: ManifestFormat): HashAlgorithm[] {
+  return HASH_ALGORITHMS.filter((algorithm) => supportsAlgorithm(format, algorithm))
+}
 
 /* ------------------------------------------------------------------ *
  * 源盘
@@ -377,6 +465,14 @@ export interface JobProgress {
   filesFailed: number
   totalBytes: number
   bytesDone: number
+  /**
+   * 总进度（0–100），**已包含目标盘重读校验的工作量**。
+   *
+   * 界面画进度条只用它，不要再拿 bytesDone/totalBytes 自己算 ——
+   * 那样算出来的口径漏掉了校验阶段，收尾时进度条会停在接近 100% 不动，
+   * 看起来像卡死。口径本身在 `shared/progress.ts`，主进程算一次。
+   */
+  overallPercent: number
   bytesPerSecond: number
   /** 当前正在处理的文件（相对路径）。并发时是其中任意一个，仅作兼容保留 */
   currentFile: string | null
@@ -548,7 +644,18 @@ export interface LastJobDraft {
   projectName: string
 }
 
-export const THEMES = ['qinghe', 'wuguang', 'cheese'] as const
+/**
+ * 主题 id 列表。**数组顺序就是设置页里卡片的排列顺序。**
+ *
+ * 加一套主题要同时动三处，漏一处就出问题：
+ *   1. 这里（类型与顺序）—— 漏了则设置页根本不出现这张卡片
+ *   2. `styles/tokens.css` 里 light / dark 两个块 —— 漏了则整套变量取不到值，
+ *      界面会变成一片无样式的透明块，看起来像应用崩了（而且不报错）
+ *   3. `i18n/messages.ts` 的中英两份主题名 —— 漏了则编译不过（`en` 由 `zhCN` 推导）
+ *
+ * id 只用于 CSS 选择器、设置存储与冒烟钩子，界面上不显示；显示的是翻译后的名字。
+ */
+export const THEMES = ['qinghe', 'wuguang', 'cheese', 'iris'] as const
 export type ThemeId = (typeof THEMES)[number]
 
 export const THEME_MODES = ['system', 'light', 'dark'] as const

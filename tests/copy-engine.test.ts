@@ -868,6 +868,49 @@ describe('中间态推送', () => {
     expect(last?.activeFiles).toEqual([])
     expect(last?.currentFile).toBeNull()
   })
+
+  it('总进度含校验阶段：单调不减、有中间态、收尾 100%', async () => {
+    const chunk = 4 * 1024 * 1024
+    const source = await makeSource({
+      'a.bin': Buffer.alloc(chunk, 1),
+      'b.bin': Buffer.alloc(chunk, 2),
+      'c.bin': Buffer.alloc(chunk, 3)
+    })
+    // 两个目标 → 计划工作量是源字节的 3 倍（读 1 遍 + 每个目标各重读 1 遍）
+    const job = await seedJob(source, await makeTargets(2))
+
+    const snapshots: JobProgress[] = []
+    const engine = buildEngine(
+      job,
+      { onProgress: (progress) => snapshots.push(progress) },
+      { progressThrottleMs: 0 }
+    )
+    await engine.run()
+
+    expect(snapshots.length).toBeGreaterThan(0)
+    const values = snapshots.map((item) => item.overallPercent)
+
+    // 1) 单调不减。进度条往后退比数字不准更像"软件坏了"。
+    for (let i = 1; i < values.length; i++) {
+      expect(
+        values[i] as number,
+        `第 ${i} 拍出现倒退：${values[i - 1]}% → ${values[i]}%`
+      ).toBeGreaterThanOrEqual(values[i - 1] as number)
+    }
+
+    // 2) 全程都是合法百分数（NaN 会让进度条宽度被 CSS 丢掉，表现为"条不见了"）
+    for (const value of values) {
+      expect(Number.isFinite(value)).toBe(true)
+      expect(value).toBeGreaterThanOrEqual(0)
+      expect(value).toBeLessThanOrEqual(100)
+    }
+
+    // 3) 有中间态 —— 不是 0 直接跳 100
+    expect(values.some((value) => value > 0 && value < 100)).toBe(true)
+
+    // 4) 收尾必须是 100%，否则用户会一直等那最后一格
+    expect(values.at(-1)).toBe(100)
+  })
 })
 
 /**

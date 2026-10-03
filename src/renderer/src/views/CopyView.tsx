@@ -832,7 +832,19 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         </span>
       </div>
 
-      {busy && <Progress value={40} />}
+      {/*
+        这里曾经是 <Progress value={40} />。
+        创建任务时要先把源盘扫一遍统计文件数与总字节，一张满卡可能是好几分钟 ——
+        那是一段**时长完全未知**的工作，画一个固定 40% 的条等于谎报进度：
+        它一动不动地挂在那儿，反而让人以为程序卡死了。
+        改成不定态（来回走的条）+ 一句说明，只表达"在动、还没完"。
+      */}
+      {busy && (
+        <div>
+          <Progress indeterminate />
+          <span className="hint faint">{t('copy.creating')}</span>
+        </div>
+      )}
     </div>
   )
 }

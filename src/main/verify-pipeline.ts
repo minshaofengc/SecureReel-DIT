@@ -17,14 +17,20 @@ import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CopyJob, MediaProbe, ProjectInfo } from '@shared/types'
-import { DEFAULT_SETTINGS } from '@shared/types'
+import {
+  DEFAULT_SETTINGS,
+  HASH_ALGORITHMS,
+  HASH_ALGORITHM_LABELS
+} from '@shared/types'
 import { todayLocalDate } from '@shared/format'
 import { buildAppPaths } from './paths'
 import { Logger } from './logger'
 import { Store } from './db/store'
-import { CopyEngine } from './core/copy-engine'
+import { CopyEngine, hashFileAt } from './core/copy-engine'
+import { hashLooksValid } from './hashing'
 import { PauseGate } from './core/concurrency'
 import { ReportStore } from './reports/report-store'
+import { writeCsvManifest, writeJsonManifest } from './reports/manifests'
 import { renderHtmlToPdf } from './reports/pdf'
 import { FfprobeRunner } from './media/probe'
 import { walkFiles } from './fs-utils'
@@ -542,6 +548,86 @@ async function main(): Promise<number> {
         `${mhl}（${xml.length} 字节）`
       )
       await writeFile(join(root, `manifest-${label}.path`), join(ascmhlDir, mhl), 'utf8')
+    }
+
+    /* ---------- 7b. 新增的算法与清单格式 ---------- */
+    process.stdout.write('\n[7b] 七种校验算法与 CSV / JSON 清单\n')
+    {
+      /*
+       * 七种算法都要在**真实的 Electron 主进程**里各跑一遍。
+       *
+       * 单元测试跑在纯 Node 里，而 xxHash 三兄弟依赖 WASM 初始化、
+       * SHA 系走 node:crypto —— "在 Node 里过了"不等于"在 Electron 里能跑"。
+       * 这一节就是那道缝上的检查。
+       */
+      const sample = join(source, walk.files[0]?.relPath ?? '')
+      for (const algorithm of HASH_ALGORITHMS) {
+        const label = HASH_ALGORITHM_LABELS[algorithm]
+        try {
+          const value = await hashFileAt(sample, algorithm)
+          check(
+            `${label} 能算出形态合法的校验值`,
+            hashLooksValid(algorithm, value),
+            `${value.slice(0, 20)}…（${value.length} 字符）`
+          )
+        } catch (error) {
+          check(
+            `${label} 能算出校验值`,
+            false,
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      }
+
+      // CSV / JSON：与 ASC MHL 同一批文件，换格式再出一遍
+      const extraDir = join(root, 'extra-manifests')
+      const context = {
+        job: finalJob,
+        project,
+        sourceLabel: 'A002R2EC',
+        revision: 'R001',
+        hostname: 'verify.local',
+        toolName: 'SecureReel DIT',
+        toolVersion: '1.0.0',
+        now: new Date(),
+        targetLabels: finalJob.targets.map((target) => target.label)
+      }
+
+      const csv = await writeCsvManifest(extraDir, context, store.iterateFiles(finalJob.id))
+      const csvText = await readFile(csv.path, 'utf8')
+      // ⚠️ 比对表头之前必须先把 BOM 剥掉，否则第一格永远多一个 \uFEFF 比不中
+      const csvLines = csvText.replace(/^\uFEFF/, '').split('\r\n')
+      check(
+        'CSV 清单带 UTF-8 BOM 与固定表头',
+        csvText.startsWith('\uFEFF') &&
+          csvLines[0] === 'path,size_bytes,algorithm,hash,verified_targets',
+        `${csv.entries} 行数据`
+      )
+      check(
+        'CSV 每行都是 5 列',
+        csvLines.slice(1, -1).every((line) => line.split(',').length === 5),
+        `共 ${csvLines.length} 行（含表头与收尾空行）`
+      )
+
+      const json = await writeJsonManifest(extraDir, context, store.iterateFiles(finalJob.id))
+      const jsonText = await readFile(json.path, 'utf8')
+      let jsonOk = false
+      let jsonDetail = '解析失败'
+      try {
+        const parsed = JSON.parse(jsonText) as {
+          format?: string
+          hashAlgorithm?: string
+          files?: unknown[]
+        }
+        jsonOk =
+          parsed.format === 'securereel-hashlist' &&
+          typeof parsed.hashAlgorithm === 'string' &&
+          parsed.files?.length === json.entries
+        jsonDetail = `${json.entries} 条 · ${jsonText.length} 字节`
+      } catch (error) {
+        jsonDetail = error instanceof Error ? error.message : String(error)
+      }
+      check('JSON 清单是合法 JSON，带作业上下文且条数一致', jsonOk, jsonDetail)
     }
 
     /* ---------- 8. 重跑：不可变性 ---------- */
