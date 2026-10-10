@@ -89,7 +89,14 @@ function Shell(): ReactNode {
     <div className="shell" data-view={viewMode}>
       <header className="topbar">
         <div className="topbar__brand">
-          <span className="topbar__mark" aria-hidden="true" />
+          {/*
+           * 顶栏品牌：只留软件名，不放图标。
+           *
+           * 2026-10-11 曾放过手绘「胶片盘」，又改回软件图标（绿底 #3D7A58）——
+           * boss 明确表示不想要那个绿色图标。顶栏这一格本来就窄，纯文字最干净，
+           * 也与 macOS 上「窗口左缘直接是标题」的观感一致。
+           * 真正的图标仍保留在 Dock / 安装包里（build/icon.svg），不在这里重复。
+           */}
           <span className="topbar__name">{t('app.name')}</span>
         </div>
 
@@ -100,6 +107,7 @@ function Shell(): ReactNode {
               type="button"
               className="seg"
               data-segment={item.segment}
+              data-page={item.pages[0]}
               aria-current={currentSegment === item.segment ? 'page' : undefined}
               onClick={() => navigate(item.pages[0] as Page)}
             >
@@ -123,6 +131,7 @@ function Shell(): ReactNode {
               key={tool}
               type="button"
               className="iconbtn"
+              data-page={tool}
               title={t(`nav.${tool}` as never)}
               aria-label={t(`nav.${tool}` as never)}
               aria-current={page === tool ? 'page' : undefined}
@@ -145,6 +154,7 @@ function Shell(): ReactNode {
               key={tab}
               type="button"
               className="subtab"
+              data-page={tab}
               aria-current={page === tab ? 'page' : undefined}
               onClick={() => navigate(tab)}
             >

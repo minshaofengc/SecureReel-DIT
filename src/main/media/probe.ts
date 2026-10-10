@@ -15,7 +15,7 @@
  *      报告里必须让人分得清 —— 预览图分辨率通常低于实际记录分辨率。
  */
 import { basename, join } from 'node:path'
-import { open, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import type { FrameSource, MediaProbe } from '@shared/types'
 import { resolveExecutable, runCommand } from '@main/exec'
 import { ensureDir, whichInPath } from '@main/fs-utils'
@@ -47,8 +47,19 @@ export interface MediaProbeRunner {
   readonly unavailableReason: string | null
   /** ffmpeg 是否可用（提取首帧需要它，除了内嵌预览那条路） */
   readonly frameToolAvailable: boolean
+  /**
+   * 已解析到的 ffmpeg 绝对路径（不可用时为 null）。
+   *
+   * 给代理生成复用：代理与首帧用的是**同一个** ffmpeg，没必要再解析一遍，
+   * 也免得两处解析结果不一致（一处随包、一处 PATH）。
+   */
+  readonly ffmpegExecutable: string | null
   /** 设置首帧输出目录（报告的 frames/ 子目录） */
   setFrameOutputDir(dir: string): void
+  /** 设置候选静帧输出目录（与首帧同目录） */
+  setStillFrameOutputDir(dir: string): void
+  /** 每条素材出几张候选静帧（0 = 不出） */
+  setStillFrameCount(count: number): void
   /** 重新探测工具位置（用户改了设置之后调用） */
   refresh(): Promise<void>
 }
@@ -163,11 +174,13 @@ function baseProbe(
     frameRate: null,
     firstFrame: null,
     lastFrame: null,
+    stillFrames: [],
     format: format.label,
     formatFamily: format.family,
     frameSource,
     vendorTool: format.vendorTool,
-    note: null
+    note: null,
+    proxy: null
   }
 }
 
@@ -206,6 +219,28 @@ function safeStem(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, '_')
 }
 
+/** 列出目录里的 `.jpg` 文件（排序后），读不到就返回空数组。 */
+async function listJpegs(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.jpg'))
+      .map((entry) => entry.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/** 尽力删除一个临时目录；失败不抛错。 */
+async function removeDir(dir: string): Promise<void> {
+  try {
+    await rm(dir, { recursive: true, force: true })
+  } catch {
+    /* 清不掉就留给系统，不影响结果 */
+  }
+}
+
 /**
  * 随包二进制在资源目录里的候选文件名，**按平台不同**。
  *
@@ -231,6 +266,15 @@ export class FfprobeRunner implements MediaProbeRunner {
   private ffprobePath: string | null = null
   private ffmpegPath: string | null = null
   private frameOutputDir: string | null = null
+  /**
+   * 候选静帧的输出目录。
+   *
+   * 默认与首尾帧同目录（报告 frames/），但留独立字段 —— 将来若想让静帧
+   * 落到别处（例如单独一个"精选帧"目录）不必再改一轮接口。
+   */
+  private stillFrameOutputDir: string | null = null
+  /** 每条素材出几张候选静帧；0 = 不出（只保留原有首尾帧）。 */
+  private stillFrameCount = 0
 
   constructor(
     private readonly deps: {
@@ -250,6 +294,10 @@ export class FfprobeRunner implements MediaProbeRunner {
     return this.ffmpegPath !== null
   }
 
+  get ffmpegExecutable(): string | null {
+    return this.ffmpegPath
+  }
+
   get unavailableReason(): string | null {
     if (this.ffprobePath !== null) return null
     return (
@@ -264,6 +312,14 @@ export class FfprobeRunner implements MediaProbeRunner {
 
   setFrameOutputDir(dir: string): void {
     this.frameOutputDir = dir
+  }
+
+  setStillFrameOutputDir(dir: string): void {
+    this.stillFrameOutputDir = dir
+  }
+
+  setStillFrameCount(count: number): void {
+    this.stillFrameCount = Math.max(0, Math.floor(count))
   }
 
   async refresh(): Promise<void> {
@@ -399,6 +455,29 @@ export class FfprobeRunner implements MediaProbeRunner {
     // ---- 4. 尾帧只在能真解码时才提 ----
     if (wantsFrame && decodable && this.ffmpegPath !== null) {
       probe.lastFrame = await this.extractFrameWithFfmpeg(absPath, 'last')
+    }
+
+    /*
+     * ---- 5. 候选静帧（按设置）----
+     *
+     * 只在"能真解码 + 是视频"时做：私有格式解不出画面，硬做只会浪费一次
+     * 注定失败的尝试。与首尾帧一样，失败静默降级 —— 静帧是加分项，
+     * 不是拷贝与校验的证据，不该影响任务结论。
+     */
+    if (
+      wantsFrame &&
+      videoLike &&
+      decodable &&
+      this.stillFrameCount > 0 &&
+      this.stillFrameOutputDir !== null &&
+      this.ffmpegPath !== null
+    ) {
+      probe.stillFrames = await this.extractCandidateStills(
+        absPath,
+        this.stillFrameOutputDir,
+        this.stillFrameCount,
+        options.signal
+      )
     }
 
     probe.note = buildNote(probe, format, wantsFrame, videoLike)
@@ -547,6 +626,154 @@ export class FfprobeRunner implements MediaProbeRunner {
     }
 
     return fileName
+  }
+
+  /* ---------------------------------------------------------------- *
+   * 候选静帧：均匀取样 + 本地清晰度打分
+   * ---------------------------------------------------------------- */
+
+  /**
+   * 抽出 N 张候选静帧。
+   *
+   * ## 选帧策略（本地启发式，无任何模型）
+   *
+   *   1. 按固定时间间隔在片子里均匀取 **候选**（比目标张数多一倍），
+   *      保证不会全挤在开头；
+   *   2. 对每张候选用 ffmpeg 的 `blurdetect` 滤镜算**模糊度**
+   *      （`lavfi.blur`，越小越清晰），再按清晰度排序；
+   *   3. 取最清晰的前 N 张落盘。
+   *
+   * ## 为什么不用 AI 判闭眼 / 表情
+   *
+   * 本项目是**零网络、零遥测、纯离线**的工具，不随包分发任何模型权重。
+   * 闭眼 / 表情 / 构图属于语义判断，本地启发式做不到，也不假装能做 ——
+   * 这里只保证"不糊"，剩下的挑选交给使用者，符合"3-4 张供挑选"的初衷。
+   *
+   * 全程**不抛错**：任何一张取不到都只是少一张，绝不影响哈希报告。
+   */
+  private async extractCandidateStills(
+    absPath: string,
+    outputDir: string,
+    count: number,
+    signal?: AbortSignal
+  ): Promise<string[]> {
+    if (this.ffmpegPath === null || count <= 0) return []
+    if (signal?.aborted === true) return []
+
+    // 候选数：比目标多一倍（至少多 2），给打分留出选择余地
+    const candidateCount = Math.min(12, Math.max(count + 2, count * 2))
+
+    // 用 fps 均匀采样：先求出时长，再算等效采样率；拿不到时长就退到按帧数抽。
+    const duration = await this.probeDurationSeconds(absPath, signal)
+    const sampleFps =
+      duration !== null && duration > 0 ? candidateCount / duration : null
+
+    const tmpDir = join(outputDir, '.stills-tmp')
+    try {
+      await ensureDir(tmpDir)
+    } catch {
+      return []
+    }
+
+    // 1) 抽出候选帧（小尺寸即可，打分只需相对清晰度）
+    const candidatePattern = join(tmpDir, 'cand-%02d.jpg')
+    const selectFilter =
+      sampleFps !== null
+        ? `fps=${sampleFps.toFixed(6)},scale=480:-2`
+        : `select='not(mod(n\\,${Math.max(1, Math.round(30 / candidateCount))}))',scale=480:-2`
+
+    const extract = await runCommand(
+      this.ffmpegPath,
+      [
+        '-nostdin',
+        '-y',
+        '-i',
+        absPath,
+        '-frames:v',
+        String(candidateCount),
+        '-vf',
+        selectFilter,
+        '-q:v',
+        '3',
+        candidatePattern
+      ],
+      { timeoutMs: 120_000, ...(signal === undefined ? {} : { signal }) }
+    )
+    if (extract.spawnError !== null || extract.timedOut || extract.code !== 0) return []
+
+    const candidates = await listJpegs(tmpDir)
+    if (candidates.length === 0) return []
+
+    // 2) 逐个算模糊度（越小越清晰）
+    const scored: { file: string; blur: number }[] = []
+    for (const file of candidates) {
+      const blur = await this.measureBlur(join(tmpDir, file), signal)
+      scored.push({ file, blur })
+    }
+
+    // 3) 取最清晰的前 N 张，复制到最终的 frames/ 目录并改成稳定的文件名
+    scored.sort((a, b) => a.blur - b.blur)
+    const picked = scored.slice(0, count)
+
+    const stem = safeStem(basename(absPath))
+    const result: string[] = []
+    for (let i = 0; i < picked.length; i++) {
+      const entry = picked[i] as { file: string; blur: number }
+      const destName = `${stem}-still${i + 1}.jpg`
+      try {
+        await copyFile(join(tmpDir, entry.file), join(outputDir, destName))
+        result.push(destName)
+      } catch {
+        /* 单张复制失败就跳过，不影响其余 */
+      }
+    }
+
+    // 清掉临时目录（尽力而为，失败不影响结果）
+    await removeDir(tmpDir)
+
+    return result
+  }
+
+  /**
+   * 用 `blurdetect` + `metadata=print` 读出某一帧的模糊度。
+   *
+   * 返回 `lavfi.blur` 的值（0 = 最清晰，越大越糊）；取不到时返回 `Infinity`，
+   * 这样这一帧会在排序里垫底，等效于"宁可不要也不要一张读不出清晰度的图"。
+   */
+  private async measureBlur(imageAbsPath: string, signal?: AbortSignal): Promise<number> {
+    if (this.ffmpegPath === null) return Number.POSITIVE_INFINITY
+
+    const result = await runCommand(
+      this.ffmpegPath,
+      [
+        '-nostdin',
+        '-i',
+        imageAbsPath,
+        '-vf',
+        'blurdetect=block_pct=80,metadata=print:file=-',
+        '-f',
+        'null',
+        '-'
+      ],
+      { timeoutMs: 30_000, ...(signal === undefined ? {} : { signal }) }
+    )
+    if (result.spawnError !== null || result.timedOut) return Number.POSITIVE_INFINITY
+
+    // metadata=print 的输出形如： `lavfi.blur=0.123`
+    const match = /lavfi\.blur=([0-9.]+)/.exec(result.stdout)
+    if (match === null) return Number.POSITIVE_INFINITY
+    const value = Number.parseFloat(match[1] as string)
+    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY
+  }
+
+  /** 探测时长（秒）；拿不到返回 null。 */
+  private async probeDurationSeconds(absPath: string, signal?: AbortSignal): Promise<number | null> {
+    const parsed = await this.runFfprobe(absPath, signal)
+    if (parsed === null) return null
+    const raw = parsed.format?.duration ?? parsed.video?.duration
+    if (raw === undefined) return null
+    const value = Number(raw)
+    return Number.isFinite(value) && value > 0 ? value : null
   }
 }
 

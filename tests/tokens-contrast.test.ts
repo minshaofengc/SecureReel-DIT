@@ -63,7 +63,7 @@ function resolve(skin: string, mode: 'light' | 'dark'): Map<string, string> {
   return merged
 }
 
-const SKINS = ['darkroom', 'steel', 'mono', 'sand', 'indigo'] as const
+const SKINS = ['mono', 'steel', 'sand'] as const
 const MODES = ['light', 'dark'] as const
 
 /*
@@ -71,7 +71,7 @@ const MODES = ['light', 'dark'] as const
  *
  * 不在这个名单里的（--radius-*、--sp-*、--fs-*、--lead-* 等）要么与配色无关，
  * 要么本身写成 var() 引用、会跟着走，不需要每套重写。
- * 加新皮肤时：tokens.css 里那两块必须把这 41 个全写上。
+ * 加新皮肤时：tokens.css 里那两块必须把这 42 个全写上。
  */
 const REQUIRED_PER_SKIN = [
   'bg',
@@ -164,10 +164,10 @@ describe('配色令牌', () => {
     for (const mode of MODES) {
       const where = `${skin} / ${mode}`
 
-      it(`${where}：41 个色彩令牌全部配齐（漏配会沿用默认皮肤，看起来像没生效）`, () => {
+      it(`${where}：42 个色彩令牌全部配齐（漏配会沿用默认皮肤，看起来像没生效）`, () => {
         const selector = `html[data-skin='${skin}'][data-mode='${mode}']`
-        // 默认皮肤走的就是 [data-mode] 那两块，没有覆盖块
-        if (skin === 'darkroom') {
+        // 默认皮肤（mono）走的就是 [data-mode] 那两块，没有覆盖块
+        if (skin === 'mono') {
           expect(BLOCKS.has(selector)).toBe(false)
           return
         }

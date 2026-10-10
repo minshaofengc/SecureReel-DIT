@@ -38,6 +38,11 @@ function makeJob(id = 'job_abcdef1234'): CopyJob {
     hashAlgorithm: 'xxhash64',
     manifestFormat: 'asc-mhl-2.0',
     verifyAfterWrite: true,
+    proxyEnabled: false,
+    proxyResolution: '1080p',
+    proxyCodec: 'prores',
+    proxyProfile: '422-proxy',
+    proxyLutPath: null,
     state: 'draft',
     totalFiles: 3,
     totalBytes: 3000,
@@ -214,6 +219,85 @@ describe('文件 × 目标结果', () => {
     expect(file?.results).toHaveLength(2)
     expect(file?.results.find((item) => item.targetId === 'tgt_1')?.hashMatch).toBe(true)
     expect(file?.results.find((item) => item.targetId === 'tgt_2')?.hashMatch).toBe(false)
+  })
+})
+
+describe('重试失败项', () => {
+  it('只把 failed 放回 pending，并重算任务级/目标级计数器', () => {
+    const job = makeJob()
+    store.insertJob(job)
+    store.upsertFiles(job.id, [
+      { relPath: 'ok.mov', sizeBytes: 100 },
+      { relPath: 'bad-a.mov', sizeBytes: 200 },
+      { relPath: 'bad-b.mov', sizeBytes: 300 },
+      { relPath: 'todo.mov', sizeBytes: 400 }
+    ])
+    store.updateFile(job.id, 'ok.mov', { state: 'verified', bytesCopied: 100 })
+    store.updateFile(job.id, 'bad-a.mov', { state: 'failed', bytesCopied: 200, error: '校验不一致' })
+    store.updateFile(job.id, 'bad-b.mov', { state: 'failed', error: '目标不可用' })
+
+    const idOf = (relPath: string): number => Number(store.getFileRow(job.id, relPath)?.id)
+    const result = (
+      targetId: string,
+      state: 'verified' | 'failed',
+      bytesCopied: number
+    ): FileTargetResult => ({
+      targetId,
+      state,
+      hash: state === 'verified' ? 'aa' : 'bb',
+      hashMatch: state === 'verified',
+      bytesCopied,
+      error: state === 'verified' ? null : '不一致'
+    })
+    store.saveFileResult(idOf('ok.mov'), job.id, result('tgt_1', 'verified', 100))
+    store.saveFileResult(idOf('ok.mov'), job.id, result('tgt_2', 'verified', 100))
+    store.saveFileResult(idOf('bad-a.mov'), job.id, result('tgt_1', 'failed', 200))
+    store.saveFileResult(idOf('bad-a.mov'), job.id, result('tgt_2', 'verified', 200))
+    store.saveFileResult(idOf('bad-b.mov'), job.id, result('tgt_1', 'failed', 0))
+
+    // 上一轮结束时任务计数器里还带着两个失败
+    store.updateJob(job.id, {
+      state: 'completed-with-errors',
+      filesDone: 1,
+      filesFailed: 2,
+      bytesDone: 700
+    })
+
+    const reset = store.resetFailedFilesForRetry(job.id)
+    expect(reset).toBe(2)
+
+    const files = store.listFiles(job.id, 10, 0)
+    expect(files.find((file) => file.relPath === 'ok.mov')?.state).toBe('verified')
+    expect(files.find((file) => file.relPath === 'todo.mov')?.state).toBe('pending')
+    expect(files.find((file) => file.relPath === 'bad-a.mov')?.state).toBe('pending')
+    expect(files.find((file) => file.relPath === 'bad-a.mov')?.error).toBeNull()
+    expect(files.find((file) => file.relPath === 'bad-b.mov')?.state).toBe('pending')
+
+    // 重算后只剩已验证的那一个；失败项被释放，字节数不重复
+    const loaded = store.getJob(job.id)
+    expect(loaded?.filesDone).toBe(1)
+    expect(loaded?.filesFailed).toBe(0)
+    expect(loaded?.bytesDone).toBe(100)
+
+    // 目标级计数同步重算：被重置文件的结果行已删除
+    const targets = store.listTargetProgress(job.id)
+    expect(targets.find((item) => item.targetId === 'tgt_1')?.filesDone).toBe(1)
+    expect(targets.find((item) => item.targetId === 'tgt_1')?.filesFailed).toBe(0)
+    expect(targets.find((item) => item.targetId === 'tgt_2')?.filesDone).toBe(1)
+    expect(targets.find((item) => item.targetId === 'tgt_2')?.filesFailed).toBe(0)
+  })
+
+  it('没有失败项时返回 0，不改动任何状态', () => {
+    const job = makeJob()
+    store.insertJob(job)
+    store.upsertFiles(job.id, [{ relPath: 'ok.mov', sizeBytes: 10 }])
+    store.updateFile(job.id, 'ok.mov', { state: 'verified', bytesCopied: 10 })
+    store.updateJob(job.id, { filesDone: 1, bytesDone: 10 })
+
+    expect(store.resetFailedFilesForRetry(job.id)).toBe(0)
+    expect(store.getJob(job.id)?.filesDone).toBe(1)
+    expect(store.getJob(job.id)?.bytesDone).toBe(10)
+    expect(store.listFiles(job.id, 10, 0)[0]?.state).toBe('verified')
   })
 })
 

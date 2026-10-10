@@ -40,7 +40,11 @@ beforeEach(async () => {
     paths,
     reportStore,
     // generateReports 用不到这两个；真跑引擎的那条用例另见 start() 路径
-    probeRunner: { setFrameOutputDir: () => undefined } as never,
+    probeRunner: {
+      setFrameOutputDir: () => undefined,
+      setStillFrameOutputDir: () => undefined,
+      setStillFrameCount: () => undefined
+    } as never,
     hde: {} as never,
     getSettings: () => DEFAULT_SETTINGS,
     emit: (event) => {
@@ -77,6 +81,11 @@ async function seedFinishedJob(
     hashAlgorithm: 'xxhash64',
     manifestFormat: 'asc-mhl-2.0',
     verifyAfterWrite: true,
+    proxyEnabled: false,
+    proxyResolution: '1080p',
+    proxyCodec: 'prores',
+    proxyProfile: '422-proxy',
+    proxyLutPath: null,
     state,
     totalFiles: 2,
     totalBytes: 200,
@@ -209,6 +218,11 @@ describe('任务运行中不许生成报告', () => {
       hashAlgorithm: 'xxhash64',
       manifestFormat: 'asc-mhl-2.0',
       verifyAfterWrite: true,
+      proxyEnabled: false,
+      proxyResolution: '1080p',
+      proxyCodec: 'prores',
+      proxyProfile: '422-proxy',
+      proxyLutPath: null,
       state: 'draft',
       totalFiles: 2,
       totalBytes: 2048,

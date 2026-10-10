@@ -429,6 +429,24 @@
   white-space: nowrap;
 }
 
+/*
+ * 写入速度波形图。
+ *
+ * 折线本身由 QueueView 手绘（零依赖），这里只管外框与配色。
+ * 线色走 --accent，跟着皮肤走，不写死。
+ */
+.spark {
+  padding: 0 2px 12px;
+}
+
+.spark__svg {
+  display: block;
+  width: 100%;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
 /* 右栏：参数、归属、元数据。背景不做卡片，靠分组标题与线分开。 */
 .monitor__meta .pane-h {
   justify-content: flex-start;

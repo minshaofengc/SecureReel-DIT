@@ -5,11 +5,22 @@ import type {
   ManifestFormat,
   ProjectDetails,
   ProjectDraft,
+  ProxyCodec,
+  ProxyProfile,
+  ProxyResolution,
   ScanResult,
   VolumeKind
 } from '@shared/types'
-import { HASH_ALGORITHMS, HASH_ALGORITHM_LABELS, MANIFEST_FORMATS, MAX_COPY_NOTES_LENGTH } from '@shared/types'
-import { humanBytes, todayLocalDate } from '@shared/format'
+import {
+  HASH_ALGORITHMS,
+  HASH_ALGORITHM_LABELS,
+  MANIFEST_FORMATS,
+  MAX_COPY_NOTES_LENGTH,
+  PROXY_CODECS,
+  PROXY_RESOLUTIONS
+} from '@shared/types'
+import type { EncodersInfo } from '@shared/ipc'
+import { countExtension, humanBytes, todayLocalDate } from '@shared/format'
 import {
   emptyProjectDetails,
   emptyProjectDraft,
@@ -17,7 +28,7 @@ import {
   nextAutoShootDay,
   normalizeProjectDetails
 } from '@shared/project'
-import { BlockGrid, Card, Field, LeadBlock, Note, PageHead, PathPicker, Progress, Toggle } from '../components/ui'
+import { Card, Field, LeadBlock, Note, PageHead, PathPicker, Progress, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
 import { PAGE_INDEX } from '../nav'
@@ -107,7 +118,53 @@ export function CopyView(): ReactNode {
   const [newParentOpen, setNewParentOpen] = useState(false)
   const [newParentName, setNewParentName] = useState('')
 
+  /*
+   * 代理选项 —— **每任务**（初值取自全局设置，提交时作为任务字段传出）。
+   *
+   * 与 hashAlgorithm/manifestFormat 的区别：那两个是"改一次以后都这样"的全局偏好，
+   * 而"这次要不要出代理、出多重、用什么编"是**这一次拷贝**的事 —— 同一台机器上，
+   * 给剪辑交片和纯备份是两种活。所以照 verifyAfterWrite 的模式做局部 state。
+   */
+  const [proxyOn, setProxyOn] = useState(settings.proxyEnabled)
+  const [proxyResolution, setProxyResolution] = useState<ProxyResolution>(settings.proxyResolution)
+  const [proxyCodec, setProxyCodec] = useState<ProxyCodec>(settings.proxyCodec)
+  const [proxyProfile, setProxyProfile] = useState<ProxyProfile>(settings.proxyProfile)
+  /** 本次任务要套的 LUT（.cube 绝对路径）；'' = 不套 */
+  const [proxyLutPath, setProxyLutPath] = useState(settings.proxyLutPath ?? '')
+
+  /** 本机可用的编码器（决定 H.264/H.265 能不能选）。null = 还在探测 */
+  const [encoders, setEncoders] = useState<EncodersInfo | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const info = await unwrap(window.securereel.media.encoders())
+        if (alive) setEncoders(info)
+      } catch {
+        // 探测失败就当作"只有 ProRes 可用"，不挡用户出 ProRes
+        if (alive) setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const requiredBytes = scan?.totalBytes ?? null
+
+  /*
+   * 来源里有没有佳能 Cinema RAW Light（.CRM）。
+   *
+   * 为什么要专门提示：这类素材**能拷、能校验、能读元数据，但出不了画面** ——
+   * ffmpeg 没有 CRAW 解码器，而且文件里也没有内嵌预览图（.R3D/.BRAW 那种退路它没有）。
+   * 用户开了"首帧提取"或"代理"却在这批素材上拿不到图，会以为软件坏了。
+   * 提前在选源这一步就说清楚，并指一条明确的路：先用佳能官方工具转码再拷。
+   *
+   * 判定只用 scan 里已有的后缀直方图（`extensions.ext` 一律小写），
+   * 不需要任何主进程改动。
+   */
+  const crmCount = scan === null ? 0 : countExtension(scan.extensions, 'crm')
 
   // 首次进入拷贝页时准备好表单。
   // 只做一次：这些状态在切页面回来后不该被重新覆盖。
@@ -405,6 +462,13 @@ export function CopyView(): ReactNode {
             hashAlgorithm: settings.hashAlgorithm,
             manifestFormat: settings.manifestFormat,
             verifyAfterWrite: verify,
+            // 代理是**每任务**的：把这次选的三个值带进任务记录。
+            proxyEnabled: proxyOn,
+            proxyResolution,
+            proxyCodec,
+            proxyProfile,
+            // 空串 = 不套 LUT（主进程按 null 处理）
+            proxyLutPath: proxyLutPath.trim() === '' ? null : proxyLutPath.trim(),
             parentProjectId: parentId,
             ...(draft === null ? {} : { project: draft })
           })
@@ -442,6 +506,11 @@ export function CopyView(): ReactNode {
       jobName,
       navigate,
       parentId,
+      proxyCodec,
+      proxyLutPath,
+      proxyOn,
+      proxyProfile,
+      proxyResolution,
       pushToast,
       refreshJobs,
       refreshParents,
@@ -483,14 +552,63 @@ export function CopyView(): ReactNode {
     [parents, t]
   )
 
+  /*
+   * 清单格式选项。
+   *
+   * ⚠️ 曾经这里是 `isAsc ? 'manifest.asc-mhl-2.0' : 'manifest.mhl-v1'` ——
+   * 只分了两支，而 MANIFEST_FORMATS 有四种，于是 **CSV 与 JSON 都显示成「MHL v1」**，
+   * 下拉里出现两个一模一样的「MHL v1」，看着就像重复了。改为按格式名逐一取标签。
+   */
   const manifestOptions = useMemo<ComboOption<ManifestFormat>[]>(
+    () => MANIFEST_FORMATS.map((format) => ({ value: format, label: t(`manifest.${format}` as never) })),
+    [t]
+  )
+
+  const proxyResolutionOptions = useMemo<ComboOption<ProxyResolution>[]>(
     () =>
-      MANIFEST_FORMATS.map((format) => ({
-        value: format,
-        label: t(format === 'asc-mhl-2.0' ? 'manifest.asc-mhl-2.0' : 'manifest.mhl-v1')
+      PROXY_RESOLUTIONS.map((resolution) => ({
+        value: resolution,
+        label: t(`proxy.res.${resolution}` as never)
       })),
     [t]
   )
+
+  const proxyProfileOptions = useMemo<ComboOption<ProxyProfile>[]>(
+    () => [
+      { value: '422-proxy', label: t('settings.proxyProfileProx') },
+      { value: '422-lt', label: t('settings.proxyProfileLt') },
+      { value: '422', label: t('settings.proxyProfile422') },
+      { value: '422-hq', label: t('settings.proxyProfileHq') }
+    ],
+    [t]
+  )
+
+  /*
+   * 编码选项。本机不可用的（典型：Windows 上没有可用的 H.265 硬件编码器）
+   * 标成 disabled —— 让用户看得见这个选项、也知道为什么选不了，
+   * 比"从列表里凭空消失"好理解。
+   */
+  const proxyCodecOptions = useMemo<ComboOption<ProxyCodec>[]>(() => {
+    const h264Ok = encoders === null ? true : encoders.h264
+    const h265Ok = encoders === null ? true : encoders.h265
+    const available: Record<ProxyCodec, boolean> = { prores: true, h264: h264Ok, h265: h265Ok }
+    return PROXY_CODECS.map((codec) => {
+      const base = t(`proxy.codec.${codec}` as never)
+      return {
+        value: codec,
+        label: available[codec] ? base : `${base}（${t('proxy.codecUnavailable')}）`,
+        disabled: !available[codec]
+      }
+    })
+  }, [t, encoders])
+
+  // 探测结果回来后，若当前选中的编码其实不可用，自动退回 ProRes ——
+  // 否则用户会带着一个选不了的值去创建任务。
+  useEffect(() => {
+    if (encoders === null) return
+    if (proxyCodec === 'h264' && !encoders.h264) setProxyCodec('prores')
+    if (proxyCodec === 'h265' && !encoders.h265) setProxyCodec('prores')
+  }, [encoders, proxyCodec])
 
   return (
     <div className="page">
@@ -550,6 +668,12 @@ export function CopyView(): ReactNode {
 
             {scan.kind === 'hde-vfs' && <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>}
 
+            {/*
+              佳能 Cinema RAW Light：能拷能校验，但出不了画面。
+              开首帧/代理却拿不到图时，这条提示就是"为什么"的答案 + 出路。
+            */}
+            {crmCount > 0 && <Note tone="warn">{t('copy.crmNotice')}</Note>}
+
             {scan.warnings.length > 0 && (
               <Note tone="warn">
                 <strong>{t('copy.scanWarnings')}</strong>
@@ -584,8 +708,7 @@ export function CopyView(): ReactNode {
         )}
       </LeadBlock>
 
-      <BlockGrid>
-      <Card title={`② ${t('copy.parentSection')}`} hint={t('copy.parentHintTitle')}>
+      <Card title={t('copy.parentSection')} hint={t('copy.parentHintTitle')}>
         <div className="path-row">
           <SelectBox<string>
             value={parentId ?? ''}
@@ -646,21 +769,6 @@ export function CopyView(): ReactNode {
         </div>
       </Card>
 
-      <Card title={`③ ${t('copy.modeTitle')}`}>
-        <label className="row-actions" style={{ cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={verifyOnlyMode}
-            onChange={(event) => setVerifyOnlyMode(event.target.checked)}
-          />
-          <span>{t('copy.verifyOnly')}</span>
-        </label>
-        <div className="hint faint" style={{ marginTop: 8 }}>
-          {t('copy.verifyOnlyHint')}
-        </div>
-      </Card>
-      </BlockGrid>
-
       <Card
         title={t('copy.projectInfo')}
         hint={t('copy.projectHint')}
@@ -697,6 +805,16 @@ export function CopyView(): ReactNode {
               value={draft}
               disabled={busy}
               sections={['basic', 'lenses', 'crew', 'notes']}
+              /*
+               * 已选母项目时：
+               *   · 不再单独问「项目名称」—— 那时它就是母项目的名字，再问一遍是重复
+               *     （还会让报告出现「母项目：X / 项目：X」两行同名）。值仍保留在
+               *     draft 里，报告与清单照常写。
+               *   · 把镜头/人员/项目备注折叠起来 —— 它们刚被母项目整包带进来，
+               *     铺在眼前只会让表单又长又重复。想改点开就是。
+               */
+              showProjectName={selectedParent === null}
+              collapsedSections={selectedParent === null ? [] : ['lenses', 'crew', 'notes']}
               onChange={(next) => patchDraft(next)}
             />
 
@@ -710,9 +828,8 @@ export function CopyView(): ReactNode {
                   placeholder={t('copy.cardLabelAuto')}
                   onChange={(event) => patchDraft({ cardLabel: event.target.value })}
                 />
-                <span className="hint faint" style={{ fontSize: 11 }}>
-                  {t('copy.cardLabelAuto')}
-                </span>
+                {/* 同一句 copy.cardLabelAuto 曾经 placeholder 与常驻 hint 各画一遍，
+                    删掉常驻那份 —— 和 copy.verifyHint 的去重是同一个道理。 */}
               </label>
 
               <label className="field">
@@ -823,10 +940,88 @@ export function CopyView(): ReactNode {
         </Field>
 
         <Toggle checked={verify} onChange={setVerify} label={t('copy.verifyAfterWrite')} />
-        <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>
-          {t('copy.verifyHint')}
-        </div>
+        {/* 同一句说明曾经渲染两遍（常驻 .faint + 关掉校验时的警告），
+            划掉了常驻那份 —— 只在"真的关了校验、需要提醒"时才出现。 */}
         {!verify && <Note tone="warn">{t('copy.verifyHint')}</Note>}
+
+        {/*
+          「仅校验（不拷贝）」原先独占一整个 Card，只放一个 checkbox + 一段长说明，
+          白白占掉一大块纵向空间。挪进「校验与清单」这张本就讲校验的卡片里，
+          语义更贴，也省掉一整张卡。
+        */}
+        <label className="row-actions" style={{ cursor: 'pointer', marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={verifyOnlyMode}
+            onChange={(event) => setVerifyOnlyMode(event.target.checked)}
+          />
+          <span>{t('copy.verifyOnly')}</span>
+        </label>
+        {verifyOnlyMode && (
+          <div className="hint" style={{ marginTop: 6 }}>
+            {t('copy.verifyOnlyHint')}
+          </div>
+        )}
+
+        {/*
+          代理素材（**本次任务**）。开关与编码/分辨率/规格只对这一次拷贝生效；
+          设置页里的同名项只提供默认值。
+
+          字段顺序：**编码 → 分辨率 →（仅 ProRes）规格 → LUT**。
+          先定编码再谈规格 —— 选了 H.264/H.265 就不该看到 ProRes 规格，
+          那会让人以为"选了 264 还要配 ProRes"。
+        */}
+        <div className="sub-block" style={{ marginTop: 16 }}>
+          <Toggle checked={proxyOn} onChange={setProxyOn} label={t('copy.proxyEnabled')} />
+          {proxyOn && (
+            <>
+              <Field label={t('copy.proxyCodec')}>
+                <SelectBox<ProxyCodec>
+                  value={proxyCodec}
+                  ariaLabel={t('copy.proxyCodec')}
+                  options={proxyCodecOptions}
+                  onChange={setProxyCodec}
+                />
+              </Field>
+              <Field label={t('copy.proxyResolution')}>
+                <SelectBox<ProxyResolution>
+                  value={proxyResolution}
+                  ariaLabel={t('copy.proxyResolution')}
+                  options={proxyResolutionOptions}
+                  onChange={setProxyResolution}
+                />
+              </Field>
+              {/* ProRes 规格只在选了 ProRes 时才有意义 */}
+              {proxyCodec === 'prores' && (
+                <Field label={t('copy.proxyProfile')} hint={t('settings.proxyProfileHint')}>
+                  <SelectBox<ProxyProfile>
+                    value={proxyProfile}
+                    ariaLabel={t('copy.proxyProfile')}
+                    options={proxyProfileOptions}
+                    onChange={setProxyProfile}
+                  />
+                </Field>
+              )}
+              <Field label={t('copy.proxyLut')} hint={t('copy.proxyLutHint')}>
+                <PathPicker
+                  value={proxyLutPath}
+                  placeholder={t('copy.proxyLutPlaceholder')}
+                  buttonLabel={t('copy.proxyLutPick')}
+                  onPick={() => {
+                    void (async () => {
+                      const picked = await window.securereel.volumes.pickPath('file', t('copy.proxyLutPick'))
+                      if (picked.ok && picked.data !== null) setProxyLutPath(picked.data)
+                    })()
+                  }}
+                  onChange={setProxyLutPath}
+                />
+              </Field>
+              <div className="hint faint" style={{ fontSize: 11 }}>
+                {t('copy.proxyHint')}
+              </div>
+            </>
+          )}
+        </div>
       </Card>
 
       <div className="action-bar">

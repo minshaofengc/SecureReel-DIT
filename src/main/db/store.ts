@@ -22,7 +22,7 @@ import type {
   TargetProgress,
   VolumeKind
 } from '@shared/types'
-import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, migrateThemeId, VOLUME_KINDS } from '@shared/types'
+import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, migrateThemeId, PROXY_CODECS, PROXY_PROFILES, PROXY_RESOLUTIONS, VOLUME_KINDS } from '@shared/types'
 import {
   fillMissingDetails,
   hasCrew,
@@ -306,9 +306,10 @@ export class Store {
           `INSERT INTO jobs (
              id, name, mode, source_path, source_root_name, source_kind, is_codex_vfs,
              hash_algorithm, manifest_format,
-             verify_after_write, state, total_files, total_bytes, files_done, files_failed,
+             verify_after_write, proxy_enabled, proxy_resolution, proxy_codec, proxy_profile, proxy_lut_path,
+             state, total_files, total_bytes, files_done, files_failed,
              bytes_done, created_at, started_at, finished_at, degradation_notice, parent_project_id
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           job.id,
@@ -321,6 +322,11 @@ export class Store {
           job.hashAlgorithm,
           job.manifestFormat,
           job.verifyAfterWrite ? 1 : 0,
+          job.proxyEnabled ? 1 : 0,
+          job.proxyResolution,
+          job.proxyCodec,
+          job.proxyProfile,
+          job.proxyLutPath,
           job.state,
           job.totalFiles,
           job.totalBytes,
@@ -436,6 +442,11 @@ export class Store {
       hashAlgorithm: pick(HASH_ALGORITHMS, row.hash_algorithm, 'xxhash64'),
       manifestFormat: pick(MANIFEST_FORMATS, row.manifest_format, 'asc-mhl-2.0'),
       verifyAfterWrite: fromSqlBoolean(row.verify_after_write),
+      proxyEnabled: fromSqlBoolean(row.proxy_enabled),
+      proxyResolution: pick(PROXY_RESOLUTIONS, row.proxy_resolution, '1080p'),
+      proxyCodec: pick(PROXY_CODECS, row.proxy_codec, 'prores'),
+      proxyProfile: pick(PROXY_PROFILES, row.proxy_profile, '422-proxy'),
+      proxyLutPath: fromSqlNullableString(row.proxy_lut_path),
       state: pick(JOB_STATES, row.state, 'draft') as JobState,
       totalFiles: fromSqlNumber(row.total_files),
       totalBytes: fromSqlNumber(row.total_bytes),
@@ -711,6 +722,71 @@ export class Store {
       )
       .run(jobId)
     return result.changes
+  }
+
+  /**
+   * 「重试失败项」的存储侧：把失败文件放回 pending。
+   *
+   * 只动 `failed` —— `verified` 的成果必须原样保留，重试不是重拷。
+   * 同时做三件事，缺一件最终数字都会错：
+   *  1. 删掉这些文件的（文件 × 目标）结果行 —— 旧失败结果不能带进新一轮；
+   *  2. 任务级与目标级计数器从事实表重算 —— 否则重试成功后旧的失败计数残留，
+   *     任务会被永远判成 completed-with-errors，files_done 还会超过 total_files；
+   *  3. 清掉 error 文案。
+   *
+   * 返回被放回的文件数；0 = 没有可重试的失败项。
+   */
+  resetFailedFilesForRetry(jobId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS c FROM job_files WHERE job_id = ? AND state = 'failed'")
+      .get(jobId)
+    const failedCount = fromSqlNumber(row?.c)
+    if (failedCount === 0) return 0
+
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `DELETE FROM file_target_results
+            WHERE job_id = ?
+              AND file_id IN (SELECT id FROM job_files WHERE job_id = ? AND state = 'failed')`
+        )
+        .run(jobId, jobId)
+      this.db
+        .prepare(
+          "UPDATE job_files SET state = 'pending', error = NULL WHERE job_id = ? AND state = 'failed'"
+        )
+        .run(jobId)
+      /*
+       * bytes_done 的口径必须与引擎的 incrementJobCounters 对齐：
+       *   · 走 settleFile 的文件：记实际读出的 bytes_copied；
+       *   · 走 failFile 的文件：记 file.size_bytes（此时 bytes_copied 可能还是 0）。
+       * 取 MAX 覆盖这两条路径。
+       */
+      this.db
+        .prepare(
+          `UPDATE jobs SET
+             files_done   = (SELECT COUNT(*) FROM job_files WHERE job_id = ? AND state = 'verified'),
+             files_failed = (SELECT COUNT(*) FROM job_files WHERE job_id = ? AND state = 'failed'),
+             bytes_done   = (SELECT COALESCE(SUM(
+                CASE WHEN state = 'verified' THEN bytes_copied
+                     WHEN state = 'failed' THEN MAX(bytes_copied, size_bytes)
+                     ELSE 0 END), 0)
+                             FROM job_files WHERE job_id = ?)
+           WHERE id = ?`
+        )
+        .run(jobId, jobId, jobId, jobId)
+      this.db
+        .prepare(
+          `UPDATE job_targets SET
+             files_done   = (SELECT COUNT(*) FROM file_target_results r
+                              WHERE r.job_id = ? AND r.target_id = job_targets.id AND r.state = 'verified'),
+             files_failed = (SELECT COUNT(*) FROM file_target_results r
+                              WHERE r.job_id = ? AND r.target_id = job_targets.id AND r.state = 'failed')
+           WHERE job_id = ?`
+        )
+        .run(jobId, jobId, jobId)
+    })
+    return failedCount
   }
 
   private mapFile(row: Row, results: Map<number, FileTargetResult[]>): CopyJobFile {

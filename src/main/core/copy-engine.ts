@@ -35,8 +35,13 @@ import type {
   JobProgress,
   JobState,
   MediaProbe,
+  MediaProxyResult,
+  ProxyCodec,
+  ProxyResolution,
   TargetProgress
 } from '@shared/types'
+import { PROXY_RESOLUTION_HEIGHT } from '@shared/types'
+import { canDecodeWithFfmpeg } from '@main/media/formats'
 import { NAME_CONFLICT_PREFIXES, msg, type MsgKey } from '@shared/messages'
 import { computeOverallPercent } from '@shared/progress'
 import type { PendingFile, Store } from '@main/db/store'
@@ -56,6 +61,8 @@ import {
 import { PauseGate, RateMeter, Semaphore } from './concurrency'
 import { FileDeltaBuffer } from './file-delta-buffer'
 import type { MediaProbeRunner } from '@main/media/probe'
+import { generateProxy, PROXY_CODEC_LABEL, proxyAbsPathFor } from '@main/media/proxy'
+import { detectEncoders, pickEncoder } from '@main/media/encoder-probe'
 
 export const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 
@@ -110,6 +117,11 @@ export interface CopyEngineDeps {
 
 /** 进度上报的默认节流窗口。 */
 export const DEFAULT_PROGRESS_THROTTLE_MS = 250
+
+/** 写入速度波形图的采样间隔：每秒一个点。 */
+const SPEED_SAMPLE_INTERVAL_MS = 1000
+/** 波形图最多保留多少个采样点（约 2 分钟的趋势）。 */
+const SPEED_HISTORY_MAX = 120
 
 export interface CopyEngineResult {
   state: JobState
@@ -213,6 +225,15 @@ export class CopyEngine {
    */
   private readonly pendingProbes = new Set<Promise<void>>()
   private readonly probeSemaphore: Semaphore
+  /**
+   * 代理生成的并发闸门与待办集合。
+   *
+   * 与 probe 分开：探测是"读"，代理是"重编码 + 写目标盘"，代价高一个量级，
+   * 并发数由 proxyConcurrency 单独控制。二者用不同的 Semaphore，
+   * 免得代理把探测的并发位占满、拖慢元数据填充。
+   */
+  private readonly pendingProxies = new Set<Promise<void>>()
+  private readonly proxySemaphore: Semaphore
   private readonly rate = new RateMeter()
   private cancelled = false
   private lastProgressAt = 0
@@ -253,6 +274,28 @@ export class CopyEngine {
    */
   private verifyBytesDone = 0
   private phase: JobPhase = 'copying'
+  /**
+   * 本任务**累计存活**的拷贝时长（毫秒），**不含暂停时段**。
+   *
+   * 用法与 `RateMeter`（4 秒滑动窗口的瞬时速率）不同：这个计数器只为
+   * "平均速度"服务 —— 瞬时速率会随盘面寻道、缓存命中大幅抖动，用它算
+   * 剩余时间会在"还剩 2 分钟"和"还剩 40 分钟"之间来回跳。用"已拷字节 ÷
+   * 累计活跃时长"得到的平均速度更稳，算出来的完成时间才有参考价值。
+   *
+   * 之所以不直接用 `Date.now() - startedAt`：用户中途暂停（去吃饭、换盘）
+   * 的时间不算拷贝耗时，算进去会把平均速度稀释，ETA 被严重高估。
+   */
+  private activeCopyMs = 0
+  /** 上次累计活跃时长更新的时间点（配合 `activeCopyMs` 剔除暂停）。 */
+  private lastActiveAt: number | null = null
+  /**
+   * 写入速度采样序列（每秒一个点，最多保留 `SPEED_HISTORY_MAX` 个）。
+   *
+   * 只给界面画波形图用 —— 它能看出"盘在稳定跑"还是"越跑越慢"，
+   * 这是单个瞬时速率数字给不了的信息。
+   */
+  private readonly speedHistory: number[] = []
+  private lastSpeedSampleAt = 0
 
   constructor(deps: CopyEngineDeps) {
     this.deps = deps
@@ -260,6 +303,7 @@ export class CopyEngine {
     this.progressThrottleMs = deps.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
     this.verifySemaphore = new Semaphore(Math.max(1, deps.settings.maxParallelTargets))
     this.probeSemaphore = new Semaphore(Math.max(1, deps.settings.frameConcurrency))
+    this.proxySemaphore = new Semaphore(Math.max(1, deps.settings.proxyConcurrency))
     for (const target of deps.job.targets) {
       this.slots.push({
         target,
@@ -337,11 +381,17 @@ export class CopyEngine {
         this.emitProgress(true)
         await this.drainProbes()
       }
+      // 代理生成排在探测之后（依赖探测结论），也归入 analyzing 阶段 ——
+      // 对用户来说"拷贝之后还在干活"是同一件事，不必再多一个阶段。
+      if (this.pendingProxies.size > 0) {
+        await this.drainProxies()
+      }
       this.phase = 'finalizing'
       this.emitProgress(true)
     } catch (error) {
       await this.drainVerifications()
       await this.drainProbes()
+      await this.drainProxies()
       await this.releaseAllHandles()
       const cancelled = this.cancelled || this.deps.signal.aborted
       this.log(
@@ -1147,6 +1197,16 @@ export class CopyEngine {
       if (probe !== null) {
         this.deps.store.updateFile(this.deps.job.id, relPath, { probe })
         this.emitFileRow(relPath)
+
+        /*
+         * 代理生成排在探测**之后**：要知道格式族才能判断能不能解码。
+         * 它自己进 pendingProxies 队列（独立并发闸门），不阻塞探测。
+         *
+         * 开关读**每任务**的 `job.proxyEnabled`（拷贝页可选），不再读全局设置。
+         */
+        if (this.deps.job.proxyEnabled) {
+          this.scheduleProxy(relPath, sourceAbs, probe)
+        }
       }
       this.analyzeDone++
       this.emitProgress()
@@ -1154,6 +1214,156 @@ export class CopyEngine {
 
     this.pendingProbes.add(task)
     void task.finally(() => this.pendingProbes.delete(task))
+  }
+
+  /**
+   * 为一条素材生成代理，写到每个启用的目标盘的 `Proxies/` 目录。
+   *
+   * ## 与原文件的关系
+   *
+   * 代理是**额外产出**，只读源、只往目标盘的 Proxies/ 写，绝不覆盖同名文件、
+   * 绝不动源素材 —— 与拷贝的红线完全一致。
+   *
+   * ## 不可解码的私有格式
+   *
+   * R3D / BRAW / ARRIRAW / CRM 解不出画面，**跳过并如实标注原因**，
+   * 而不是静默留白（那些"为什么没出代理"的疑问必须有人回答）。
+   *
+   * ## 结果落点
+   *
+   * 结果写回 `probe.proxy`（多条目标只记第一份的相对路径 + 是否全部成功），
+   * 由报告如实展示。
+   */
+  private scheduleProxy(relPath: string, sourceAbs: string, probe: MediaProbe): void {
+    // 每个启用的目标盘都要有一份代理；全部不可用就直接跳过
+    const enabledSlots = this.slots.filter((slot) => slot.enabled && !slot.failed)
+    if (enabledSlots.length === 0) return
+
+    // 本次任务选定的编码/分辨率（每任务）
+    const codec = this.deps.job.proxyCodec
+    const resolution = this.deps.job.proxyResolution
+
+    const ffmpeg = this.deps.probeRunner?.ffmpegExecutable ?? null
+    if (ffmpeg === null) {
+      // ffmpeg 不可用时如实记下原因，不静默留白
+      const reason = '未找到可用的 ffmpeg，无法生成代理。'
+      this.writeProxyResult(relPath, failResult(reason, codec, resolution))
+      return
+    }
+
+    const wantsProxy = probe.available && canProxyFamily(probe)
+
+    const task = this.proxySemaphore.run(async (): Promise<void> => {
+      if (!wantsProxy) {
+        this.writeProxyResult(
+          relPath,
+          failResult(
+            `该格式（${probe.format ?? probe.formatFamily}）无法用 ffmpeg 解码画面，已跳过代理生成。`,
+            codec,
+            resolution
+          )
+        )
+        return
+      }
+
+      // 探测本机可用的编码器（结果按进程缓存）。该编码在本机不可用（典型：
+      // Windows 上选了 H.265 但没有可用的硬件编码器）时，如实跳过并说明，
+      // 绝不换成另一种编码假装成功。
+      const capability = await detectEncoders(ffmpeg)
+      const encoder = pickEncoder(capability, codec)
+      if (encoder === null) {
+        this.writeProxyResult(
+          relPath,
+          failResult(
+            `本机没有可用的 ${PROXY_CODEC_LABEL[codec]} 编码器，已跳过代理生成。`,
+            codec,
+            resolution
+          )
+        )
+        return
+      }
+
+      const profile = this.deps.job.proxyProfile
+
+      /*
+       * LUT：任务里指定了才套。这里**先确认文件在**再交给 ffmpeg ——
+       * 否则 ffmpeg 会因为读不到 .cube 直接让整条代理失败，而用户只想知道
+       * "LUT 没生效"，不是"代理没出来"。缺文件时按"不套 LUT"继续出代理，
+       * 并把这件事记进 reason（绝不静默）。
+       */
+      let lutPath = this.deps.job.proxyLutPath
+      let lutWarning: string | null = null
+      if (lutPath !== null) {
+        if (await pathExists(lutPath)) {
+          // 文件确实在，正常套用
+        } else {
+          lutWarning = `指定的 LUT 文件不存在，已跳过调色：${lutPath}`
+          lutPath = null
+        }
+      }
+
+      let firstRel: string | null = null
+      let allOk = true
+      let firstError: string | null = null
+
+      for (const slot of enabledSlots) {
+        const outputAbs = proxyAbsPathFor(slot.target.path, relPath, codec)
+        const result = await generateProxy({
+          ffmpegPath: ffmpeg,
+          inputAbsPath: sourceAbs,
+          outputAbsPath: outputAbs,
+          profile,
+          resolution,
+          codec,
+          encoder: encoder.name,
+          lutPath,
+          signal: this.deps.signal
+        })
+        if (result.ok) {
+          // 记相对目标盘的路径，便于报告与界面展示
+          if (firstRel === null) {
+            firstRel = proxyAbsPathFor('', relPath, codec).replace(/^[\\/]+/, '')
+          }
+        } else {
+          allOk = false
+          if (firstError === null) firstError = result.reason
+        }
+      }
+
+      this.writeProxyResult(relPath, {
+        relPath: allOk ? firstRel : null,
+        ok: allOk,
+        // 出成了但 LUT 被跳过时，也把这件事说出来（否则用户以为套上了）
+        reason: allOk ? lutWarning : (firstError ?? '部分目标盘上的代理生成失败。'),
+        profile: allOk && codec === 'prores' ? profile : null,
+        codec: allOk ? codec : null,
+        resolution: allOk ? resolution : null,
+        // 实际画面尺寸由"只降不升"决定，这里记为所选档位的目标高；
+        // 源更矮时实际会更小 —— 由报告侧按需以 probe 的真实尺寸为准。
+        width: null,
+        height: allOk ? PROXY_RESOLUTION_HEIGHT[resolution] : null,
+        lutPath: allOk ? lutPath : null
+      })
+    })
+
+    this.pendingProxies.add(task)
+    void task.finally(() => this.pendingProxies.delete(task))
+  }
+
+  /** 把代理结果合并进该文件的 probe 记录，并推给界面。 */
+  private writeProxyResult(relPath: string, proxy: MediaProxyResult): void {
+    const file = this.deps.store.getFile(this.deps.job.id, relPath)
+    if (file === null || file.probe === null) return
+    this.deps.store.updateFile(this.deps.job.id, relPath, {
+      probe: { ...file.probe, proxy }
+    })
+    this.emitFileRow(relPath)
+  }
+
+  private async drainProxies(): Promise<void> {
+    while (this.pendingProxies.size > 0) {
+      await Promise.all([...this.pendingProxies])
+    }
   }
 
   /** 探测完成后把这一行的最新状态推给界面（界面按 relPath 做 upsert）。 */
@@ -1305,6 +1515,17 @@ export class CopyEngine {
     const bytesDone = Math.min(snapshot.bytesDone + inFlightBytes, Math.max(totalBytes, snapshot.bytesDone))
     const rate = this.rate.rate()
 
+    // 用瞬时速率更新"累计活跃时长"——暂停时 rate 为 0，时间自然不计入，
+    // 这正是"平均速度要剔除暂停"的实现方式（比在门闩上加钩子简单可靠）。
+    this.accumulateActiveTime(now)
+
+    // 波形图的采样点：每秒一个，避免 250ms 的节流把序列撑得过密。
+    if (now - this.lastSpeedSampleAt >= SPEED_SAMPLE_INTERVAL_MS) {
+      this.lastSpeedSampleAt = now
+      this.speedHistory.push(Math.round(rate))
+      if (this.speedHistory.length > SPEED_HISTORY_MAX) this.speedHistory.shift()
+    }
+
     /*
      * 总进度在**主进程**算，界面只负责画。
      *
@@ -1349,6 +1570,31 @@ export class CopyEngine {
 
     const analyzing = this.phase === 'analyzing'
 
+    /*
+     * 剩余时间改用**平均速度**，不用瞬时速率。
+     *
+     * 瞬时速率来自 4 秒滑动窗口，盘面寻道、缓存命中会让它在几百 MB/s 到几 MB/s
+     * 之间大幅抖动 —— 用户会看到"还剩 2 分钟"和"还剩 40 分钟"来回跳，反而更焦虑。
+     * 平均速度 = 已读完字节 ÷ 累计活跃拷贝时长（已剔除暂停），曲线平滑得多，
+     * 算出来的完成时间才值得信。瞬时速率仍保留在 bytesPerSecond 里给波形图用。
+     */
+    const avgRate =
+      this.activeCopyMs > 0 ? (this.copiedBytesDone / this.activeCopyMs) * 1000 : 0
+    const remainingBytes = Math.max(0, totalBytes - bytesDone)
+    const etaSeconds =
+      !analyzing && avgRate > 0 && remainingBytes > 0 ? remainingBytes / avgRate : null
+
+    /*
+     * 预计完成时刻。
+     *
+     * 只在拷贝阶段（analysing 之前）给：分析/收尾阶段的耗时与字节无关，
+     * 用速度外推会得到一个离谱的时间点，还不如不给。
+     */
+    const etaFinishAt =
+      etaSeconds !== null && this.phase === 'copying'
+        ? new Date(now + etaSeconds * 1000).toISOString()
+        : null
+
     this.deps.onProgress?.({
       jobId: job.id,
       state: snapshot.state,
@@ -1362,13 +1608,35 @@ export class CopyEngine {
       overallPercent,
       // 分析阶段源盘已经不读了，此时再显示字节速率只会误导
       bytesPerSecond: analyzing ? 0 : rate,
+      // 本次拷贝的平均速度（已剔除暂停），界面用它显示"平均速度"
+      averageBytesPerSecond: analyzing ? 0 : avgRate,
       currentFile: activeFiles[0]?.relPath ?? null,
       activeFiles,
       targets,
-      etaSeconds: !analyzing && rate > 0 && totalBytes > bytesDone ? (totalBytes - bytesDone) / rate : null,
+      etaSeconds,
+      etaFinishAt,
+      // 写入速度波形：每秒一个采样点，最多 SPEED_HISTORY_MAX 个
+      speedHistory: [...this.speedHistory],
       analyzeDone: this.analyzeDone,
       analyzeTotal: this.analyzeTotal
     })
+  }
+
+  /**
+   * 累计"真正在拷贝"的时长。
+   *
+   * 只在有实际速率（rate > 0）时累加 —— 暂停期间 `RateMeter` 已无新样本、速率为 0，
+   * 于是暂停时间不会被计入，平均速度就不会被暂停稀释。
+   * 这样比在门闩（gate）上加暂停/恢复钩子更简单，也少一处可能与实际状态不同步的地方。
+   */
+  private accumulateActiveTime(now: number): void {
+    if (this.lastActiveAt === null) {
+      this.lastActiveAt = now
+      return
+    }
+    const delta = now - this.lastActiveAt
+    this.lastActiveAt = now
+    if (delta > 0 && this.rate.rate(now) > 0) this.activeCopyMs += delta
   }
 
   private log(level: 'info' | 'warn' | 'error', message: string): void {
@@ -1387,6 +1655,41 @@ export class CopyEngine {
 /* ------------------------------------------------------------------ *
  * 辅助
  * ------------------------------------------------------------------ */
+
+/**
+ * 这条素材能不能出代理。
+ *
+ * 判据就是"ffmpeg 能不能解码画面"（`canDecodeWithFfmpeg`），并额外排除
+ * 音频类 —— 代理是给视频剪辑用的，给一条纯音频出 ProRes 没有意义。
+ */
+function canProxyFamily(probe: MediaProbe): boolean {
+  if (probe.formatFamily === 'audio') return false
+  return canDecodeWithFfmpeg(probe.formatFamily)
+}
+
+/**
+ * 造一条"代理失败/被跳过"的结果。
+ *
+ * 把 codec/resolution 一起带上：报告要能说清"这次本来想出什么、为什么没出成"，
+ * 只写一句 reason 会让读者不知道是针对哪种编码失败的。
+ */
+function failResult(
+  reason: string,
+  codec: ProxyCodec,
+  resolution: ProxyResolution
+): MediaProxyResult {
+  return {
+    relPath: null,
+    ok: false,
+    reason,
+    profile: null,
+    codec,
+    resolution,
+    width: null,
+    height: null,
+    lutPath: null
+  }
+}
 
 /**
  * 写入返回 0 字节。

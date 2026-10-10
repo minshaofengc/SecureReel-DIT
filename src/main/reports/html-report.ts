@@ -101,13 +101,26 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
       )
 
       // 首帧画面：报告的主体内容之一，单独成画廊
-      if (probe.firstFrame !== null) {
+      const stills = probe.stillFrames ?? []
+      if (probe.firstFrame !== null || stills.length > 0) {
+        // 候选静帧排成一行缩略图（本地清晰度挑选，供人工筛选精彩画面）。
+        const stillStrip =
+          stills.length === 0
+            ? ''
+            : `<div class="stills">${stills
+                .map(
+                  (name) =>
+                    `<img src="frames/${encodeURIComponent(name)}" alt="${escapeXml(file.relPath)} 候选静帧" width="160">`
+                )
+                .join('')}</div>`
+        const cover = probe.firstFrame === null ? stills[0] ?? null : probe.firstFrame
         frames.push(
           `<figure class="frame">
-            <img src="frames/${encodeURIComponent(probe.firstFrame)}" alt="${escapeXml(file.relPath)}" width="320">
+            ${cover === null ? '' : `<img src="frames/${encodeURIComponent(cover)}" alt="${escapeXml(file.relPath)}" width="320">`}
+            ${stillStrip}
             <figcaption>
               <div class="fname mono">${escapeXml(file.relPath)}</div>
-              <div class="fmeta">${probe.format === null ? '' : `${escapeXml(probe.format)} · `}${frameSourceLabel(probe.frameSource)}</div>
+              <div class="fmeta">${probe.format === null ? '' : `${escapeXml(probe.format)} · `}${frameSourceLabel(probe.frameSource)}${stills.length > 0 ? ` · 候选静帧 ${stills.length} 张` : ''}</div>
             </figcaption>
           </figure>`
         )
@@ -241,6 +254,9 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
   .frame figcaption { padding: 8px 10px; }
   .frame .fname { font-size: 11.5px; word-break: break-all; }
   .frame .fmeta { font-size: 11px; color: #6b7a72; margin-top: 3px; }
+  /* 候选静帧：一排小缩略图，供人工挑精彩画面 */
+  .stills { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 6px 0; }
+  .stills img { width: 160px; max-width: calc(33% - 3px); height: auto; border-radius: 4px; background: #000; }
   .fmt { display: inline-block; padding: 1px 7px; border-radius: 999px; border: 1px solid #c9d8ce; background: #f1f7f3; font-size: 11.5px; white-space: nowrap; }
   .src-decoded { color: #1e6b45; }
   .src-preview { color: #8a6a1f; }

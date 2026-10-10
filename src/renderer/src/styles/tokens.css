@@ -1,5 +1,5 @@
 /**
- * 设计令牌 —— v2.0.4 视觉重设计（方案 D：专业工具语言 · 暗房配色）
+ * 设计令牌 —— 基础配色 = 中性（Mono），另有石墨蓝（Steel）/ 暖砂（Sand）两套皮肤
  *
  * 2026-10-05 第四次改。前面三次的结论都留在这里，免得以后再走回去：
  *
@@ -20,8 +20,8 @@
  *   ③ **小圆角**（3~5px），不是 0 也不是 12px。
  *   ④ **小字号高密度**。正文 12~13px，标签 10~11px，页头 22px 就已经是"大标题"。
  *      信息密度本身就是专业感 —— 它意味着"这软件装得下活儿"。
- *   ⑤ **蓝色是唯一的强调色**，只出现在：选中行、开关、主按钮、进度条。
- *      其余一切都是灰阶。
+ *   ⑤ **强调色只有一种**，只出现在：选中行、开关、主按钮、进度条。
+ *      其余一切都是灰阶。（默认皮肤「中性」的强调色本身也是灰 —— 整屏无彩色。）
  *   ⑥ **等宽字体只给数字与路径**，不给标题。
  *
  * ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@
  * 【accent 的两种用法 —— 这是本文件最要紧的一处设计】
  *
  * `--accent` 是**填充色**：主按钮底、进度条、选中行、聚焦环。
- * 铺底时配 `--accent-ink` 当文字色，五套皮肤都保证 ≥4.5:1。
+ * 铺底时配 `--accent-ink` 当文字色，三套皮肤都保证 ≥4.5:1。
  *
  * `--accent-text` 是**同色系但压深（亮色）/ 提亮（暗色）**的一档，
  * 专门给"把强调色当文字用"的场合（下拉动作项、徽标文字）。
@@ -120,7 +120,7 @@
   --fs-2xs: 10px;      /* 表头 / 极小注解 */
 
   --lh-tight: 1.25;    /* 标题 */
-  --lh-base: 1.55;     /* 正文 */
+  --lh-base: 1.45;     /* 正文 —— 收紧后信息密度更高，页面更干净（2026-10-11 由 1.55 下调） */
 
   /*
    * 字距：本版只保留"小字微放开"一档。
@@ -168,77 +168,78 @@
 }
 
 /* =========================================================================
- * 默认皮肤 · 暗房（Darkroom）
+ * 默认皮肤 · 中性（Mono）
  *
- * 2026-10-05 第五次改（方案 E）。前四次的结论都留在这里，免得再走回去：
+ * 2026-10-11：**基础块就是默认皮肤**。此前基础块是「暗房（Darkroom）」，
+ * 另有一套 mono 覆盖块；用户拍板只留三套（中性 / 石墨蓝 / 暖砂）并把中性设为默认，
+ * 于是把 mono 的 42 个色彩值直接搬进基础块、删掉它自己的覆盖块 ——
+ * 好处是**首帧不闪**（`index.html` 上写死 `data-mode='dark'`，解析到基础块即最终色），
+ * 也不会留下一套够不着的死配色。
  *
+ * 配色演进史（前四次都留在这里，免得再走回去）：
  *   方案 A：米白底 + 白卡 + 大圆角。反馈"太像网页模板"。
  *   方案 B：转播海报风 —— 荧光绿 + 纯黑 2px 粗边 + 硬偏移投影。反馈"太丑太卡通"。
  *   方案 C：四套降噪配色（石墨蓝/中性/暖砂/靛青）。颜色收住了，但骨架还是海报的。
  *   方案 D：专业工具语言（小圆角、小字号、面板比底亮一档）。**被否** ——
- *     反馈"queue-dark 特别丑"。事后对照 Silverstack 的真实界面截图才找到病根：
- *     **D 的底色是中间调的灰蓝（#1c1c1f / #26262b），面板与底只差一档 → 糊成一块。**
- *     Silverstack 用的是**近黑**（#0a0b0d 一档），面板与底拉开得更狠，
- *     于是"分区靠背景值差"这条才真正成立。
- *
- * 方案 E（本版）的改动只有两处，但都是要害：
- *   ① **底色下沉到近黑**（#0a0b0d / #14161a），面板与底差 ≥ 10 个亮度点；
- *   ② **界面靠"满"而不是靠"空"** —— 空值（—、0 B、待处理）一律不渲染。
- *      前四次失败的根本原因不是配色，是屏幕上大片空白：**空的地方换什么颜色都还是空。**
+ *     反馈"queue-dark 特别丑"。对照 Silverstack 真实截图才找到病根：
+ *     底色是中间调灰蓝（#1c1c1f / #26262b），面板与底只差一档 → 糊成一块。
+ *   方案 E（现行）：底色下沉、面板与底差 ≥ 10 个亮度点；
+ *     且**界面靠"满"而不是靠"空"** —— 空值（—、0 B、待处理）一律不渲染。
+ *     前四次失败的根本原因不是配色，是屏幕上大片空白：**空的地方换什么颜色都还是空。**
  * ========================================================================= */
 
 html[data-mode='dark'] {
-  --bg: #0a0b0d;
-  --bg-elevated: #101216;
-  --surface: #14161a;      /* 面板：比背景亮一档，这就是分区的全部手段 */
-  --surface-2: #1a1d21;    /* 输入框、chips */
-  --surface-3: #21252a;    /* 悬停面 */
-  --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --line-soft: rgba(255, 255, 255, 0.07); /* 面板内的细分隔线 */
-  --hard-line: rgba(255, 255, 255, 0.16); /* 需要收口的地方（输入框、表格头） */
-  --text: #e6e9ed;
-  --text-muted: #98a0aa;
-  --text-faint: #636b75;
+  --bg: #121316;
+  --bg-elevated: #1a1c1f;
+  --surface: #1a1c1f;      /* 面板：比背景亮一档，这就是分区的全部手段 */
+  --surface-2: #232529;    /* 输入框、chips */
+  --surface-3: #2b2d32;    /* 悬停面 */
+  --border: rgba(236, 238, 240, 0.1);
+  --border-strong: rgba(236, 238, 240, 0.18);
+  --line-soft: rgba(236, 238, 240, 0.07); /* 面板内的细分隔线 */
+  --hard-line: rgba(236, 238, 240, 0.18); /* 需要收口的地方（输入框、表格头） */
+  --text: #eceef0;
+  --text-muted: #a9adb3;
+  --text-faint: #767b82;
 
-  --band: #14161a;         /* 日志面板这类"深色面" */
-  --band-ink: #e6e9ed;
-  --band-ink-dim: rgba(230, 233, 237, 0.6);
-  --band-danger: #f08a8d;
+  --band: #26292d;         /* 日志面板这类"深色面" */
+  --band-ink: #eceef0;
+  --band-ink-dim: rgba(236, 238, 240, 0.56);
+  --band-danger: #ff9b84;
 
-  --accent: #4a8cf7;       /* 蓝，全项目唯一的强调色；深字压上去 5.9:1 */
-  --accent-hover: #5f9bf8;
-  --accent-soft: #16233a;  /* 选中行 / 浅底强调 */
-  --accent-ink: #08111f;
-  --accent-ink-dim: rgba(8, 17, 31, 0.72);
-  --accent-text: #6ba6ec;  /* 当文字用，vs 面板 7.1:1 */
-  --accent-contrast: #08111f;
+  --accent: #b9bec6;       /* 中性皮肤：强调色是浅灰，整屏无彩色；深字压上去 5.9:1 */
+  --accent-hover: #ccd1d8;
+  --accent-soft: #212429;  /* 选中行 / 浅底强调 */
+  --accent-ink: #14161a;
+  --accent-ink-dim: rgba(20, 22, 26, 0.72);
+  --accent-text: #c6cbd2;  /* 当文字用，vs 面板 7.1:1 */
+  --accent-contrast: #14161a;
 
-  --ok: #3ecf8e;
-  --ok-soft: #12261d;
-  --warn: #e0a03a;
-  --warn-soft: #2a2110;
-  --danger: #e5484d;
-  --danger-soft: #2b1416;
-  --info: #6ba6ec;
-  --info-soft: #16233a;
+  --ok: #4fc294;
+  --ok-soft: #16281f;
+  --warn: #dfae4a;
+  --warn-soft: #2c2415;
+  --danger: #f0705a;
+  --danger-soft: #2e1c17;
+  --info: #9aa3ad;
+  --info-soft: #212429;
 
   --shadow-sm: none;
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
   --grid-line: rgba(255, 255, 255, 0.06);
 
-  --rail: #06070a;         /* 侧栏比主区再深一档 */
-  --rail-text: #e6e9ed;
-  --rail-text-dim: #7d858f;
-  --rail-hover: #14161a;
-  --rail-line: rgba(255, 255, 255, 0.08);
+  --rail: #0c0d0f;         /* 侧栏比主区再深一档 */
+  --rail-text: #eceef0;
+  --rail-text-dim: #83888e;
+  --rail-hover: #1c1e22;
+  --rail-line: rgba(236, 238, 240, 0.1);
 
-  --on-dark-bg: #21252a;
-  --on-dark-border: rgba(255, 255, 255, 0.16);
-  --on-dark-text: #e6e9ed;
+  --on-dark-bg: #1c1e22;
+  --on-dark-border: rgba(236, 238, 240, 0.18);
+  --on-dark-text: #eceef0;
 
   /* 当前导航项：蓝色**淡底**而不是整块实蓝 —— 导航是工具，不该比内容响 */
-  --nav-current-bg: rgba(74, 140, 247, 0.16);
+  --nav-current-bg: rgba(236, 238, 240, 0.1);
   --nav-current-text: #ffffff;
 
   --lead-bg: var(--surface);
@@ -251,56 +252,56 @@ html[data-mode='dark'] {
 }
 
 html[data-mode='light'] {
-  --bg: #eef0f3;
+  --bg: #f4f5f6;
   --bg-elevated: #ffffff;
   --surface: #ffffff;
-  --surface-2: #f4f6f8;
-  --surface-3: #e8ebef;
-  --border: rgba(16, 20, 26, 0.1);
-  --border-strong: rgba(16, 20, 26, 0.18);
-  --line-soft: rgba(16, 20, 26, 0.08);
-  --hard-line: rgba(16, 20, 26, 0.18);
-  --text: #14181e;
-  --text-muted: #545a63;
-  --text-faint: #838a94;
+  --surface-2: #f4f5f6;
+  --surface-3: #e9eaec;
+  --border: rgba(22, 24, 26, 0.1);
+  --border-strong: rgba(22, 24, 26, 0.2);
+  --line-soft: rgba(22, 24, 26, 0.08);
+  --hard-line: rgba(22, 24, 26, 0.2);
+  --text: #16181a;
+  --text-muted: #50545a;
+  --text-faint: #7f858c;
 
-  --band: #14181e;
-  --band-ink: #eef0f3;
-  --band-ink-dim: rgba(238, 240, 243, 0.62);
-  --band-danger: #ff8f73;
+  --band: #23262b;
+  --band-ink: #f3f4f6;
+  --band-ink-dim: rgba(243, 244, 246, 0.6);
+  --band-danger: #ff9b84;
 
-  --accent: #2f6fb5;       /* 白字压上去 5.2:1 */
-  --accent-hover: #3a80c9;
-  --accent-soft: #e4eef8;
+  --accent: #3c434c;       /* 白字压上去 5.2:1 */
+  --accent-hover: #4a525c;
+  --accent-soft: #e6e8ea;
   --accent-ink: #ffffff;
   --accent-ink-dim: rgba(255, 255, 255, 0.74);
-  --accent-text: #28629f;  /* 当文字用，vs 白 6.3:1 */
+  --accent-text: #363c44;  /* 当文字用，vs 白 6.3:1 */
   --accent-contrast: #ffffff;
 
-  --ok: #1e7d5a;
-  --ok-soft: #e2f0ea;
-  --warn: #96631a;
-  --warn-soft: #f8eeda;
-  --danger: #bb3a24;
-  --danger-soft: #fae6e0;
-  --info: #2f6fb5;
-  --info-soft: #e4eef8;
+  --ok: #1f7a5e;
+  --ok-soft: #e0efea;
+  --warn: #8c6318;
+  --warn-soft: #f6eeda;
+  --danger: #b03a24;
+  --danger-soft: #f8e6e0;
+  --info: #4a5a68;
+  --info-soft: #e7eaed;
 
   --shadow-sm: none;
-  --shadow-md: 0 6px 18px rgba(16, 20, 26, 0.12);
+  --shadow-md: 0 6px 20px rgba(22, 24, 26, 0.1);
   --grid-line: rgba(16, 20, 26, 0.06);
 
-  --rail: #14181e;
-  --rail-text: #eef0f3;
-  --rail-text-dim: #8d939c;
-  --rail-hover: #222831;
-  --rail-line: rgba(238, 240, 243, 0.12);
+  --rail: #1b1e22;
+  --rail-text: #f0f1f3;
+  --rail-text-dim: #8c9198;
+  --rail-hover: #262a2f;
+  --rail-line: rgba(240, 241, 243, 0.12);
 
-  --on-dark-bg: #222831;
-  --on-dark-border: rgba(238, 240, 243, 0.18);
-  --on-dark-text: #eef0f3;
+  --on-dark-bg: #262a2f;
+  --on-dark-border: rgba(240, 241, 243, 0.2);
+  --on-dark-text: #f0f1f3;
 
-  --nav-current-bg: rgba(47, 111, 181, 0.18);
+  --nav-current-bg: rgba(240, 241, 243, 0.1);
   --nav-current-text: #ffffff;
 
   --lead-bg: var(--surface);
@@ -410,105 +411,6 @@ html[data-skin='steel'][data-mode='dark'] {
 }
 
 /* =========================================================================
- * 皮肤 · 中性（Mono）
- *
- * 完全无彩。主按钮在亮色下是深石墨、暗色下是浅灰。
- * 四套里最安静的一套，接近 DaVinci Resolve 的默认观感 ——
- * 界面不表达任何情绪，注意力全部让给素材与数字。
- * ========================================================================= */
-
-html[data-skin='mono'][data-mode='light'] {
-  --bg: #f4f5f6;
-  --bg-elevated: #ffffff;
-  --surface: #ffffff;
-  --surface-2: #f4f5f6;
-  --surface-3: #e9eaec;
-  --border: rgba(22, 24, 26, 0.1);
-  --border-strong: rgba(22, 24, 26, 0.2);
-  --line-soft: rgba(22, 24, 26, 0.08);
-  --hard-line: rgba(22, 24, 26, 0.2);
-  --text: #16181a;
-  --text-muted: #50545a;
-  --text-faint: #7f858c;
-  --band: #23262b;
-  --band-ink: #f3f4f6;
-  --band-ink-dim: rgba(243, 244, 246, 0.6);
-  --band-danger: #ff9b84;
-  --accent: #3c434c;
-  --accent-hover: #4a525c;
-  --accent-soft: #e6e8ea;
-  --accent-ink: #ffffff;
-  --accent-ink-dim: rgba(255, 255, 255, 0.74);
-  --accent-text: #363c44;
-  --accent-contrast: #ffffff;
-  --ok: #1f7a5e;
-  --ok-soft: #e0efea;
-  --warn: #8c6318;
-  --warn-soft: #f6eeda;
-  --danger: #b03a24;
-  --danger-soft: #f8e6e0;
-  --info: #4a5a68;
-  --info-soft: #e7eaed;
-  --shadow-md: 0 6px 20px rgba(22, 24, 26, 0.1);
-  --rail: #1b1e22;
-  --rail-text: #f0f1f3;
-  --rail-text-dim: #8c9198;
-  --rail-hover: #262a2f;
-  --rail-line: rgba(240, 241, 243, 0.12);
-  --on-dark-bg: #262a2f;
-  --on-dark-border: rgba(240, 241, 243, 0.2);
-  --on-dark-text: #f0f1f3;
-  --nav-current-bg: rgba(240, 241, 243, 0.1);
-  --nav-current-text: #ffffff;
-}
-
-html[data-skin='mono'][data-mode='dark'] {
-  --bg: #121316;
-  --bg-elevated: #1a1c1f;
-  --surface: #1a1c1f;
-  --surface-2: #232529;
-  --surface-3: #2b2d32;
-  --border: rgba(236, 238, 240, 0.1);
-  --border-strong: rgba(236, 238, 240, 0.18);
-  --line-soft: rgba(236, 238, 240, 0.07);
-  --hard-line: rgba(236, 238, 240, 0.18);
-  --text: #eceef0;
-  --text-muted: #a9adb3;
-  --text-faint: #767b82;
-  --band: #26292d;
-  --band-ink: #eceef0;
-  --band-ink-dim: rgba(236, 238, 240, 0.56);
-  --band-danger: #ff9b84;
-  /* 暗色下的"无彩强调" = 浅灰实底 + 深字，与亮色正好互为反色 */
-  --accent: #b9bec6;
-  --accent-hover: #ccd1d8;
-  --accent-soft: #212429;
-  --accent-ink: #14161a;
-  --accent-ink-dim: rgba(20, 22, 26, 0.72);
-  --accent-text: #c6cbd2;
-  --accent-contrast: #14161a;
-  --ok: #4fc294;
-  --ok-soft: #16281f;
-  --warn: #dfae4a;
-  --warn-soft: #2c2415;
-  --danger: #f0705a;
-  --danger-soft: #2e1c17;
-  --info: #9aa3ad;
-  --info-soft: #212429;
-  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
-  --rail: #0c0d0f;
-  --rail-text: #eceef0;
-  --rail-text-dim: #83888e;
-  --rail-hover: #1c1e22;
-  --rail-line: rgba(236, 238, 240, 0.1);
-  --on-dark-bg: #1c1e22;
-  --on-dark-border: rgba(236, 238, 240, 0.18);
-  --on-dark-text: #eceef0;
-  --nav-current-bg: rgba(236, 238, 240, 0.1);
-  --nav-current-text: #ffffff;
-}
-
-/* =========================================================================
  * 皮肤 · 暖砂（Sand）
  *
  * 暖米底 + 哑光琥珀。像片场的灯具与场记板：偏暖、低饱和、有纸感。
@@ -607,101 +509,4 @@ html[data-skin='sand'][data-mode='dark'] {
   --on-dark-text: #f2ece0;
   --nav-current-bg: rgba(207, 154, 79, 0.2);
   --nav-current-text: #fffdf9;
-}
-
-/* =========================================================================
- * 皮肤 · 靛青（Indigo）
- *
- * 冷调深靛 + 青绿强调。比石墨蓝更"仪器"：色相偏青，
- * 与现场监看设备上那些冷白指示灯是一族。暗色下观感最好。
- * ========================================================================= */
-
-html[data-skin='indigo'][data-mode='light'] {
-  --bg: #eef2f3;
-  --bg-elevated: #ffffff;
-  --surface: #ffffff;
-  --surface-2: #f1f5f6;
-  --surface-3: #e3e9ea;
-  --border: rgba(16, 28, 32, 0.1);
-  --border-strong: rgba(16, 28, 32, 0.2);
-  --line-soft: rgba(16, 28, 32, 0.08);
-  --hard-line: rgba(16, 28, 32, 0.2);
-  --text: #101c20;
-  --text-muted: #47595e;
-  --text-faint: #78898d;
-  --band: #14232a;
-  --band-ink: #eef4f5;
-  --band-ink-dim: rgba(238, 244, 245, 0.6);
-  --band-danger: #ff9b84;
-  --accent: #1d6d74;
-  --accent-hover: #26818a;
-  --accent-soft: #dfeef0;
-  --accent-ink: #ffffff;
-  --accent-ink-dim: rgba(255, 255, 255, 0.74);
-  --accent-text: #185a60;
-  --accent-contrast: #ffffff;
-  --ok: #1d7a5f;
-  --ok-soft: #dfefe9;
-  --warn: #8f6417;
-  --warn-soft: #f7eeda;
-  --danger: #b03d26;
-  --danger-soft: #f8e6e0;
-  --info: #2b6f8f;
-  --info-soft: #e1edf2;
-  --shadow-md: 0 6px 20px rgba(16, 28, 32, 0.1);
-  --rail: #101a1f;
-  --rail-text: #eef4f5;
-  --rail-text-dim: #869599;
-  --rail-hover: #17252b;
-  --rail-line: rgba(238, 244, 245, 0.12);
-  --on-dark-bg: #17252b;
-  --on-dark-border: rgba(238, 244, 245, 0.2);
-  --on-dark-text: #eef4f5;
-  --nav-current-bg: rgba(29, 109, 116, 0.2);
-  --nav-current-text: #ffffff;
-}
-
-html[data-skin='indigo'][data-mode='dark'] {
-  --bg: #0d1417;
-  --bg-elevated: #152025;
-  --surface: #152025;
-  --surface-2: #1d2b31;
-  --surface-3: #25343b;
-  --border: rgba(234, 242, 243, 0.1);
-  --border-strong: rgba(234, 242, 243, 0.18);
-  --line-soft: rgba(234, 242, 243, 0.07);
-  --hard-line: rgba(234, 242, 243, 0.18);
-  --text: #eaf2f3;
-  --text-muted: #a8b8bb;
-  --text-faint: #74868a;
-  --band: #1b2c34;
-  --band-ink: #eaf2f3;
-  --band-ink-dim: rgba(234, 242, 243, 0.56);
-  --band-danger: #ff9b84;
-  --accent: #4fb0b6;
-  --accent-hover: #66c2c7;
-  --accent-soft: #12272b;
-  --accent-ink: #08171a;
-  --accent-ink-dim: rgba(8, 23, 26, 0.72);
-  --accent-text: #62c3c8;
-  --accent-contrast: #08171a;
-  --ok: #4fc294;
-  --ok-soft: #16281f;
-  --warn: #dfae4a;
-  --warn-soft: #2c2415;
-  --danger: #f0705a;
-  --danger-soft: #2e1c17;
-  --info: #6cb0d8;
-  --info-soft: #17242c;
-  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
-  --rail: #080f12;
-  --rail-text: #eaf2f3;
-  --rail-text-dim: #7f9095;
-  --rail-hover: #16242a;
-  --rail-line: rgba(234, 242, 243, 0.1);
-  --on-dark-bg: #16242a;
-  --on-dark-border: rgba(234, 242, 243, 0.18);
-  --on-dark-text: #eaf2f3;
-  --nav-current-bg: rgba(79, 176, 182, 0.2);
-  --nav-current-text: #ffffff;
 }

@@ -31,6 +31,7 @@ import {
   type MutableRefObject,
   type ReactNode
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   clampIndex,
   filterOptions,
@@ -46,8 +47,19 @@ import { useI18n } from '../i18n'
 
 export type { ComboGroup, ComboOption }
 
-/** 与 app.css 里 `.combo-panel` 的 max-height 保持一致（只用于判断该向上还是向下弹） */
-const PANEL_MAX_HEIGHT = 264
+/**
+ * 「下方剩余空间少于这个值就考虑向上弹」的经验阈值（px）。
+ *
+ * ⚠️ 它**不是** `.combo-panel` 的 max-height。面板实际能长多高由 CSS 决定
+ * （`app.css` 里 `.combo-panel { max-height: 300px }`）—— CSS 是唯一真相，
+ * JS 不去镜像它。这里只回答"够不够放"这一个判断，取 180 是个偏保守的经验值：
+ * 比它矮就宁可向上弹，免得只露出一两行还得滚动。
+ *
+ * （曾经这个常量叫 PANEL_MAX_HEIGHT 并写死 264，声称要与 CSS 的 max-height 对齐；
+ * 但两者早已失同步，而且它在 `Math.min(PANEL_MAX_HEIGHT, 180)` 里恒被 180 截断，
+ * 那个 min 是死代码。改名成语义正确的阈值，把这层会腐烂的隐式耦合去掉。）
+ */
+const PANEL_FLIP_THRESHOLD = 180
 
 interface BaseProps<T extends string> {
   /** 受控值。`''` 是合法值（表示"未分组"），组件内部一律不用真值判断 */
@@ -123,6 +135,7 @@ function useComboBox<T extends string>({
   listId: string
   rootRef: MutableRefObject<HTMLDivElement | null>
   inputRef: MutableRefObject<HTMLInputElement | null>
+  panelRef: MutableRefObject<HTMLDivElement | null>
   optionRefs: MutableRefObject<(HTMLDivElement | null)[]>
   openPanel: () => void
   closePanel: () => void
@@ -139,7 +152,15 @@ function useComboBox<T extends string>({
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const optionRefs = useRef<(HTMLDivElement | null)[]>([])
+  /**
+   * 上一帧量到的几何。
+   *
+   * 给 open 期间的 rAF 循环做「先比较、后 setState」用：几何没变就绝不触发
+   * 重渲染。放在 ref 里而不是 state，因为它只服务于比较、不参与渲染。
+   */
+  const lastRectRef = useRef<PanelRect | null>(null)
   const listId = `${useId()}-listbox`
 
   const flat = useMemo(() => flatten(options, groups), [options, groups])
@@ -154,34 +175,86 @@ function useComboBox<T extends string>({
 
   /* ---------------- 定位 ---------------- */
 
-  const measure = useCallback((): void => {
+  /**
+   * 量一次触发器，算出面板该放哪（**纯函数，不碰 state**）。
+   *
+   * 坐标一律是**视口坐标**（`getBoundingClientRect` 的原始值），因为面板是
+   * `position: fixed` + portal 到 body。这一点和下面 `panelStyle` 的处理是配套的。
+   */
+  const computeRect = useCallback((): PanelRect | null => {
     const input = inputRef.current
-    if (input === null) return
+    if (input === null) return null
     const bounds = input.getBoundingClientRect()
     const below = window.innerHeight - bounds.bottom - 8
     // 下面塞不下、而上面更宽裕 → 向上弹
-    const flip = below < Math.min(PANEL_MAX_HEIGHT, 180) && bounds.top > below
-    setRect({ top: bounds.bottom + 4, left: bounds.left, width: bounds.width, flip })
+    const flip = below < PANEL_FLIP_THRESHOLD && bounds.top > below
+    return { top: bounds.bottom + 4, left: bounds.left, width: bounds.width, flip }
   }, [])
 
   // 在布局阶段量，首帧就不会先画到 (0,0) 再跳过去
   useLayoutEffect(() => {
-    if (open) measure()
-    else setRect(null)
-  }, [open, measure])
+    if (open) {
+      const next = computeRect()
+      lastRectRef.current = next
+      setRect(next)
+    } else {
+      lastRectRef.current = null
+      setRect(null)
+    }
+  }, [open, computeRect])
 
+  /*
+   * 面板打开期间**每帧**重新量一次。
+   *
+   * 为什么非得轮询、而不是监听 scroll/resize（旧做法）：
+   *   1. 卡片的入场动画 `rise-in` 用 `transform: translateY(6px)` 把触发器往上推。
+   *      transform **不改变元素的 layout size**，所以 ResizeObserver 收不到；
+   *      动画跑完也不会发 scroll/resize —— 旧做法于是把"动画中途量到的 Y"当成最终位置，
+   *      卡片归位后浮层就卡在旧位置，出现最多 6px 的竖向漂移（每张卡 delay 不同，
+   *      所以是"不同程度的漂移"）。
+   *   2. 视图模式切换给 padding / gap / grid-template-columns 挂了 180ms 过渡，
+   *      它常由**祖先**挪动触发器，同样不发 scroll/resize。
+   *   只有每帧重读 rect 才能同时覆盖这两种"无事件"的位移。
+   *
+   * 代价可忽略：浮层只开一小会儿、同一时刻最多一个；且用「先比较、后 setState」
+   * 把渲染压到"几何真正变化的那几帧"，之后每帧只做一次读取。
+   */
   useEffect(() => {
     if (!open) return
-    // ★ 必须用捕获阶段：scroll 事件不冒泡，冒泡监听收不到 .main 这个滚动容器的滚动，
-    //   面板会跟触发器脱开。
-    const onViewportChange = (): void => measure()
+    let frame = 0
+    const tick = (): void => {
+      const next = computeRect()
+      if (next !== null) {
+        const last = lastRectRef.current
+        if (
+          last === null ||
+          last.top !== next.top ||
+          last.left !== next.left ||
+          last.width !== next.width ||
+          last.flip !== next.flip
+        ) {
+          lastRectRef.current = next
+          setRect(next)
+        }
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+
+    // 视口一变就把缓存的"上一帧"作废，逼下一次 tick 重算。
+    // （其实 rAF 每帧都会重算，这里置空只是让比较短路、少一次字段比对，语义上也更清楚。）
+    // ★ 必须用捕获阶段：scroll 事件不冒泡，冒泡监听收不到 .main 这个滚动容器的滚动。
+    const onViewportChange = (): void => {
+      lastRectRef.current = null
+    }
     document.addEventListener('scroll', onViewportChange, true)
     window.addEventListener('resize', onViewportChange)
     return () => {
+      cancelAnimationFrame(frame)
       document.removeEventListener('scroll', onViewportChange, true)
       window.removeEventListener('resize', onViewportChange)
     }
-  }, [open, measure])
+  }, [open, computeRect])
 
   /* ---------------- 开关 ---------------- */
 
@@ -302,7 +375,16 @@ function useComboBox<T extends string>({
     if (!open) return
     const onPointerDown = (event: PointerEvent): void => {
       const root = rootRef.current
-      if (root !== null && event.target instanceof Node && root.contains(event.target)) return
+      const panel = panelRef.current
+      if (event.target instanceof Node) {
+        if (root !== null && root.contains(event.target)) return
+        /*
+         * ⚠️ 面板挂在 body 的 portal 下，已经不在 root 里了。
+         * 漏掉这一条：点选项的 pointerdown 阶段就会先把面板收掉，
+         * 紧接着的 click 永远到不了选项 —— 自研下拉最经典的"点不中"。
+         */
+        if (panel !== null && panel.contains(event.target)) return
+      }
       closePanel()
     }
     document.addEventListener('pointerdown', onPointerDown, true)
@@ -336,6 +418,7 @@ function useComboBox<T extends string>({
     listId,
     rootRef,
     inputRef,
+    panelRef,
     optionRefs,
     openPanel,
     closePanel,
@@ -377,6 +460,7 @@ function ComboShell<T extends string>({
     listId,
     rootRef,
     inputRef,
+    panelRef,
     optionRefs,
     openPanel,
     closePanel,
@@ -481,35 +565,39 @@ function ComboShell<T extends string>({
         ▾
       </button>
 
-      {open && panelStyle !== null && (
-        <div
-          className="combo-panel"
-          id={listId}
-          role="listbox"
-          aria-label={listLabel ?? ariaLabel}
-          style={panelStyle}
-        >
-          {filtered.length === 0 ? (
-            <div className="combo-empty">{t('common.noMatch')}</div>
-          ) : (
-            segments.map((segment) => {
-              const items = filtered
-                .slice(segment.from, segment.to + 1)
-                .map((option, offset) => renderOption(option, segment.from + offset))
-              if (segment.label === undefined) return <Fragment key={segment.key}>{items}</Fragment>
-              const labelId = `${listId}-group-${segment.from}`
-              return (
-                <div key={segment.key} role="group" aria-labelledby={labelId}>
-                  <div className="combo-group-label" id={labelId}>
-                    {segment.label}
+      {open &&
+        panelStyle !== null &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className="combo-panel"
+            id={listId}
+            role="listbox"
+            aria-label={listLabel ?? ariaLabel}
+            style={panelStyle}
+          >
+            {filtered.length === 0 ? (
+              <div className="combo-empty">{t('common.noMatch')}</div>
+            ) : (
+              segments.map((segment) => {
+                const items = filtered
+                  .slice(segment.from, segment.to + 1)
+                  .map((option, offset) => renderOption(option, segment.from + offset))
+                if (segment.label === undefined) return <Fragment key={segment.key}>{items}</Fragment>
+                const labelId = `${listId}-group-${segment.from}`
+                return (
+                  <div key={segment.key} role="group" aria-labelledby={labelId}>
+                    <div className="combo-group-label" id={labelId}>
+                      {segment.label}
+                    </div>
+                    {items}
                   </div>
-                  {items}
-                </div>
-              )
-            })
-          )}
-        </div>
-      )}
+                )
+              })
+            )}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

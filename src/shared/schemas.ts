@@ -15,6 +15,10 @@ import {
   MAX_LENS_ROWS,
   MAX_PARENT_NAME_LENGTH,
   MAX_PROJECT_NOTES_LENGTH,
+  PERFORMANCE_MODES,
+  PROXY_CODECS,
+  PROXY_PROFILES,
+  PROXY_RESOLUTIONS,
   THEME_MODES,
   THEMES
 } from './types'
@@ -118,6 +122,13 @@ export const createJobSchema = z.object({
   hashAlgorithm: z.enum(HASH_ALGORITHMS).optional(),
   manifestFormat: z.enum(MANIFEST_FORMATS).optional(),
   verifyAfterWrite: z.boolean().optional(),
+  /** 本次任务是否出代理；缺省 = 用全局设置 */
+  proxyEnabled: z.boolean().optional(),
+  proxyResolution: z.enum(PROXY_RESOLUTIONS).optional(),
+  proxyCodec: z.enum(PROXY_CODECS).optional(),
+  proxyProfile: z.enum(PROXY_PROFILES).optional(),
+  /** 本次任务的代理 LUT；null 或缺省 = 用全局默认 */
+  proxyLutPath: z.union([absolutePathSchema, z.null()]).optional(),
   /** 归属的母项目；null 或缺省 = 未分组 */
   parentProjectId: z.union([parentProjectIdSchema, z.null()]).optional(),
   /** 本次拷贝的项目信息；缺省 = 全空 */
@@ -157,7 +168,7 @@ export const setJobParentSchema = z.object({
 })
 
 export const settingsPatchSchema = z
-  .object({
+  .strictObject({
     language: z.enum(LANGUAGES),
     themeId: z.enum(THEMES),
     themeMode: z.enum(THEME_MODES),
@@ -165,6 +176,7 @@ export const settingsPatchSchema = z
     manifestFormat: z.enum(MANIFEST_FORMATS),
     verifyAfterWrite: z.boolean(),
     maxParallelTargets: z.number().int().min(1).max(8),
+    performanceMode: z.enum(PERFORMANCE_MODES),
     resumePartialFiles: z.boolean(),
     ejectAfterCopy: z.boolean(),
     ffmpegDir: z.union([absolutePathSchema, z.null()]),
@@ -175,7 +187,19 @@ export const settingsPatchSchema = z
     maxFrameExtractions: z.number().int().min(0).max(100_000),
     frameConcurrency: z.number().int().min(1).max(8),
     soundEnabled: z.boolean(),
-    soundVolume: z.number().min(0).max(1)
+    soundVolume: z.number().min(0).max(1),
+    generateReport: z.boolean(),
+    reportOutputDir: z.union([absolutePathSchema, z.null()]),
+    shutdownAfterCopy: z.boolean(),
+    proxyEnabled: z.boolean(),
+    proxyProfile: z.enum(PROXY_PROFILES),
+    proxyResolution: z.enum(PROXY_RESOLUTIONS),
+    proxyCodec: z.enum(PROXY_CODECS),
+    proxyLutPath: z.union([absolutePathSchema, z.null()]),
+    /** 与设置页的 1–4 档保持一致 */
+    proxyConcurrency: z.number().int().min(1).max(4),
+    /** 0 = 不出候选静帧；与设置页的 0–4 档保持一致 */
+    stillFrameCount: z.number().int().min(0).max(4)
   })
   .partial()
 

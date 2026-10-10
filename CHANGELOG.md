@@ -2,6 +2,25 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)；版本号遵循语义化版本。
 
+## [2.0.6] - 2026-10-11
+
+### Added
+
+- Per-job editing proxies: ProRes 422 Proxy/LT/422/HQ, H.264/H.265, 1080p/1440p/4K output and optional 3D LUT. Local encoder detection determines availability; proxies stay under `Proxies/` and never replace verified original backups.
+- Proxy outcomes and skip reasons in reports, with expanded media metadata extraction.
+
+### Changed
+
+- Three palettes (neutral, graphite blue, warm sand), retaining card/compact/focus view modes; task configuration and monitoring refinements.
+- Removed the previous splash animation; the app opens directly into the workbench.
+- Published macOS Universal DMG/ZIP and Windows x64 Setup/Portable/ZIP with SHA-256 checksums.
+
+### Validation and limitations
+
+- Type checks, lint, 608 unit tests, 56 Electron pipeline checks and application startup smoke checks passed. ASC MHL output was checked with the official XSD using lxml.
+- Packaged macOS and Windows main programs match the current 2.0.6 production build. Windows remains a public beta with limited real-hardware validation; builds are unsigned/unnotarised.
+- Proprietary RAW decoding and official HDE workflows depend on format, installed vendor tools and hardware validation.
+
 ## [2.0.5] - 2026-10-10
 
 > Theme / 本版主题: **back to open source — and an interface rebuilt around

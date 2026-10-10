@@ -42,6 +42,28 @@ interface Props {
    * 留在母项目页会变成"填了却不起作用"的字段 —— 那比不显示更让人困惑。
    */
   showShootDay?: boolean
+  /**
+   * 是否显示「项目名称」。缺省显示。
+   *
+   * 拷贝页在**已选母项目**时关掉它：那时项目名就是母项目的名字，再问一遍是重复
+   * （报告里会出现「母项目：X / 项目：X」这类两行同名）。母项目页始终显示。
+   *
+   * ⚠️ 只是不渲染这一个输入框，**不清空 `projectName` 的值** ——
+   * 报告与 MHL 清单还要写它，快照也要留它；而且母项目的 projectName 可能是空的，
+   * 清掉反而丢信息。用户想改仍可清除母项目选择，或到母项目页改。
+   */
+  showProjectName?: boolean
+  /**
+   * 需要**折叠**起来的区块（渲染进收起态的 <details>）。
+   *
+   * 拷贝页在已选母项目时用它把"重复的"项目级字段（镜头/人员/项目备注）收起来：
+   * 这些内容刚被母项目整包带进来，铺在眼前只会让表单显得又长又重复。
+   *
+   * ⚠️ 折叠**不等于卸载**：子元素照样挂载在 DOM 里，只是视觉上收起 ——
+   * 这样 `useRowKeys` 攒下的行 key 不会因为一次展开/收起而重置（否则正在
+   * 编辑的镜头行会突然换 key，React 重建 DOM、光标跑掉）。
+   */
+  collapsedSections?: ProjectInfoSection[]
 }
 
 /**
@@ -83,16 +105,46 @@ function useRowKeys(length: number): {
   return { keys: keys.current, add, removeAt }
 }
 
+/**
+ * 区块外壳：正常时原样渲染；被要求折叠时包进收起态的 `<details>`。
+ *
+ * 用 `<details>` 而不是条件渲染，是为了让子元素**始终挂载**（理由见
+ * `collapsedSections` 上的注释）。`open` 默认不开，靠用户点标题展开。
+ */
+function Section({
+  collapsed,
+  title,
+  children
+}: {
+  collapsed: boolean
+  title: string
+  children: ReactNode
+}): ReactNode {
+  if (!collapsed) return <>{children}</>
+  return (
+    <details className="sub-block sub-block--folded">
+      <summary className="sub-head" style={{ cursor: 'pointer' }}>
+        <span className="field-label">{title}</span>
+      </summary>
+      {children}
+    </details>
+  )
+}
+
 export function ProjectInfoFields({
   value,
   onChange,
   disabled,
   sections,
-  showShootDay = true
+  showShootDay = true,
+  showProjectName = true,
+  collapsedSections
 }: Props): ReactNode {
   const { t } = useI18n()
   const show = (section: ProjectInfoSection): boolean =>
     sections === undefined || sections.includes(section)
+  const collapsed = (section: ProjectInfoSection): boolean =>
+    collapsedSections !== undefined && collapsedSections.includes(section)
 
   const lensKeys = useRowKeys(value.lenses.length)
   const crewKeys = useRowKeys(value.crew.length)
@@ -147,15 +199,17 @@ export function ProjectInfoFields({
     <>
       {show('basic') && (
         <div className="grid-2">
-          <label className="field">
-            <span className="field-label">{t('project.projectName')}</span>
-            <input
-              className="input"
-              value={value.projectName}
-              disabled={disabled}
-              onChange={(event) => patch({ projectName: event.target.value })}
-            />
-          </label>
+          {showProjectName && (
+            <label className="field">
+              <span className="field-label">{t('project.projectName')}</span>
+              <input
+                className="input"
+                value={value.projectName}
+                disabled={disabled}
+                onChange={(event) => patch({ projectName: event.target.value })}
+              />
+            </label>
+          )}
           {showShootDay && (
             <label className="field">
               <span className="field-label">{t('project.shootDay')}</span>
@@ -189,119 +243,125 @@ export function ProjectInfoFields({
       )}
 
       {show('lenses') && (
-        <div className="sub-block">
-          <div className="sub-head">
-            <span className="field-label">
-              {t('project.lenses')} {value.lenses.length} / {MAX_LENS_ROWS}
-            </span>
-            <button type="button" className="btn btn-sm" disabled={disabled || lensFull} onClick={addLens}>
-              + {t('project.addLens')}
-            </button>
-          </div>
-          {value.lenses.length === 0 ? (
-            <div className="faint" style={{ fontSize: 12 }}>
-              {t('project.noLens')}
+        <Section collapsed={collapsed('lenses')} title={`${t('project.lenses')} ${value.lenses.length} / ${MAX_LENS_ROWS}`}>
+          <div className="sub-block">
+            <div className="sub-head">
+              <span className="field-label">
+                {t('project.lenses')} {value.lenses.length} / {MAX_LENS_ROWS}
+              </span>
+              <button type="button" className="btn btn-sm" disabled={disabled || lensFull} onClick={addLens}>
+                + {t('project.addLens')}
+              </button>
             </div>
-          ) : (
-            value.lenses.map((lens, index) => (
-              <div className="crew-row" key={lensKeys.keys[index] ?? `lens-${index}`}>
-                <input
-                  className="input"
-                  placeholder={t('project.lensModel')}
-                  value={lens.model}
-                  disabled={disabled}
-                  onChange={(event) => setLens(index, { model: event.target.value })}
-                />
-                <input
-                  className="input"
-                  placeholder={t('project.lensDetail')}
-                  value={lens.detail}
-                  disabled={disabled}
-                  onChange={(event) => setLens(index, { detail: event.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-sm btn-ghost"
-                  disabled={disabled}
-                  onClick={() => removeLens(index)}
-                >
-                  {t('common.remove')}
-                </button>
+            {value.lenses.length === 0 ? (
+              <div className="faint" style={{ fontSize: 12 }}>
+                {t('project.noLens')}
               </div>
-            ))
-          )}
-          {lensFull && <Note tone="warn">{t('copy.lensFull')}</Note>}
-        </div>
+            ) : (
+              value.lenses.map((lens, index) => (
+                <div className="crew-row" key={lensKeys.keys[index] ?? `lens-${index}`}>
+                  <input
+                    className="input"
+                    placeholder={t('project.lensModel')}
+                    value={lens.model}
+                    disabled={disabled}
+                    onChange={(event) => setLens(index, { model: event.target.value })}
+                  />
+                  <input
+                    className="input"
+                    placeholder={t('project.lensDetail')}
+                    value={lens.detail}
+                    disabled={disabled}
+                    onChange={(event) => setLens(index, { detail: event.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    disabled={disabled}
+                    onClick={() => removeLens(index)}
+                  >
+                    {t('common.remove')}
+                  </button>
+                </div>
+              ))
+            )}
+            {lensFull && <Note tone="warn">{t('copy.lensFull')}</Note>}
+          </div>
+        </Section>
       )}
 
       {show('crew') && (
-        <div className="sub-block">
-          <div className="sub-head">
-            <span className="field-label">
-              {t('project.crew')} {value.crew.length} / {MAX_CREW_ROWS} · {t('project.roleHint')}
-            </span>
-            <button type="button" className="btn btn-sm" disabled={disabled || crewFull} onClick={addCrew}>
-              + {t('project.addRow')}
-            </button>
-          </div>
-          {/*
-            职务用 ComboBox（可自由输入 + 建议列表）而不是普通下拉：
-            预设只是路牌，不是白名单 —— 敲什么就存什么。
-            以前这里用的是原生 <datalist>，那个候选列表由系统绘制、
-            CSS 完全够不着，换主题时永远跟不上，所以换成了自研的。
-          */}
-          {value.crew.length === 0 ? (
-            <div className="faint" style={{ fontSize: 12 }}>
-              {t('common.none')}
+        <Section collapsed={collapsed('crew')} title={`${t('project.crew')} ${value.crew.length} / ${MAX_CREW_ROWS}`}>
+          <div className="sub-block">
+            <div className="sub-head">
+              <span className="field-label">
+                {t('project.crew')} {value.crew.length} / {MAX_CREW_ROWS} · {t('project.roleHint')}
+              </span>
+              <button type="button" className="btn btn-sm" disabled={disabled || crewFull} onClick={addCrew}>
+                + {t('project.addRow')}
+              </button>
             </div>
-          ) : (
-            value.crew.map((entry, index) => (
-              <div className="crew-row" key={crewKeys.keys[index] ?? `crew-${index}`}>
-                <ComboBox
-                  value={entry.role}
-                  disabled={disabled}
-                  ariaLabel={t('project.role')}
-                  listLabel={t('project.roleSuggestions')}
-                  placeholder={t('project.role')}
-                  options={roleOptions}
-                  onChange={(next) => setCrew(index, { role: next })}
-                />
-                <input
-                  className="input"
-                  placeholder={t('project.person')}
-                  value={entry.name}
-                  disabled={disabled}
-                  onChange={(event) => setCrew(index, { name: event.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-sm btn-ghost"
-                  disabled={disabled}
-                  onClick={() => removeCrew(index)}
-                >
-                  {t('common.remove')}
-                </button>
+            {/*
+              职务用 ComboBox（可自由输入 + 建议列表）而不是普通下拉：
+              预设只是路牌，不是白名单 —— 敲什么就存什么。
+              以前这里用的是原生 <datalist>，那个候选列表由系统绘制、
+              CSS 完全够不着，换主题时永远跟不上，所以换成了自研的。
+            */}
+            {value.crew.length === 0 ? (
+              <div className="faint" style={{ fontSize: 12 }}>
+                {t('common.none')}
               </div>
-            ))
-          )}
-          {crewFull && <Note tone="warn">{t('copy.crewFull')}</Note>}
-        </div>
+            ) : (
+              value.crew.map((entry, index) => (
+                <div className="crew-row" key={crewKeys.keys[index] ?? `crew-${index}`}>
+                  <ComboBox
+                    value={entry.role}
+                    disabled={disabled}
+                    ariaLabel={t('project.role')}
+                    listLabel={t('project.roleSuggestions')}
+                    placeholder={t('project.role')}
+                    options={roleOptions}
+                    onChange={(next) => setCrew(index, { role: next })}
+                  />
+                  <input
+                    className="input"
+                    placeholder={t('project.person')}
+                    value={entry.name}
+                    disabled={disabled}
+                    onChange={(event) => setCrew(index, { name: event.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    disabled={disabled}
+                    onClick={() => removeCrew(index)}
+                  >
+                    {t('common.remove')}
+                  </button>
+                </div>
+              ))
+            )}
+            {crewFull && <Note tone="warn">{t('copy.crewFull')}</Note>}
+          </div>
+        </Section>
       )}
 
       {show('notes') && (
-        <label className="field">
-          <span className="field-label">{t('project.notes')}</span>
-          <textarea
-            className="textarea"
-            value={value.notes}
-            maxLength={MAX_PROJECT_NOTES_LENGTH}
-            disabled={disabled}
-            onChange={(event) => patch({ notes: event.target.value })}
-          />
-          <div className={`counter${notesLength > MAX_PROJECT_NOTES_LENGTH ? ' over' : ''}`}>
-            {notesLength} / {MAX_PROJECT_NOTES_LENGTH}
-          </div>
-        </label>
+        <Section collapsed={collapsed('notes')} title={t('project.notes')}>
+          <label className="field">
+            <span className="field-label">{t('project.notes')}</span>
+            <textarea
+              className="textarea"
+              value={value.notes}
+              maxLength={MAX_PROJECT_NOTES_LENGTH}
+              disabled={disabled}
+              onChange={(event) => patch({ notes: event.target.value })}
+            />
+            <div className={`counter${notesLength > MAX_PROJECT_NOTES_LENGTH ? ' over' : ''}`}>
+              {notesLength} / {MAX_PROJECT_NOTES_LENGTH}
+            </div>
+          </label>
+        </Section>
       )}
     </>
   )

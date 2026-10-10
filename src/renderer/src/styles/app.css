@@ -400,7 +400,7 @@ select {
   margin: 6px 0 0;
   max-width: 76ch;
   font-size: var(--fs-sm);
-  line-height: 1.5;
+  line-height: var(--lh-base);
   color: var(--text-muted);
 }
 
@@ -470,7 +470,18 @@ select {
 @media (prefers-reduced-motion: no-preference) {
   .card,
   .block--lead {
-    animation: rise-in var(--dur-slow) var(--ease-out-expo) both;
+    /*
+     * ⚠️ 必须用 backwards，不能用 both / forwards。
+     *
+     * `both` 会在动画结束后继续保留末帧的 transform —— 即使末帧写的是
+     * `transform: none`，计算值也会留一个单位矩阵。单位矩阵同样是"非 none"，
+     * 于是卡片成为 fixed 定位的包含块：卡片里的下拉浮层会相对卡片定位，
+     * 页面一滚动就成倍漂移（2026-10-11 boss 截图抓到的 bug）。
+     *
+     * backwards 只在延迟阶段预置首帧，动画一结束就回到基础样式（transform 无），
+     * 卡片也不会再是 fixed 的包含块。浮层另外还加了 body portal 兜底。
+     */
+    animation: rise-in var(--dur-slow) var(--ease-out-expo) backwards;
   }
 
   .card:nth-child(1) {
@@ -1389,10 +1400,15 @@ table.data td.num {
  * 它是个**控件**，所以走"控件"的语言：面板底 + 细边 + 小圆角，
  * 与下拉浮层同族，不跟纸面上的表单抢注意力。
  *
- * 选中态用一块**会滑动的强调色底板**表达。底板是 .viewswitch 里的第一个
+ * 选中态用一块**会滑动的浮起底板**表达。底板是 .viewswitch 里的第一个
  * 子元素，绝对定位、靠 `--i`（下标）算位移 —— 三个按钮等宽，
  * 所以 `translateX(var(--i) * 100%)` 永远落在正确的格子上。
  * 换文案、换字号、换语言都不会错位；用 JS 量像素则会。
+ *
+ * ⚠️ 2026-10-11：底板从"强调色实底 + 反白字"改成"浅浮层 + 常规字"。
+ * 实底在浅色皮肤下就是一块突兀的深色方块（boss 截图反馈），
+ * 与同一屏里的面板、按钮不是一套语言。现在靠 --surface-2 + 描边分层，
+ * 四套皮肤都成立；滑动动效与 --i 的计算方式不变。
  */
 .viewswitch {
   position: relative;
@@ -1403,7 +1419,8 @@ table.data td.num {
   border: var(--border-w) solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-  animation: toast-in var(--dur-slow) var(--ease-out-expo) both;
+  /* 同 .card：别用 both 留一个单位矩阵 transform，否则它也会成为 fixed 的包含块 */
+  animation: toast-in var(--dur-slow) var(--ease-out-expo) backwards;
 }
 
 .viewswitch__thumb {
@@ -1412,8 +1429,9 @@ table.data td.num {
   bottom: 3px;
   left: 3px;
   width: calc((100% - 6px) / 3);
-  border-radius: 2px;
-  background: var(--accent);
+  border-radius: calc(var(--radius-md) - 3px);
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border-strong);
   /*
    * 位移用下标算，不用像素 —— 见上面那段说明。
    * 曲线用 --ease-spring：末段轻微过冲，滑块"落定"到格子上。
@@ -1433,7 +1451,7 @@ table.data td.num {
   gap: 5px;
   padding: 5px 4px;
   border: none;
-  border-radius: 2px;
+  border-radius: calc(var(--radius-md) - 3px);
   background: transparent;
   color: var(--text-faint);
   font-size: var(--fs-2xs);
@@ -1447,9 +1465,9 @@ table.data td.num {
   color: var(--text);
 }
 
-/* 选中项：深字压在强调色底板上 */
+/* 选中项：常规字压在浅色浮层上，靠字重与颜色和前两项拉开 */
 .viewswitch__btn[aria-pressed='true'] {
-  color: var(--accent-ink);
+  color: var(--text);
 }
 
 .viewswitch__icon {

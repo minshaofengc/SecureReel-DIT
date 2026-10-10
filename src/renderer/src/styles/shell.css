@@ -49,26 +49,45 @@
   flex: 0 0 auto;
   padding: 0 12px;
   background: var(--surface);
-  border-bottom: var(--border-w) solid var(--line-soft);
+  /*
+   * 底部分隔线用 box-shadow 而不是 border-bottom。
+   *
+   * border 会占掉盒高（box-sizing: border-box + height: 44px → 内容盒只剩 43px），
+   * 于是所有子项按 43/2 = 21.5 居中，比顶栏真正的中线 22 高半个像素 ——
+   * 图标与软件名的基线看着就"差一点点"。阴影不占布局，内容盒仍是完整的 44px，
+   * 居中线回到 22，图标与文字与导航同高。
+   */
+  box-shadow: inset 0 -1px 0 var(--line-soft);
   /* 整条是窗口拖拽区；里面的可点元素逐个豁免 */
   -webkit-app-region: drag;
 }
 
+/*
+ * macOS：顶栏左侧让出系统红绿灯区。
+ *
+ * `trafficLightPosition.x = 14`（见 main/index.ts），三个按钮各约 12px、间距约 8px，
+ * 红绿灯整体占据约 x=14 → x=66。而顶栏默认 `padding: 0 12px`，品牌从 x=12 起，
+ * 正好被三个圆点压住。留到 84px（红绿灯右缘 66 + 约 18px 呼吸）与
+ * macOS 原生 / VS Code / Linear 等把窗口控件与内容左缘拉开的做法一致。
+ *
+ * 整条顶栏是拖拽区（-webkit-app-region: drag），红绿灯区本不放可点元素，
+ * 品牌与导航自然右移即可，没有功能损失。
+ */
+[data-platform='macos'] .topbar {
+  padding-left: 84px;
+}
+
+/*
+ * 品牌区：只有软件名（图标已移除，boss 不要那个绿色图标）。
+ *
+ * 去掉图标后不再需要 gap；保留右侧竖分隔线，与后面的主导航拉开层次。
+ * 上下由 .topbar 的 align-items: center 负责居中。
+ */
 .topbar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
   padding-right: 14px;
   border-right: var(--border-w) solid var(--line-soft);
-  flex: 0 0 auto;
-}
-
-/* 品牌标记：一个圆角方块，不用图片 —— 离线包越小越好 */
-.topbar__mark {
-  width: 15px;
-  height: 15px;
-  border-radius: 4px;
-  background: var(--accent);
   flex: 0 0 auto;
 }
 

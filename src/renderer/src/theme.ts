@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 import { THEMES, type ThemeId, type ThemeMode } from '@shared/types'
 import { isWindows } from './platform'
 
-/** 跟随显式的系统外观变化；首次运行时 `system` 以暗房模式为产品默认。 */
+/** 跟随显式的系统外观变化；首次运行时 `system` 以暗色为产品默认。 */
 function usePrefersDark(): boolean {
   const [dark, setDark] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches

@@ -1,6 +1,6 @@
 # SecureReel DIT
 
-[English](#english) · [简体中文](#简体中文)
+[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.6 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.6)
 
 ---
 
@@ -36,8 +36,11 @@ clear desktop interface.
   never affects the hash report.
 - Custom "role + name" crew list (up to 50 rows) and a 4000-character project note;
   edits made during a run are saved and land in the next report revision.
-- Four themes — "Qinghe" (bamboo), "Wuguang" (pink/blue), "Shucheng" (cheese) and
-  "Iris" (blue violet) — each with system, light and dark modes.
+- Three palettes — neutral, graphite blue and warm sand — each with system, light
+  and dark modes; card, compact and focus view modes.
+- Per-job editing proxies: ProRes 422 Proxy/LT/422/HQ, H.264 or H.265, output
+  resolution and optional 3D LUT. Encoder availability is detected on the local
+  machine; private RAW formats may not decode. Proxies never replace original backups.
 - Simplified Chinese and English interface, plus a built-in help centre.
 
 ### Installation
@@ -81,8 +84,8 @@ proprietary CODEX/ARRI binary**.
 HDE encoding is provided by ARRI/CODEX official free tools. SecureReel DIT does not
 redistribute them.
 
-The bundled FFmpeg/ffprobe are used solely for media reading and thumbnail
-extraction; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for licence and
+The bundled FFmpeg/ffprobe are used for media reading, thumbnail
+extraction and editing proxies; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for licence and
 provenance. They do not provide HDE encoding.
 
 ### Development
@@ -183,7 +186,8 @@ SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的**免
 - 不可变的 PDF/JSON/离线 HTML 报告修订：R001、R002……旧报告不会被覆盖。首帧图内联进 HTML，报告单独发送也能看到画面。
 - 通过随应用分发的开源 FFmpeg/ffprobe 读取可支持素材的拍摄时间、时长、时码并提取首尾帧；解析失败不会影响哈希报告。
 - 自定义“职务 + 所属人”（最多 50 行）及 4000 字项目备注；执行期间自动保存并进入新报告修订。
-- 五套配色（暗房、石墨蓝、中性、暖砂、靛青），均支持跟随系统、明亮和黑暗模式；另有卡片／紧凑／专注三种视图模式。
+- 按任务生成剪辑代理：ProRes 422 Proxy/LT/422/HQ、H.264、H.265，支持输出分辨率与可选 3D LUT。本机编码器探测决定可用性；私有 RAW 可能无法解码。代理不能替代原素材备份。
+- 三套配色（中性、石墨蓝、暖砂），均支持跟随系统、明亮和黑暗模式；另有卡片／紧凑／专注三种视图模式。
 - 简体中文和英文界面，以及内置帮助中心。
 
 ### 安装
@@ -215,7 +219,7 @@ SecureReel DIT **不实现、不逆向工程、也不打包任何 HDE 编码器�
 
 HDE 编码能力由 ARRI/CODEX 官方免费工具提供。SecureReel DIT 不随安装包分发这些工具。
 
-随应用提供的 FFmpeg/ffprobe 仅用于报告媒体读取与缩略图提取，许可与来源见
+随应用提供的 FFmpeg/ffprobe 用于报告媒体读取、缩略图提取与剪辑代理，许可与来源见
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。它们不提供 HDE 编码。
 
 ### 开发

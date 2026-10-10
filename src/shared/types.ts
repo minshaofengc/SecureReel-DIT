@@ -343,6 +343,14 @@ export interface MediaProbe {
   /** 提取出的首帧 / 尾帧缩略图文件名（位于报告的 frames/ 目录） */
   firstFrame: string | null
   lastFrame: string | null
+  /**
+   * 候选静帧文件名（位于报告的 frames/ 目录），每条 3–4 张。
+   *
+   * 与 firstFrame / lastFrame 的分工：那两张只是"这条素材长什么样"的锚点，
+   * 这里是"片子里最值得挑出来的几张画面"。本地启发式挑选（清晰度打分），
+   * 不涉及任何模型 —— 闭眼 / 表情这类语义判断本项目做不到，也不假装能做。
+   */
+  stillFrames: string[]
   /** 识别出的素材格式，例如 "ProRes 422 HQ"（面向用户的可读名称） */
   format: string | null
   /** 格式族 */
@@ -353,6 +361,34 @@ export interface MediaProbe {
   vendorTool: string | null
   /** 补充说明：为什么某些字段是空的、预览图分辨率与传感器分辨率的区别等 */
   note: string | null
+  /**
+   * 代理生成结果（仅在设置了 proxyEnabled 时才有值）。
+   *
+   * `ok=true` 表示目标盘上已存在对应的 ProRes 代理；不可解码的私有格式
+   * （R3D / BRAW / ARRIRAW / CRM）会带 `ok=false` + 说明原因，
+   * 而不是静默留白。
+   */
+  proxy: MediaProxyResult | null
+}
+
+/** 一条素材的代理生成结果。 */
+export interface MediaProxyResult {
+  /** 相对目标盘的代理文件路径；失败时为 null */
+  relPath: string | null
+  ok: boolean
+  /** 失败 / 跳过原因（面向用户） */
+  reason: string | null
+  /** 实际用的规格，便于报告标注（仅 ProRes 有意义；h264/h265 时为 null） */
+  profile: ProxyProfile | null
+  /** 实际用的编码 */
+  codec: ProxyCodec | null
+  /** 实际用的分辨率档位 */
+  resolution: ProxyResolution | null
+  /** 实际编码出的画面尺寸（只降不升后的真实值）；未知时为 null */
+  width: number | null
+  height: number | null
+  /** 实际套用的 LUT（未套为 null）——报告如实标注"这条代理套了哪个 LUT" */
+  lutPath: string | null
 }
 
 export interface CopyJobFile {
@@ -422,6 +458,19 @@ export interface CopyJob {
   hashAlgorithm: HashAlgorithm
   manifestFormat: ManifestFormat
   verifyAfterWrite: boolean
+  /**
+   * 本次任务是否出代理。**每任务**决定（拷贝页可选），不是全局设置 ——
+   * 同一台机器上，"这次要给剪辑交代理"和"这次只备份"是两件不同的事。
+   */
+  proxyEnabled: boolean
+  /** 本次任务的代理分辨率（只降不升） */
+  proxyResolution: ProxyResolution
+  /** 本次任务的代理编码 */
+  proxyCodec: ProxyCodec
+  /** 本次任务的 ProRes 规格（仅 codec === 'prores' 时有意义） */
+  proxyProfile: ProxyProfile
+  /** 本次任务的代理 LUT（`.cube` 绝对路径）；null = 不套 */
+  proxyLutPath: string | null
   state: JobState
   totalFiles: number
   totalBytes: number
@@ -474,12 +523,33 @@ export interface JobProgress {
    */
   overallPercent: number
   bytesPerSecond: number
+  /**
+   * 本次拷贝的**平均速度**（字节/秒），已剔除暂停时段。
+   *
+   * 与 `bytesPerSecond`（4 秒滑动窗口的瞬时速率）的分工：
+   * 瞬时速率给波形图看趋势，平均速度给"剩余时间"用 —— 后者平稳得多，
+   * 算出来的完成时刻不会来回跳。分析阶段为 0。
+   */
+  averageBytesPerSecond: number
   /** 当前正在处理的文件（相对路径）。并发时是其中任意一个，仅作兼容保留 */
   currentFile: string | null
   /** 当前真正在处理的文件；串行时长度为 0 或 1，并发时最多等于文件级并发数 */
   activeFiles: ActiveFileProgress[]
   targets: TargetProgress[]
   etaSeconds: number | null
+  /**
+   * 预计完成的**绝对时刻**（ISO 8601），由 `now + etaSeconds` 得出。
+   *
+   * 只在拷贝阶段给（分析/收尾阶段耗时与字节无关，外推没意义）。
+   * 界面拿它显示"预计完成 北京时间 HH:MM"。null 表示还算不出来。
+   */
+  etaFinishAt: string | null
+  /**
+   * 写入速度采样序列（每秒一个点，最多 120 个），只给波形图用。
+   *
+   * 单个瞬时速率数字看不出"盘是稳定跑还是越跑越慢"，趋势只有序列能给。
+   */
+  speedHistory: number[]
   /** 素材分析进度（phase 为 analyzing 时有效） */
   analyzeDone: number
   analyzeTotal: number
@@ -647,32 +717,43 @@ export interface LastJobDraft {
 /**
  * 配色皮肤 id 列表。
  *
- * 2026-10-05 起为**五套皮肤**（暗房 / 石墨蓝 / 中性 / 暖砂 / 靛青）。
- * 此前走过两个阶段：四套配色（清和 / 雾光 / 熟成 / 鸢尾）→ 收成单套。
- * 现在这五套都在 `styles/tokens.css` 里以 `html[data-skin='…'][data-mode='…']`
- * 的形式实现，`darkroom` 是默认皮肤（它没有覆盖块，走 `html[data-mode]` 那两块兜底）。
+ * 2026-10-11 起为**三套皮肤**（中性 / 石墨蓝 / 暖砂），**默认中性**。
+ * 此前是五套（多一个暗房 darkroom 与靛青 indigo）—— 选项太多反而挑不出来，砍到三套。
+ * 「中性」的色值直接写进了 `styles/tokens.css` 的**基础块**（`html[data-mode='…']`），
+ * 所以 `mono` **没有自己的覆盖块**。
  *
  * 皮肤只换颜色，不换版式；版式由视图模式（见 ViewSwitch）负责。
  * 明暗两档（`themeMode`）与皮肤正交，两者都在设置页的「外观」卡里选。
  *
- * ⚠️ 加第六个皮肤要同时动三处，漏一处**都不报错**但会出问题：
+ * ⚠️ 加一套皮肤要同时动三处，漏一处**都不报错**但会出问题：
  *   1. 这里（类型与顺序）
  *   2. `styles/tokens.css` 里的明暗两块覆盖 —— 漏了是"点了没反应"
  *   3. `i18n/messages.ts` 的中英两份皮肤名 —— 漏了是界面上冒出键名
  */
-export const THEMES = ['darkroom', 'steel', 'mono', 'sand', 'indigo'] as const
+export const THEMES = ['mono', 'steel', 'sand'] as const
 export type ThemeId = (typeof THEMES)[number]
 
 /**
- * v2.0.3 及更早存进数据库的旧主题 id。
+ * 已经不再合法、但可能存在于老存档里的主题 id。
  *
  * 必须留一份：设置是从 `settings_kv` 里软合并读出来的（`getSettings` 不做校验），
- * 老用户升上来时 `themeId` 仍是 `'qinghe'` 这类值。若不归一化，
- * 它会一路漏到 `<html data-theme="qinghe">`，而 tokens.css 已没有匹配这个
- * 属性的块 —— 于是所有 `--accent` 之类全部取不到值，界面变成一片无样式的
+ * 老用户升上来时 `themeId` 仍是 `'qinghe'`（或 2.0.5 那批的 `'darkroom'` / `'indigo'`）。
+ * 若不归一化，它会一路漏到 `<html data-skin="…">`，而 tokens.css 已没有匹配这个
+ * 值的块 —— 于是所有 `--accent` 之类全部取不到值，界面变成一片无样式的
  * 透明块，看起来像应用崩了，**而且不报任何错**。
+ *
+ * ⚠️ 这份名单只用于**测试枚举**（store / schemas 两条用例各有一轮）。
+ * `migrateThemeId` 自己不读它 —— 它只查 `THEMES`，不在名单里的一律回落默认。
  */
-export const LEGACY_THEME_IDS = ['qinghe', 'wuguang', 'cheese', 'iris', 'studio'] as const
+export const LEGACY_THEME_IDS = [
+  'qinghe',
+  'wuguang',
+  'cheese',
+  'iris',
+  'studio',
+  'darkroom',
+  'indigo'
+] as const
 
 /** 把任意历史值归一化成当前合法主题 id。未知值一律回落到默认。 */
 export function migrateThemeId(value: unknown): ThemeId {
@@ -697,6 +778,11 @@ export interface AppSettings {
   verifyAfterWrite: boolean
   /** 同时写入的目标数量上限（1–8） */
   maxParallelTargets: number
+  /**
+   * 「性能与行为」档位。只作**一键套用**的记录，不反向推断 ——
+   * 用户手动改细项后这里仍是上次选的档位（界面可据此显示"已微调"）。
+   */
+  performanceMode: PerformanceMode
   /** 断点续传：残留的分片文件若大小未超预期则续写 */
   resumePartialFiles: boolean
   /** 任务完成后弹出目标盘 */
@@ -732,16 +818,124 @@ export interface AppSettings {
   soundEnabled: boolean
   /** 提示音音量（0–1） */
   soundVolume: number
+  /**
+   * 任务结束后是否生成报告。
+   *
+   * 默认开启（与历史行为一致）。关掉后任务完成只剩数据库记录与日志，
+   * 不再产出 HTML/PDF/清单 —— 适合"只想要拷贝本身"的轻量场景。
+   * 注意：关闭的是**自动生成**；任务详情里仍可手动补一份（受"运行中不许生成"红线约束）。
+   */
+  generateReport: boolean
+  /**
+   * 报告输出目录。
+   *
+   * null（默认）= 保持历史行为：本机 `<userData>/reports/<jobId>/R00N/`，
+   * 并另发一份到目标盘 `SecureReel/<任务名>_R001/`。
+   * 指定绝对路径时，报告改写到该目录（仍按任务建子目录），不再发目标盘副本。
+   */
+  reportOutputDir: string | null
+  /**
+   * 全部目标弹出后是否关机。
+   *
+   * ⚠️ 破坏性操作，**默认关闭**。只在任务**成功完成**（非失败/取消）时触发，
+   * 且留一段缓冲倒计时允许用户取消（"后悔药"）。适合无人值守过夜拷卡。
+   */
+  shutdownAfterCopy: boolean
+  /**
+   * 为每条视频素材生成代理（ProRes）。
+   *
+   * 默认关闭：代理要额外读一遍源、写一份成品，一小时素材可能十几分钟，
+   * 且体积不小（ProRes 422 Proxy 约 45 Mbps）。需要给剪辑交代理时再开。
+   */
+  proxyEnabled: boolean
+  /** 代理规格：422 Proxy / LT / 422 / HQ。默认 Proxy（体积最小、剪辑最顺）。 */
+  proxyProfile: ProxyProfile
+  /** 代理输出分辨率。默认 1080p。只降不升。 */
+  proxyResolution: ProxyResolution
+  /** 代理编码。默认 ProRes（两平台恒定可用）。 */
+  proxyCodec: ProxyCodec
+  /**
+   * 默认套在代理上的 3D LUT（`.cube` 绝对路径）；null = 不套。
+   *
+   * 只是**默认值**，拷贝页可针对单次任务另选或清空。
+   */
+  proxyLutPath: string | null
+  /** 并行生成代理的进程数（1–4） */
+  proxyConcurrency: number
+  /**
+   * 每条视频出几张候选静帧（3–4）。
+   *
+   * 与"首帧提取"不同：静帧会在片子里均匀取多个时间点、挑清晰度最高的几张，
+   * 供筛选精彩画面用。0 表示不出（只保留原有首尾帧）。
+   */
+  stillFrameCount: number
+}
+
+/** ProRes 代理规格。数值对应 ffmpeg `-profile:v`。 */
+export const PROXY_PROFILES = ['422-proxy', '422-lt', '422', '422-hq'] as const
+export type ProxyProfile = (typeof PROXY_PROFILES)[number]
+
+/**
+ * 代理输出分辨率。
+ *
+ * ⚠️ **只降不升**：源比目标矮就保持原分辨率（靠 `-vf scale` 里的 `min(ih,H)`）。
+ * 往小放大没有意义 —— 它不会凭空多出细节，只会把文件撑大、让剪辑白等。
+ */
+export const PROXY_RESOLUTIONS = ['1080p', '1440p', '4k'] as const
+export type ProxyResolution = (typeof PROXY_RESOLUTIONS)[number]
+
+/** 各分辨率对应的**目标高度**（像素）。宽按源比例自动算，取偶。 */
+export const PROXY_RESOLUTION_HEIGHT: Record<ProxyResolution, number> = {
+  '1080p': 1080,
+  '1440p': 1440,
+  '4k': 2160
+}
+
+/**
+ * 代理编码。
+ *
+ * - `prores`：FFmpeg 原生 `prores_ks`（LGPL），**两平台恒定可用**，剪辑最顺。
+ * - `h264` / `h265`：走**本机硬件编码器**（macOS VideoToolbox / Win NVENC·QSV·AMF），
+ *   h264 另有 `libopenh264`（BSD）软件兜底；h265 没有软件兜底（libx265 是 GPL，不用）。
+ *
+ * 为什么不给用户选具体硬件（NVENC/QSV/AMF）：由运行时探测**自动挑最优**，
+ * 用户只关心"我要 H.264 还是 H.265"。
+ */
+export const PROXY_CODECS = ['prores', 'h264', 'h265'] as const
+export type ProxyCodec = (typeof PROXY_CODECS)[number]
+
+/**
+ * 「性能与行为」的档位预设。
+ *
+ * 现场多数时候不该让用户逐项去调并行数/断点续传/拷完弹出这些细项 ——
+ * 一个档位把一套合理的组合一次设好，想微调再展开「高级」。
+ * 档位只做**一键套用**，不反向推断（手动改细项后不会自动跳档）。
+ */
+export const PERFORMANCE_MODES = ['quiet', 'standard', 'turbo'] as const
+export type PerformanceMode = (typeof PERFORMANCE_MODES)[number]
+
+/** 档位 → 各细项的取值。`AppSettings` 里对应的字段与之同名。 */
+export const PERFORMANCE_MODE_PRESETS: Record<
+  PerformanceMode,
+  Pick<AppSettings, 'maxParallelTargets' | 'resumePartialFiles' | 'ejectAfterCopy' | 'shutdownAfterCopy'>
+> = {
+  /** 静默/省心：少占资源、拷完自动弹出。适合后台跑，不打断别的活。 */
+  quiet: { maxParallelTargets: 2, resumePartialFiles: true, ejectAfterCopy: true, shutdownAfterCopy: false },
+  /** 标准：均衡，默认值。 */
+  standard: { maxParallelTargets: 4, resumePartialFiles: true, ejectAfterCopy: false, shutdownAfterCopy: false },
+  /** 极速：所有目标盘并行拉满，适合急着交片。 */
+  turbo: { maxParallelTargets: 8, resumePartialFiles: true, ejectAfterCopy: false, shutdownAfterCopy: false }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
-  themeId: 'darkroom',
+  themeId: 'mono',
   themeMode: 'dark',
   hashAlgorithm: 'xxhash64',
   manifestFormat: 'asc-mhl-2.0',
   verifyAfterWrite: true,
   maxParallelTargets: 4,
+  performanceMode: 'standard',
   resumePartialFiles: true,
   ejectAfterCopy: false,
   ffmpegDir: null,
@@ -751,7 +945,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maxFrameExtractions: 0,
   frameConcurrency: 4,
   soundEnabled: true,
-  soundVolume: 0.6
+  soundVolume: 0.6,
+  generateReport: true,
+  reportOutputDir: null,
+  shutdownAfterCopy: false,
+  proxyEnabled: false,
+  proxyProfile: '422-proxy',
+  proxyResolution: '1080p',
+  proxyCodec: 'prores',
+  proxyLutPath: null,
+  proxyConcurrency: 1,
+  stillFrameCount: 0
 }
 
 /* ------------------------------------------------------------------ *

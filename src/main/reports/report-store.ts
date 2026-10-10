@@ -85,6 +85,14 @@ export interface WriteRevisionInput {
    * 附注必须在渲染前交进来，这条路才走得通。
    */
   preNotes?: string[]
+  /**
+   * 报告落地的**根目录**覆盖（对应设置里的 `reportOutputDir`）。
+   *
+   * 省略 / null = 用默认的本机目录 `<userData>/reports/`。
+   * 指定绝对路径时，报告改造到该目录下（仍按 `<jobId>/R00N/` 建子结构），
+   * 于是用户可以把它直接指到外接盘或项目交付目录。
+   */
+  outputBaseDir?: string | null
 }
 
 export interface WriteRevisionResult {
@@ -206,7 +214,9 @@ export class ReportStore {
   async writeRevision(input: WriteRevisionInput): Promise<WriteRevisionResult> {
     const { job, store, project } = input
     const revision = store.nextRevision(job.id)
-    const dir = this.revisionDir(job.id, revision)
+    // 报告根目录：设置里指定了就写过去，否则用默认的本机 reports 目录。
+    const baseDir = input.outputBaseDir ?? this.paths.reportsDir
+    const dir = join(baseDir, job.id, revision)
 
     if (await pathExists(dir)) {
       // 只有并发或人工误操作才可能走到这里，必须炸掉而不是写进去
@@ -317,6 +327,19 @@ export class ReportStore {
     // 结果 HTML 和 report.json 里都看不到，等于白算。
     if (copiedFrames > 0) {
       notes.push(`已归档 ${copiedFrames} 张首尾帧缩略图（frames/ 目录）。`)
+    }
+
+    // 2b) 代理生成情况汇总 —— 出了多少、跳过多少、为什么跳过。
+    // 代理是可选产出，成功不必大书特书，但"哪些没出、为什么"必须说清楚。
+    const proxyStat = await this.summarizeProxies(store, job.id)
+    if (proxyStat.requested > 0) {
+      if (proxyStat.skipped > 0) {
+        notes.push(
+          `代理素材：已生成 ${proxyStat.ok} 条，跳过 ${proxyStat.skipped} 条（私有格式无法解码或目标盘不可写，逐条原因见文件明细）。`
+        )
+      } else if (proxyStat.ok > 0) {
+        notes.push(`代理素材：已为 ${proxyStat.ok} 条素材生成 ProRes 代理（目标盘 Proxies/ 目录）。`)
+      }
     }
 
     // 3) report.json —— 完整逐文件记录
@@ -605,12 +628,35 @@ export class ReportStore {
     }
   }
 
+  /**
+   * 汇总代理生成情况。
+   *
+   * 只统计"被要求出代理"的文件（probe.proxy 非 null）：没开代理的文件
+   * proxy 是 null，不该被算进分母 —— 否则一条纯音频的卡也会显示"跳过 N 条"。
+   */
+  private async summarizeProxies(
+    store: Store,
+    jobId: string
+  ): Promise<{ requested: number; ok: number; skipped: number }> {
+    let requested = 0
+    let ok = 0
+    for await (const file of store.iterateFiles(jobId)) {
+      const proxy = file.probe?.proxy
+      if (proxy === undefined || proxy === null) continue
+      requested++
+      if (proxy.ok) ok++
+    }
+    return { requested, ok, skipped: requested - ok }
+  }
+
   private async collectReferencedFrames(store: Store, jobId: string): Promise<string[]> {
     const names = new Set<string>()
     for await (const file of store.iterateFiles(jobId)) {
       if (file.probe === null) continue
       if (file.probe.firstFrame !== null) names.add(file.probe.firstFrame)
       if (file.probe.lastFrame !== null) names.add(file.probe.lastFrame)
+      // 候选静帧同样要归档进修订目录，否则 HTML 里的 <img> 会指向不存在的图
+      for (const still of file.probe.stillFrames ?? []) names.add(still)
     }
     return [...names]
   }

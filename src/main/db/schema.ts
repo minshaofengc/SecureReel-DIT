@@ -66,6 +66,37 @@ export const JOB_COLUMN_MIGRATIONS = [
     table: 'jobs',
     column: 'source_root_name',
     ddl: "ALTER TABLE jobs ADD COLUMN source_root_name TEXT NOT NULL DEFAULT ''"
+  },
+  {
+    // 每任务代理开关。老任务默认 0（不出代理）——
+    // 与 2.0.6 之前"代理开关在全局设置里、且默认关闭"的观感一致。
+    table: 'jobs',
+    column: 'proxy_enabled',
+    ddl: 'ALTER TABLE jobs ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0'
+  },
+  {
+    // 每任务代理分辨率。默认 1080p（与当前全局默认一致）。
+    table: 'jobs',
+    column: 'proxy_resolution',
+    ddl: "ALTER TABLE jobs ADD COLUMN proxy_resolution TEXT NOT NULL DEFAULT '1080p'"
+  },
+  {
+    // 每任务代理编码。默认 prores（两平台恒定可用）。
+    table: 'jobs',
+    column: 'proxy_codec',
+    ddl: "ALTER TABLE jobs ADD COLUMN proxy_codec TEXT NOT NULL DEFAULT 'prores'"
+  },
+  {
+    // 每任务 ProRes 规格。默认 422-proxy（与全局默认一致）。
+    table: 'jobs',
+    column: 'proxy_profile',
+    ddl: "ALTER TABLE jobs ADD COLUMN proxy_profile TEXT NOT NULL DEFAULT '422-proxy'"
+  },
+  {
+    // 每任务代理 LUT（.cube 绝对路径）。可空 —— 绝大多数任务不套 LUT。
+    table: 'jobs',
+    column: 'proxy_lut_path',
+    ddl: 'ALTER TABLE jobs ADD COLUMN proxy_lut_path TEXT'
   }
 ] as const
 
@@ -86,6 +117,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   hash_algorithm     TEXT NOT NULL,
   manifest_format    TEXT NOT NULL,
   verify_after_write INTEGER NOT NULL DEFAULT 1,
+  proxy_enabled      INTEGER NOT NULL DEFAULT 0,
+  proxy_resolution   TEXT NOT NULL DEFAULT '1080p',
+  proxy_codec        TEXT NOT NULL DEFAULT 'prores',
+  proxy_profile      TEXT NOT NULL DEFAULT '422-proxy',
+  proxy_lut_path     TEXT,
   state              TEXT NOT NULL,
   total_files        INTEGER NOT NULL DEFAULT 0,
   total_bytes        INTEGER NOT NULL DEFAULT 0,

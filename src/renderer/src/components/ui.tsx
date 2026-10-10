@@ -143,7 +143,7 @@ export function Field({
     <label className="field">
       <span className="field-label">{label}</span>
       {children}
-      {hint !== undefined && <span className="hint faint" style={{ fontSize: 11 }}>{hint}</span>}
+      {hint !== undefined && <span className="hint faint">{hint}</span>}
     </label>
   )
 }

@@ -28,6 +28,56 @@ function dotTone(state: string): string {
 }
 
 /**
+ * 把 ISO 时刻格式化成**本机时区**的 HH:MM。
+ *
+ * 刻意不用 `toISOString()` 取时分秒 —— 那是 UTC，东八区会差 8 小时。
+ * 用 `Intl.DateTimeFormat` 让它按本机时区输出，与用户手表上的时间一致。
+ */
+function formatClockTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(date)
+}
+
+/**
+ * 写入速度波形图。
+ *
+ * 纯手绘 SVG 折线，不引任何图表库 —— 运行时零依赖是这个项目的硬约束。
+ * 只画相对趋势：纵轴按序列自身的最大值归一化，所以两端的绝对高度没有含义，
+ * "有没有掉速"才是要看的。低于 8% 的峰谷不放大，避免噪声糊满整块。
+ */
+function SpeedSparkline({ values }: { values: number[] }): ReactNode {
+  const w = 320
+  const h = 44
+  const max = Math.max(...values, 1)
+  const n = values.length
+  const step = n > 1 ? w / (n - 1) : w
+  const points = values
+    .map((v, i) => {
+      const x = i * step
+      // 保留 4px 上下内边距，速度快时线不贴边
+      const y = h - 4 - (v / max) * (h - 8)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  return (
+    <svg
+      className="spark__svg"
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="写入速度趋势"
+    >
+      <polyline points={points} fill="none" stroke="var(--accent)" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+/**
  * 文件表的单行。
  *
  * 单独抽出来并套 `memo` 不是为了好看：一张五千条素材的卡上，中间态事件
@@ -346,6 +396,26 @@ export function QueueView(): ReactNode {
     await refreshJobs()
   }, [recovered, refreshJobs])
 
+  /**
+   * 重试失败项：只把 failed 的文件放回待处理，已校验通过的目标不重拷。
+   *
+   * 与「开始」的分工：开始只跑 pending；任务以 completed-with-errors 结束时
+   * 失败文件刻意留在失败态，必须走这个入口才能重新处理。
+   */
+  const retryFailed = useCallback(async () => {
+    if (selected === null) return
+    setBusy(true)
+    try {
+      await unwrap(window.securereel.jobs.retryFailed(selected.id))
+      await refreshJobs()
+      await loadFiles(selected.id, 1500)
+    } catch (error) {
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }, [loadFiles, pushToast, refreshJobs, selected])
+
   return (
     <div className="page page--monitor">
       <div className="monitor">
@@ -473,7 +543,8 @@ export function QueueView(): ReactNode {
                 <div className="mhead__acts">
                   {(selected.state === 'draft' ||
                     selected.state === 'cancelled' ||
-                    selected.state === 'failed') && (
+                    selected.state === 'failed') &&
+                    selected.filesFailed === 0 && (
                     <button
                       type="button"
                       className="btn btn-sm btn-primary"
@@ -481,6 +552,17 @@ export function QueueView(): ReactNode {
                       onClick={() => void act('start')}
                     >
                       {t('queue.start')}
+                    </button>
+                  )}
+                  {!isJobLive(selected.state) && selected.filesFailed > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={busy}
+                      title={t('queue.retryFailedHint')}
+                      onClick={() => void retryFailed()}
+                    >
+                      {t('queue.retryFailed')}
                     </button>
                   )}
                   {(selected.state === 'running' || selected.state === 'queued') && (
@@ -563,7 +645,10 @@ export function QueueView(): ReactNode {
                     ? null
                     : Math.max(0, (Date.now() - Date.parse(selected.startedAt)) / 1000)
                 const speed = jobProgress?.bytesPerSecond ?? 0
+                const avgSpeed = jobProgress?.averageBytesPerSecond ?? 0
                 const eta = jobProgress?.etaSeconds ?? null
+                const etaFinishAt = jobProgress?.etaFinishAt ?? null
+                const speedHistory = jobProgress?.speedHistory ?? []
 
                 return (
                   <>
@@ -609,6 +694,12 @@ export function QueueView(): ReactNode {
                               <div className="st__v">{humanRate(speed)}</div>
                             </div>
                           )}
+                          {active && avgSpeed > 0 && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.avgSpeed')}</div>
+                              <div className="st__v">{humanRate(avgSpeed)}</div>
+                            </div>
+                          )}
                           {elapsedSeconds !== null && (
                             <div className="st">
                               <div className="st__k">{t('queue.elapsed')}</div>
@@ -621,10 +712,26 @@ export function QueueView(): ReactNode {
                               <div className="st__v">{humanDuration(eta)}</div>
                             </div>
                           )}
+                          {active && etaFinishAt !== null && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.etaFinishAt')}</div>
+                              <div className="st__v">{formatClockTime(etaFinishAt)}</div>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <Progress value={pct} tone={failed > 0 ? 'warn' : undefined} />
                     </div>
+
+                    {/* 写入速度波形图。
+                        单个速度数字看不出"盘是稳定跑还是越跑越慢"，
+                        趋势图能一眼看出 I/O 是否健康 —— 对现场判断盘况很有用。 */}
+                    {active && speedHistory.length > 2 && (
+                      <div className="spark">
+                        <div className="sec-h">{t('queue.speedTrend')}</div>
+                        <SpeedSparkline values={speedHistory} />
+                      </div>
+                    )}
 
                     {/* 正在处理中的文件。
                         整条进度只回答"还剩多久"，回答不了"现在到底在动没有" ——

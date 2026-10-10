@@ -81,6 +81,8 @@ export type MsgKey =
   | 'job.notFound'
   | 'job.alreadyRunning'
   | 'job.notRunning'
+  | 'job.noFailedFiles'
+  | 'job.retryFailed'
   | 'job.addTargetWhileRunning'
   | 'job.maxTargets'
   | 'job.targetAlreadyInList'
@@ -91,6 +93,8 @@ export type MsgKey =
   // ---- JobManager：报告与收尾 ----
   | 'job.ejected'
   | 'job.ejectFail'
+  | 'job.shutdownScheduled'
+  | 'job.shutdownFail'
   // ---- 弹出目标盘：失败原因（两个平台的实现完全不同，原因文案也分开） ----
   | 'eject.done'
   | 'eject.unsupported'
@@ -98,6 +102,11 @@ export type MsgKey =
   | 'eject.failedWindows'
   | 'eject.commandFailed'
   | 'eject.exitCode'
+  // ---- 关机（任务成功后可选）----
+  | 'shutdown.scheduled'
+  | 'shutdown.unsupported'
+  | 'shutdown.commandFailed'
+  | 'shutdown.exitCode'
   | 'job.reportNotCleanNote'
   | 'job.verifyModeNote'
   | 'job.pdfMissingFrames'
@@ -367,6 +376,14 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
     'zh-CN': '该任务当前没有在运行。',
     en: 'This job is not currently running.'
   },
+  'job.noFailedFiles': {
+    'zh-CN': '这个任务没有可重试的失败项。',
+    en: 'This job has no failed items to retry.'
+  },
+  'job.retryFailed': {
+    'zh-CN': '重试失败项：{count} 个文件已回到待处理，已校验通过的目标不会重拷。',
+    en: 'Retrying failed items: {count} file(s) returned to pending; verified targets are not copied again.'
+  },
   'job.addTargetWhileRunning': {
     'zh-CN': '任务正在运行，不能修改目标。请先取消任务。',
     en: 'The job is running — targets cannot be changed. Cancel it first.'
@@ -397,6 +414,14 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
     'zh-CN': '弹出目标盘「{label}」失败：{reason}',
     en: 'Failed to eject target "{label}": {reason}'
   },
+  'job.shutdownScheduled': {
+    'zh-CN': '任务已完成，系统将在 60 秒后关机。要取消请立即在系统提示中点击取消。',
+    en: 'Job complete. The system will shut down in 60 seconds. Cancel now in the system prompt to abort.'
+  },
+  'job.shutdownFail': {
+    'zh-CN': '自动关机未能启动：{reason}',
+    en: 'Could not start the automatic shutdown: {reason}'
+  },
   // 这些是「弹出失败的原因」本身，会被上面 job.ejectFail 的 {reason} 包住
   'eject.done': {
     'zh-CN': '已弹出',
@@ -425,6 +450,23 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
   'eject.exitCode': {
     'zh-CN': 'diskutil 退出码 {code}',
     en: 'diskutil exited with code {code}'
+  },
+  // 这些是「关机失败的原因」本身，会被上面 job.shutdownFail 的 {reason} 包住
+  'shutdown.scheduled': {
+    'zh-CN': '已安排关机',
+    en: 'Shutdown scheduled'
+  },
+  'shutdown.unsupported': {
+    'zh-CN': '当前系统不支持自动关机，请手动关机。',
+    en: 'This system does not support automatic shutdown; please shut down manually.'
+  },
+  'shutdown.commandFailed': {
+    'zh-CN': '无法启动关机命令：{reason}',
+    en: 'Could not start the shutdown command: {reason}'
+  },
+  'shutdown.exitCode': {
+    'zh-CN': '关机命令退出码 {code}',
+    en: 'Shutdown command exited with code {code}'
   },
   'job.reportNotCleanNote': {
     'zh-CN':

@@ -67,6 +67,11 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
     hashAlgorithm: 'xxhash64',
     manifestFormat: 'asc-mhl-2.0',
     verifyAfterWrite: true,
+    proxyEnabled: false,
+    proxyResolution: '1080p',
+    proxyCodec: 'prores',
+    proxyProfile: '422-proxy',
+    proxyLutPath: null,
     state,
     totalFiles: 3,
     totalBytes: 300,
@@ -238,11 +243,13 @@ describe('report.html 自包含性', () => {
         frameRate: '25 fps',
         firstFrame: frameName,
         lastFrame: null,
+        stillFrames: [],
         format: 'QuickTime / ProRes',
         formatFamily: 'prores',
         frameSource: 'decoded',
         vendorTool: null,
-        note: null
+        note: null,
+        proxy: null
       }
     })
 
@@ -294,11 +301,13 @@ describe('report.html 自包含性', () => {
         frameRate: '23.976 fps',
         firstFrame: null,
         lastFrame: null,
+        stillFrames: [],
         format: 'CRM（Canon Cinema RAW Light）',
         formatFamily: 'canon-raw',
         frameSource: 'none',
         vendorTool: 'Canon Cinema RAW Development / DaVinci Resolve',
-        note
+        note,
+        proxy: null
       }
     })
 
@@ -336,11 +345,13 @@ describe('report.html 自包含性', () => {
         frameRate: null,
         firstFrame: null,
         lastFrame: null,
+        stillFrames: [],
         format: '普通文件',
         formatFamily: 'generic',
         frameSource: 'none',
         vendorTool: null,
-        note: null
+        note: null,
+        proxy: null
       }
     })
 

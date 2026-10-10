@@ -1,15 +1,24 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   HASH_ALGORITHMS,
   HASH_ALGORITHM_LABELS,
   LANGUAGES,
   MANIFEST_FORMATS,
+  PERFORMANCE_MODES,
+  PERFORMANCE_MODE_PRESETS,
+  PROXY_CODECS,
+  PROXY_RESOLUTIONS,
   THEME_MODES,
   supportsAlgorithm,
   type HashAlgorithm,
   type ManifestFormat,
+  type PerformanceMode,
+  type ProxyCodec,
+  type ProxyProfile,
+  type ProxyResolution,
   type ThemeId
 } from '@shared/types'
+import type { EncodersInfo } from '@shared/ipc'
 import { BlockGrid, Card, Field, PageHead, PathPicker, Segmented, Note, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { SKINS } from '../theme'
@@ -75,6 +84,23 @@ export function SettingsView(): ReactNode {
   const { t } = useI18n()
   const { settings, updateSettings, appInfo, pushToast } = useAppState()
   const [diagBusy, setDiagBusy] = useState(false)
+  /** 本机可用的编码器（决定 H.264/H.265 能不能选）；null = 还在探测 */
+  const [encoders, setEncoders] = useState<EncodersInfo | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const info = await unwrap(window.securereel.media.encoders())
+        if (alive) setEncoders(info)
+      } catch {
+        if (alive) setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const manifestLabel = (format: ManifestFormat): string => t(`manifest.${format}` as never)
 
@@ -126,6 +152,47 @@ export function SettingsView(): ReactNode {
   )
 
   const pairUsable = supportsAlgorithm(settings.manifestFormat, settings.hashAlgorithm)
+
+  /*
+   * 代理规格选项。
+   *
+   * 422 Proxy 体积最小（约 45 Mbps）、剪辑机上放得最顺，是默认值；
+   * 越往上画质越好、体积越大。这里只列四种常用的 422 规格，
+   * 不把 4444 / XQ 那些一并塞进来 —— 现场做代理用不上那么重的。
+   */
+  const proxyOptions = useMemo<ComboOption<ProxyProfile>[]>(
+    () => [
+      { value: '422-proxy', label: t('settings.proxyProfileProx') },
+      { value: '422-lt', label: t('settings.proxyProfileLt') },
+      { value: '422', label: t('settings.proxyProfile422') },
+      { value: '422-hq', label: t('settings.proxyProfileHq') }
+    ],
+    [t]
+  )
+
+  const proxyResolutionOptions = useMemo<ComboOption<ProxyResolution>[]>(
+    () =>
+      PROXY_RESOLUTIONS.map((resolution) => ({
+        value: resolution,
+        label: t(`proxy.res.${resolution}` as never)
+      })),
+    [t]
+  )
+
+  // 本机不可用的编码标成 disabled（典型：Windows 上没有可用的 H.265 硬件编码器）
+  const proxyCodecOptions = useMemo<ComboOption<ProxyCodec>[]>(() => {
+    const h264Ok = encoders === null ? true : encoders.h264
+    const h265Ok = encoders === null ? true : encoders.h265
+    const available: Record<ProxyCodec, boolean> = { prores: true, h264: h264Ok, h265: h265Ok }
+    return PROXY_CODECS.map((codec) => {
+      const base = t(`proxy.codec.${codec}` as never)
+      return {
+        value: codec,
+        label: available[codec] ? base : `${base}（${t('proxy.codecUnavailable')}）`,
+        disabled: !available[codec]
+      }
+    })
+  }, [t, encoders])
 
   return (
     <div className="page">
@@ -247,41 +314,163 @@ export function SettingsView(): ReactNode {
       </Card>
 
       <Card title={t('settings.performance')}>
-        <Field label={t('settings.maxParallelTargets')}>
-          <NumberSetting
-            value={settings.maxParallelTargets}
-            min={1}
-            max={8}
-            onCommit={(next) => void updateSettings({ maxParallelTargets: next })}
+        {/*
+          档位是"一键套用"：点一下把那几个细项一次设好。多数现场不需要逐项去调，
+          所以把细项收进「高级」，默认只看档位 —— 卡片一下就短了。
+        */}
+        <Field label={t('settings.performanceMode')} hint={t('settings.performanceModeHint')}>
+          <Segmented<PerformanceMode>
+            value={settings.performanceMode}
+            options={PERFORMANCE_MODES.map((mode) => ({
+              value: mode,
+              label: t(`perf.${mode}` as never)
+            }))}
+            onChange={(next) =>
+              void updateSettings({ performanceMode: next, ...PERFORMANCE_MODE_PRESETS[next] })
+            }
           />
         </Field>
 
-        <div className="faint" style={{ fontSize: 12 }}>
-          {t('settings.parallelHint')}
-        </div>
+        <details className="sub-block" style={{ marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer' }}>{t('settings.advanced')}</summary>
 
-        <label className="row-actions" style={{ cursor: 'pointer', marginTop: 12 }}>
-          <input
-            type="checkbox"
+          <Field label={t('settings.maxParallelTargets')} hint={t('settings.parallelHint')}>
+            <NumberSetting
+              value={settings.maxParallelTargets}
+              min={1}
+              max={8}
+              onCommit={(next) => void updateSettings({ maxParallelTargets: next })}
+            />
+          </Field>
+
+          <Toggle
             checked={settings.resumePartialFiles}
-            onChange={(event) => void updateSettings({ resumePartialFiles: event.target.checked })}
+            onChange={(next) => void updateSettings({ resumePartialFiles: next })}
+            label={t('settings.resume')}
           />
-          <span>{t('settings.resume')}</span>
-        </label>
-        <div className="faint" style={{ fontSize: 12 }}>
-          {t('settings.resumeHint')}
-        </div>
 
-        <label className="row-actions" style={{ cursor: 'pointer', marginTop: 12 }}>
-          <input
-            type="checkbox"
+          <Toggle
             checked={settings.ejectAfterCopy}
-            onChange={(event) => void updateSettings({ ejectAfterCopy: event.target.checked })}
+            onChange={(next) => void updateSettings({ ejectAfterCopy: next })}
+            label={t('settings.eject')}
           />
-          <span>{t('settings.eject')}</span>
-        </label>
+
+          <Toggle
+            checked={settings.shutdownAfterCopy}
+            onChange={(next) => void updateSettings({ shutdownAfterCopy: next })}
+            label={t('settings.shutdown')}
+          />
+          <div className="hint">{t('settings.shutdownHint')}</div>
+        </details>
       </Card>
       </BlockGrid>
+
+      <Card title={t('settings.report')}>
+        <label className="row-actions" style={{ cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={settings.generateReport}
+            onChange={(event) => void updateSettings({ generateReport: event.target.checked })}
+          />
+          <span>{t('settings.generateReport')}</span>
+        </label>
+        <div className="hint" style={{ marginTop: 4 }}>
+          {t('settings.generateReportHint')}
+        </div>
+
+        {settings.generateReport && (
+          <Field label={t('settings.reportDir')} hint={t('settings.reportDirHint')}>
+            <PathPicker
+              value={settings.reportOutputDir ?? ''}
+              buttonLabel={t('copy.pickSource')}
+              onPick={() => {
+                void (async () => {
+                  const picked = await window.securereel.volumes.pickPath('directory', t('settings.reportDir'))
+                  if (picked.ok && picked.data !== null) void updateSettings({ reportOutputDir: picked.data })
+                })()
+              }}
+              onChange={(next) => void updateSettings({ reportOutputDir: next.trim() === '' ? null : next })}
+            />
+          </Field>
+        )}
+      </Card>
+
+      <Card title={t('settings.proxy')}>
+        <label className="row-actions" style={{ cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={settings.proxyEnabled}
+            onChange={(event) => void updateSettings({ proxyEnabled: event.target.checked })}
+          />
+          <span>{t('settings.proxyEnabled')}</span>
+        </label>
+        <div className="hint" style={{ marginTop: 4 }}>
+          {t('settings.proxyHint')}
+        </div>
+
+        {settings.proxyEnabled && (
+          <>
+            {/*
+              顺序：**编码 → 分辨率 →（仅 ProRes）规格 → LUT → 并行数**。
+              先定编码再谈规格 —— 选了 H.264/H.265 就不该再看到 ProRes 规格。
+            */}
+            <Field label={t('copy.proxyCodec')} hint={t('settings.proxyCodecHint')}>
+              <SelectBox<ProxyCodec>
+                value={settings.proxyCodec}
+                ariaLabel={t('copy.proxyCodec')}
+                options={proxyCodecOptions}
+                onChange={(next) => void updateSettings({ proxyCodec: next })}
+              />
+            </Field>
+
+            <Field label={t('copy.proxyResolution')} hint={t('settings.proxyResolutionHint')}>
+              <SelectBox<ProxyResolution>
+                value={settings.proxyResolution}
+                ariaLabel={t('copy.proxyResolution')}
+                options={proxyResolutionOptions}
+                onChange={(next) => void updateSettings({ proxyResolution: next })}
+              />
+            </Field>
+
+            {settings.proxyCodec === 'prores' && (
+              <Field label={t('settings.proxyProfile')} hint={t('settings.proxyProfileHint')}>
+                <SelectBox<ProxyProfile>
+                  value={settings.proxyProfile}
+                  ariaLabel={t('settings.proxyProfile')}
+                  options={proxyOptions}
+                  onChange={(next) => void updateSettings({ proxyProfile: next })}
+                />
+              </Field>
+            )}
+
+            <Field label={t('settings.proxyLut')} hint={t('settings.proxyLutHint')}>
+              <PathPicker
+                value={settings.proxyLutPath ?? ''}
+                placeholder={t('copy.proxyLutPlaceholder')}
+                buttonLabel={t('copy.proxyLutPick')}
+                onPick={() => {
+                  void (async () => {
+                    const picked = await window.securereel.volumes.pickPath('file', t('copy.proxyLutPick'))
+                    if (picked.ok && picked.data !== null) void updateSettings({ proxyLutPath: picked.data })
+                  })()
+                }}
+                onChange={(next) =>
+                  void updateSettings({ proxyLutPath: next.trim() === '' ? null : next.trim() })
+                }
+              />
+            </Field>
+
+            <Field label={t('settings.proxyConcurrency')} hint={t('settings.proxyConcurrencyHint')}>
+              <NumberSetting
+                value={settings.proxyConcurrency}
+                min={1}
+                max={4}
+                onCommit={(next) => void updateSettings({ proxyConcurrency: next })}
+              />
+            </Field>
+          </>
+        )}
+      </Card>
 
       <Card title={t('settings.frames')}>
         <label className="row-actions" style={{ cursor: 'pointer' }}>
@@ -292,7 +481,7 @@ export function SettingsView(): ReactNode {
           />
           <span>{t('settings.extractFrames')}</span>
         </label>
-        <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>
+        <div className="hint">
           {t('settings.extractFramesHint')}
         </div>
 
@@ -320,6 +509,20 @@ export function SettingsView(): ReactNode {
                 onCommit={(next) => void updateSettings({ frameConcurrency: next })}
               />
             </Field>
+
+            <Field label={t('settings.stillFrames')} hint={t('settings.stillFramesHint')}>
+              <NumberSetting
+                value={settings.stillFrameCount}
+                min={0}
+                max={4}
+                onCommit={(next) => void updateSettings({ stillFrameCount: next })}
+              />
+            </Field>
+            {settings.stillFrameCount === 0 && (
+              <div className="faint" style={{ fontSize: 11, marginTop: -8, marginBottom: 8 }}>
+                {t('settings.stillFramesOff')}
+              </div>
+            )}
           </>
         )}
       </Card>

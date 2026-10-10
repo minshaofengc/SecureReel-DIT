@@ -35,7 +35,7 @@ import {
   stripTrailingSeparators,
   walkFiles
 } from '@main/fs-utils'
-import { ejectVolume } from '@main/volumes'
+import { ejectVolume, scheduleShutdown } from '@main/volumes'
 import { CopyEngine } from './copy-engine'
 import { PauseGate } from './concurrency'
 import { inspectSource, scanSource, usageForTargets } from './source-scan'
@@ -302,6 +302,14 @@ export class JobManager {
       hashAlgorithm: request.hashAlgorithm ?? settings.hashAlgorithm,
       manifestFormat: request.manifestFormat ?? settings.manifestFormat,
       verifyAfterWrite: request.verifyAfterWrite ?? settings.verifyAfterWrite,
+      // 代理设置：**每任务**（拷贝页可选），缺省回落到全局设置 ——
+      // 与 verifyAfterWrite 同一套"设置给默认、任务可覆盖"的模式。
+      proxyEnabled: request.proxyEnabled ?? settings.proxyEnabled,
+      proxyResolution: request.proxyResolution ?? settings.proxyResolution,
+      proxyCodec: request.proxyCodec ?? settings.proxyCodec,
+      proxyProfile: request.proxyProfile ?? settings.proxyProfile,
+      // LUT：任务里传了就用任务的（含显式 null = 不套），没传则用全局默认。
+      proxyLutPath: request.proxyLutPath === undefined ? settings.proxyLutPath : request.proxyLutPath,
       state: 'draft',
       totalFiles: scan.fileCount,
       totalBytes: scan.totalBytes,
@@ -417,7 +425,11 @@ export class JobManager {
     const controller = new AbortController()
 
     // 首尾帧先落到任务工作目录，出报告时再挑被引用的拷进修订目录
-    this.deps.probeRunner.setFrameOutputDir(this.deps.reportStore.frameWorkDir(jobId))
+    const frameWorkDir = this.deps.reportStore.frameWorkDir(jobId)
+    this.deps.probeRunner.setFrameOutputDir(frameWorkDir)
+    // 候选静帧与首尾帧同目录（报告 frames/），按设置决定每条出几张
+    this.deps.probeRunner.setStillFrameOutputDir(frameWorkDir)
+    this.deps.probeRunner.setStillFrameCount(settings.stillFrameCount)
 
     const engine = new CopyEngine({
       job,
@@ -480,22 +492,36 @@ export class JobManager {
         this.emitState(jobId)
       }
 
-      // 无论成功、失败还是被取消，都留一份报告 —— 失败也是取证链的一部分
-      try {
-        await this.generateReports(jobId, terminalState)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
-        this.deps.emit({
-          type: 'toast',
-          payload: { level: 'warn', message: this.m('job.reportGenFail', { reason: message }) }
-        })
+      // 无论成功、失败还是被取消，都留一份报告 —— 失败也是取证链的一部分。
+      // 例外：用户在设置里关掉了自动报告（generateReport=false），则整段跳过。
+      // ⚠️ 只关"自动生成"，手动补报告仍走 generateReport()（受运行中红线约束）。
+      if (this.deps.getSettings().generateReport) {
+        try {
+          await this.generateReports(jobId, terminalState)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
+          this.deps.emit({
+            type: 'toast',
+            payload: { level: 'warn', message: this.m('job.reportGenFail', { reason: message }) }
+          })
+        }
+      } else {
+        this.deps.logger.info('job', '报告生成已在设置中关闭，跳过。')
       }
 
       if (terminalState === 'completed' || terminalState === 'completed-with-errors') {
         const current = store.getJob(jobId)
         if (current !== null && this.deps.getSettings().ejectAfterCopy) {
           await this.ejectTargets(current)
+        }
+        // 关机必须排在弹出**之后**：先安全卸载磁盘再断电，顺序反了会丢盘。
+        if (
+          terminalState === 'completed' &&
+          current !== null &&
+          this.deps.getSettings().shutdownAfterCopy
+        ) {
+          await this.scheduleShutdown()
         }
       }
     })()
@@ -521,6 +547,28 @@ export class JobManager {
     this.deps.store.updateJob(jobId, { state: 'running' })
     this.emitState(jobId)
     return this.requireJob(jobId)
+  }
+
+  /**
+   * 「重试失败项」：把上次失败的文件放回待处理，再按正常流程重新跑。
+   *
+   * 与 start() 的唯一区别在入口 —— start() 只处理 pending，失败文件刻意留在
+   * 失败态等用户判断（见 Store.listPendingFiles 的注释）；这里显式重置它们。
+   * 已成功的目标不会被重拷：引擎按目标盘上的成品/分片决定 adopt / 续传 / 写入。
+   */
+  async retryFailed(jobId: string): Promise<CopyJob> {
+    const job = this.deps.store.getJob(jobId)
+    if (job === null) throw new Error(this.m('job.notFound'))
+    if (this.runs.has(jobId)) throw new Error(this.m('job.alreadyRunning'))
+
+    const resetCount = this.deps.store.resetFailedFilesForRetry(jobId)
+    if (resetCount === 0) throw new Error(this.m('job.noFailedFiles'))
+
+    this.deps.logger.info('job', this.m('job.retryFailed', { count: resetCount }))
+    // 文件状态从 failed 回到 pending —— 界面自己发现不了这种"往回退"，
+    // 必须请它重拉一次文件列表，否则会一直挂着上一轮的失败状态。
+    this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
+    return this.start(jobId)
   }
 
   cancel(jobId: string): CopyJob {
@@ -624,7 +672,9 @@ export class JobManager {
       // 只有正常跑完的拷贝任务才往目标盘写清单；取消/失败的任务清单并不代表
       // 一份可信的交付。仅校验模式按定义不写目标盘的任何字节，清单同样不写。
       writeManifestToTargets: completedCleanly && job.mode !== 'verify',
-      preNotes
+      preNotes,
+      // 报告根目录覆盖：null 表示用默认的本机 reports 目录
+      outputBaseDir: this.deps.getSettings().reportOutputDir
     })
 
     /*
@@ -715,6 +765,27 @@ export class JobManager {
       } else {
         this.deps.logger.warn('job', this.m('job.ejectFail', { label: target.label, reason: result.message }))
       }
+    }
+  }
+
+  /**
+   * 任务成功后安排关机。
+   *
+   * 调用点已经保证了两件事：只在本任务**干净完成**时走到这里，且排在
+   * 目标盘弹出**之后**（先卸载再断电）。这里再补一层：无论成功失败都写日志，
+   * 失败只提示不重试 —— 关不掉机器是小事，谎报"已关机"让人白等一晚才是大事。
+   */
+  private async scheduleShutdown(): Promise<void> {
+    const result = await scheduleShutdown(this.deps.getSettings().language)
+    if (result.ok) {
+      this.deps.logger.info('job', this.m('job.shutdownScheduled'))
+      this.deps.emit({ type: 'toast', payload: { level: 'info', message: this.m('job.shutdownScheduled') } })
+    } else {
+      this.deps.logger.warn('job', this.m('job.shutdownFail', { reason: result.message }))
+      this.deps.emit({
+        type: 'toast',
+        payload: { level: 'warn', message: this.m('job.shutdownFail', { reason: result.message }) }
+      })
     }
   }
 }

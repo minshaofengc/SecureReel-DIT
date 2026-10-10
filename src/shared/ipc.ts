@@ -27,6 +27,9 @@ import type {
 export const IPC = {
   appInfo: 'app:info',
 
+  /** 本机可用的代理编码器（探测结果）。只读。 */
+  mediaEncoders: 'media:encoders',
+
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
 
@@ -44,6 +47,7 @@ export const IPC = {
   jobStart: 'job:start',
   jobPause: 'job:pause',
   jobResume: 'job:resume',
+  jobRetryFailed: 'job:retry-failed',
   jobCancel: 'job:cancel',
   jobDelete: 'job:delete',
   jobRecoverable: 'job:recoverable',
@@ -112,6 +116,22 @@ export interface AppInfo {
   databaseQuarantine: { backupPath: string | null } | null
 }
 
+/**
+ * 本机可用的代理编码器。
+ *
+ * 只给"事实"（哪些编码能用、是不是硬件），不拼文案 —— 文案归界面（中英双语）。
+ * 界面据此把不可用的编码置灰（典型：Windows 上没有可用的 H.265 硬件编码器）。
+ */
+export interface EncodersInfo {
+  /** H.264 是否可用（几乎总是可用：有 openh264 软件兜底） */
+  h264: boolean
+  /** H.265 是否可用（需要硬件编码器，没有就不可用） */
+  h265: boolean
+  /** 该编码是否走硬件（用于一句提示措辞）；不可用时为 false */
+  h264Hardware: boolean
+  h265Hardware: boolean
+}
+
 export interface CreateJobRequest {
   name: string
   sourcePath: string
@@ -121,6 +141,13 @@ export interface CreateJobRequest {
   hashAlgorithm?: AppSettings['hashAlgorithm']
   manifestFormat?: AppSettings['manifestFormat']
   verifyAfterWrite?: boolean
+  /** 本次任务是否出代理；缺省 = 用全局设置 */
+  proxyEnabled?: boolean
+  proxyResolution?: AppSettings['proxyResolution']
+  proxyCodec?: AppSettings['proxyCodec']
+  proxyProfile?: AppSettings['proxyProfile']
+  /** 本次任务的代理 LUT；null 或缺省 = 用全局默认（再兜底为不套） */
+  proxyLutPath?: string | null
   /** 归属的母项目；null 或缺省 = 未分组 */
   parentProjectId?: string | null
   /** 本次拷贝的项目信息；缺省 = 全空 */
@@ -136,6 +163,10 @@ export interface CreateJobResponse {
 export interface SecureReelApi {
   app: {
     info(): Promise<IpcResult<AppInfo>>
+  }
+  media: {
+    /** 本机可用的代理编码器；首次调用会跑一遍试编码探测（结果会缓存） */
+    encoders(): Promise<IpcResult<EncodersInfo>>
   }
   settings: {
     get(): Promise<IpcResult<AppSettings>>
@@ -159,6 +190,14 @@ export interface SecureReelApi {
     start(jobId: string): Promise<IpcResult<CopyJob>>
     pause(jobId: string): Promise<IpcResult<CopyJob>>
     resume(jobId: string): Promise<IpcResult<CopyJob>>
+    /**
+     * 重试失败项：只把上次失败的文件放回待处理再跑。
+     *
+     * 与 `start()` 的分工：`start()` 只处理 pending，失败文件刻意留在失败态；
+     * 这里显式重置失败文件。已经校验通过的目标不会被重拷 ——
+     * 引擎按目标盘上的成品/分片决定 adopt / 续传 / 写入。
+     */
+    retryFailed(jobId: string): Promise<IpcResult<CopyJob>>
     cancel(jobId: string): Promise<IpcResult<CopyJob>>
     remove(jobId: string): Promise<IpcResult<boolean>>
     recoverable(): Promise<IpcResult<CopyJob[]>>

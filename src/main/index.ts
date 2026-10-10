@@ -21,7 +21,6 @@ import { emitToWindows, registerIpcHandlers } from './ipc/handlers'
 import { ensureDir } from './fs-utils'
 import { IS_MAC, IS_WINDOWS, TITLE_BAR_HEIGHT, USE_OVERLAY_TITLEBAR } from './platform'
 import { registerFrameProtocol, registerFrameScheme } from './protocol'
-import { closeSplashWindow, createSplashWindow, getSplashWindow, setSplashStatus } from './splash'
 
 app.setName(APP_NAME)
 
@@ -41,14 +40,6 @@ const smokeUserDataDir = process.env['SECUREREEL_SMOKE_USER_DATA_DIR']
 if (smokeMode && smokeUserDataDir !== undefined && isAbsolute(smokeUserDataDir)) {
   app.setPath('userData', smokeUserDataDir)
 }
-/**
- * 冒烟时是否保留开屏窗（并改为截它）。
- *
- * 平时冒烟不建开屏窗：会拖慢每次验证、还会挡截图。但要验"开屏长什么样"时
- * 必须能把它留住 —— 不然这个窗口就成了唯一没人看过的界面。
- */
-const smokeSplash = process.env['SECUREREEL_SMOKE_SPLASH'] !== undefined &&
-  process.env['SECUREREEL_SMOKE_SPLASH'] !== ''
 if (smokeMode) app.disableHardwareAcceleration()
 
 let mainWindow: BrowserWindow | null = null
@@ -58,13 +49,17 @@ let store: Store | null = null
 const paths = buildAppPaths(app.getPath('userData'))
 
 /**
- * 启动时的窗口底色（深色模式用竹林的深色底，避免白屏闪一下）。
+ * 启动时的窗口底色（避免白屏闪一下）。
+ *
+ * 取值 = 默认皮肤「中性（Mono）」的 `--bg`（见 `styles/tokens.css` 的基础块）。
+ * ⚠️ 2026-10-11 更正：此前这里是旧「竹林」主题的 `#141a17` / `#f7f6f1`，
+ * 与 tokens.css 里任何一套都对不上 —— 启动瞬间会闪一下偏绿的底色。
  *
  * 这两个值同时充当 Windows 标题栏叠加层的**初始**颜色。主进程刻意不持有
  * 整套调色板 —— 配色的唯一真源是渲染层的 `styles/tokens.css`。界面画出来后
  * 会立刻通过 IPC 把真实主题色同步过来（见 theme.ts），用户看不到跳变。
  */
-const WINDOW_BOOT_BG = { dark: '#141a17', light: '#f7f6f1' } as const
+const WINDOW_BOOT_BG = { dark: '#121316', light: '#f4f5f6' } as const
 
 /**
  * 标题栏选项。
@@ -128,30 +123,6 @@ function createWindow(settings: AppSettings): BrowserWindow {
       setTimeout(() => {
         void (async () => {
           try {
-            /*
-             * 开屏窗专用分支。
-             *
-             * 开屏窗平时只在非冒烟模式出现，于是"它到底长什么样"就一直没人验 ——
-             * 而那恰恰是最容易悄悄坏掉的东西（它不接 IPC、不读数据库，
-             * 坏了也不会有任何报错，只是启动时多一块白板）。
-             * 所以给一个开关：`SECUREREEL_SMOKE_SPLASH=1` 时保留开屏窗，
-             * 并且**截它**而不是截主窗口。主窗口那套导航/主题/探针在这里没有意义。
-             */
-            const splash = getSplashWindow()
-            if (splash !== null) {
-              // 等它真的画出来：data: 页面加载极快，但 capturePage() 对着
-              // 一个还没绘制过一帧的窗口会返回一张全透明的空图 —— 那张图
-              // 看起来"截成功了"，其实什么都没证明。所以等到不再 loading。
-              for (let i = 0; i < 40 && splash.webContents.isLoading(); i++) {
-                await new Promise<void>((resolve) => setTimeout(resolve, 50))
-              }
-              await new Promise<void>((resolve) => setTimeout(resolve, 400))
-              const image = await splash.webContents.capturePage()
-              await writeFile(smokeScreenshotPath as string, image.toPNG())
-              logger?.info('app', `冒烟截图（开屏窗）已写入 ${smokeScreenshotPath}`)
-              return
-            }
-
             // 诊断专用：可以指定要截哪一页、用哪套配色。
             // 只在冒烟模式下生效，既不改设置也不写数据库。
             const navTarget = process.env['SECUREREEL_SMOKE_NAV']
@@ -294,13 +265,10 @@ function createWindow(settings: AppSettings): BrowserWindow {
     /*
      * 主窗口一直要等到这里才显示（有迁移、开库、装配这一大段在前面）。
      *
-     * 顺序很讲究：**先把主窗口显示出来，再关开屏**。
-     * 反过来的话，中间会有一瞬间两个窗口都没有 —— 桌面闪一下，
-     * 而"闪一下桌面"正是开屏要遮掉的那种观感。
+     * `ready-to-show` 之后再 `show()`，避免先闪一块空白窗口再填内容。
      */
     window.once('ready-to-show', () => {
       window.show()
-      void closeSplashWindow()
     })
   }
 
@@ -335,15 +303,9 @@ function createWindow(settings: AppSettings): BrowserWindow {
 async function bootstrap(): Promise<void> {
   await app.whenReady()
 
-  // 开屏窗必须在 whenReady 之后**立刻**建：它要遮的就是下面这一整段。
-  // 冒烟模式下默认不建（会拖慢每次验证、还会挡截图），
-  // 除非显式要求把它留下来截图（见 SECUREREEL_SMOKE_SPLASH）。
-  if (!smokeMode || smokeSplash) createSplashWindow({ show: !smokeMode })
-
   // 1.x → 2.0 的数据迁移。**必须赶在 Store.open() 之前**：数据库一旦被打开，
   // 再复制就只能拿到一半旧一半新的状态。结果先存着，等 logger 建好再记
   // （日志本身要落在新目录里，而新目录正是这一步建出来的）。
-  setSplashStatus('正在检查本地数据…')
   let migration: MigrationResult = { status: 'skipped', reason: '未执行', copied: [] }
   try {
     await ensureDir(paths.userDataDir)
@@ -373,7 +335,6 @@ async function bootstrap(): Promise<void> {
     if (removed > 0) logger?.info('app', `已清理 ${removed} 个过期日志文件（保留最近 30 天）。`)
   })
 
-  setSplashStatus('正在打开任务数据库…')
   store = await Store.open(paths.dbFile)
 
   // 界面里的首帧缩略图走这个受控协议，不把文件系统暴露给渲染进程
@@ -441,7 +402,6 @@ async function bootstrap(): Promise<void> {
     getMainWindow: () => mainWindow
   })
 
-  setSplashStatus('正在准备界面…')
   mainWindow = createWindow(settings)
 
   // 上次异常退出留下的任务：不自动重启，只在界面里提示用户决定
@@ -472,10 +432,6 @@ if (!gotLock) {
   void bootstrap().catch((error: unknown) => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)
     void logger?.error('app', `启动失败：${message}`)
-
-    // 开屏窗此时正罩在屏幕中央。不先关掉它，错误框会压在开屏后面、
-    // 退出过程也要多绕一圈 —— 启动失败已经够糟了，别再让人怀疑是不是卡死了。
-    void closeSplashWindow()
 
     // 启动失败必须让用户看见，否则只会看到一个空白的 Dock 图标
     void app.whenReady().then(() => {

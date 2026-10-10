@@ -21,17 +21,30 @@
  */
 .home {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   align-items: start;
 }
 
+/*
+ * ⚠️ 左右两侧各要留一份 `--page-pad`，底部要留出停靠区的高度。
+ *
+ * `.page--home` 把 padding 归零，本意只是去掉**页头那段上留白**
+ * （见本文件末尾的注释），但它连左右内边距一起清掉了。后果（2026-10-11 实测截图）：
+ *   · 主列文字贴着窗口左边缘，与顶栏 / 子标签的 12px 缩进对不齐；
+ *   · 侧列贴着右边缘，而 `.rw` 还有 `margin: 0 -8px` 的负边距（为了悬停底色
+ *     与分区标题那条细线对齐），于是「最近交付」的日期被推出窗口外、
+ *     `.todo` 的「处理」按钮被挤到边上 —— 正是用户报的"遮挡"。
+ * 所以这里把左右内边距显式补回来，并按 `.page` 的惯例给底部留 56px：
+ * 右下角的停靠区（`.dock`，`bottom:14px` + 约 34px 高）是 fixed 的，
+ * 不留就会盖住最后一行。
+ */
 .home__main {
-  padding: var(--sp-4) var(--page-pad) var(--sp-6) 0;
+  padding: var(--sp-4) var(--page-pad) 56px var(--page-pad);
   min-width: 0;
 }
 
 .home__side {
-  padding: var(--sp-4) 0 var(--sp-6) var(--sp-4);
+  padding: var(--sp-4) var(--page-pad) 56px var(--sp-4);
   border-left: var(--border-w) solid var(--line-soft);
   min-height: 100%;
   min-width: 0;
@@ -336,10 +349,27 @@
   color: var(--text);
 }
 
+/*
+ * 两行文字都必须能收窄并省略。
+ * 少了这个，长任务名 / 长提示会把「处理」按钮顶出去 —— 按钮默认是
+ * `flex: 0 1 auto`，**允许被压扁**，压到极限文字就溢到卡片外
+ * （2026-10-11 实测：A008 那条的按钮被挤到窗口边上）。
+ */
+.todo__tx > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .todo__s {
   margin-top: 2px;
   font-size: var(--fs-2xs);
   color: var(--text-faint);
+}
+
+/* 按钮不许被压扁：它是这一行的动作，永远保持完整宽度 */
+.todo > .btn {
+  flex: 0 0 auto;
 }
 
 /* ---------------- 三步引导 ----------------

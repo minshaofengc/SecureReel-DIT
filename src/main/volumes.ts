@@ -138,3 +138,75 @@ export async function ejectVolume(
   if (platform !== 'darwin') return { ok: false, message: msg(language, 'eject.unsupported') }
   return ejectMacVolume(mountPoint, language)
 }
+
+/**
+ * 关机延迟（秒）。
+ *
+ * 刻意**不立即关**：给用户一段可以反悔的窗口 —— 一个跑了整夜的任务在
+ * 凌晨三点关机前，人可能刚好回到桌前。60 秒足够看清是哪个任务完成、
+ * 也足够去系统里取消（macOS 会弹一个带倒计时的对话框，可直接取消）。
+ */
+export const SHUTDOWN_DELAY_SECONDS = 60
+
+/**
+ * 安排关机（跨平台分派）。
+ *
+ * ⚠️ 这是**破坏性操作**，调用方必须自己保证：只在任务**成功完成**时调用，
+ * 且排在所有目标弹出**之后**（先安全卸载磁盘再断电，顺序反了会丢盘）。
+ *
+ * - macOS：`osascript` 让 System Events 关机。系统会自己弹一个带倒计时的
+ *   确认框，用户可取消；不需要 sudo。
+ * - Windows：`shutdown /s /t <delay>`，系统自带的缓冲倒计时，`shutdown /a` 可取消。
+ * - 其他平台：明确返回不支持，绝不假装成功。
+ *
+ * 命令行参数全部走参数数组（`shell: false`），与弹出卷保持同一姿势。
+ */
+export function scheduleShutdown(
+  language: Language = 'zh-CN',
+  delaySeconds: number = SHUTDOWN_DELAY_SECONDS,
+  platform: HostPlatform = HOST
+): Promise<{ ok: boolean; message: string }> {
+  if (platform === 'darwin') {
+    return runShutdown(
+      '/usr/bin/osascript',
+      ['-e', 'tell application "System Events" to shut down'],
+      language
+    )
+  }
+  if (platform === 'win32') {
+    // shutdown.exe 在 System32 下；与 volume-win.ts 一样优先用系统路径，PATH 兜底。
+    const systemRoot = process.env['SystemRoot'] ?? process.env['windir'] ?? 'C:\\Windows'
+    const exe = join(systemRoot, 'System32', 'shutdown.exe')
+    return runShutdown(exe, ['/s', '/t', String(Math.max(0, Math.floor(delaySeconds)))], language)
+  }
+  return Promise.resolve({ ok: false, message: msg(language, 'shutdown.unsupported') })
+}
+
+function runShutdown(
+  executable: string,
+  args: string[],
+  language: Language
+): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(executable, args, { shell: false })
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('error', (error) => {
+      resolve({
+        ok: false,
+        message: msg(language, 'shutdown.commandFailed', { reason: describeError(error) })
+      })
+    })
+    child.on('close', (code) => {
+      if (code === 0) resolve({ ok: true, message: msg(language, 'shutdown.scheduled') })
+      else {
+        resolve({
+          ok: false,
+          message: stderr.trim() || msg(language, 'shutdown.exitCode', { code: code ?? '?' })
+        })
+      }
+    })
+  })
+}

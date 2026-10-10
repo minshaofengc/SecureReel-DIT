@@ -57,6 +57,21 @@ export function truncateMiddle(value: string, maxLength = 48): string {
 }
 
 /**
+ * 在扫描得到的后缀直方图里数某个扩展名有多少个文件。
+ *
+ * 传入的 `ext` 不带点、大小写不敏感（直方图里的 `ext` 一律小写，
+ * 见主进程的扫描实现）。用于拷贝页判断"这批来源里有没有某类素材"，例如
+ * 有没有佳能 Cinema RAW Light（`.crm`）—— 那种素材出不了画面，要提前提示。
+ */
+export function countExtension(
+  extensions: readonly { ext: string; count: number }[],
+  ext: string
+): number {
+  const wanted = ext.toLowerCase().replace(/^\./, '')
+  return extensions.find((item) => item.ext.toLowerCase() === wanted)?.count ?? 0
+}
+
+/**
  * 今天的日期，`YYYY-MM-DD`，**按本机时区**。
  *
  * 为什么不直接用 `new Date().toISOString().slice(0, 10)`：

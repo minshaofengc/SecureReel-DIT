@@ -9,7 +9,7 @@
 import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
-import type { AppInfo } from '@shared/ipc'
+import type { AppInfo, EncodersInfo } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type { AppSettings, MainEvent, ProjectDetails, SourceDrive } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -38,6 +38,7 @@ import type { AppPaths } from '@main/paths'
 import type { JobManager } from '@main/core/job-manager'
 import type { ReportStore } from '@main/reports/report-store'
 import type { FfprobeRunner } from '@main/media/probe'
+import { detectEncoders } from '@main/media/encoder-probe'
 import type { HdeAdapter } from '@main/adapters/hde'
 import { inspectSource, scanSource } from '@main/core/source-scan'
 import { describeError, describeVolume } from '@main/fs-utils'
@@ -125,6 +126,28 @@ export function registerIpcHandlers(services: Services): void {
     reportsDir: paths.reportsDir,
     databaseQuarantine: describeDatabaseQuarantine(store)
   }))
+
+  /*
+   * 本机可用的代理编码器。
+   *
+   * 探测要跑几次试编码（每次几百毫秒），所以放在这里**首次调用时**做，
+   * 而不是启动时做 —— 用不到代理的人不该为此等待。结果在 encoder-probe
+   * 内部按进程缓存，重复调用不会重跑。
+   */
+  register<EncodersInfo>(IPC.mediaEncoders, async () => {
+    const ffmpeg = probeRunner.ffmpegExecutable
+    if (ffmpeg === null) {
+      // 没有 ffmpeg 时，除了 ProRes 什么都说不上 —— 如实回不可用
+      return { h264: false, h265: false, h264Hardware: false, h265Hardware: false }
+    }
+    const capability = await detectEncoders(ffmpeg)
+    return {
+      h264: capability.h264.name !== null,
+      h265: capability.h265.name !== null,
+      h264Hardware: capability.h264.name !== null && capability.h264.hardware,
+      h265Hardware: capability.h265.name !== null && capability.h265.hardware
+    }
+  })
 
   /* ---------------- 设置 ---------------- */
 
@@ -289,6 +312,11 @@ export function registerIpcHandlers(services: Services): void {
     return jobManager.resume(jobId)
   })
 
+  register(IPC.jobRetryFailed, async (payload) => {
+    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
+    return jobManager.retryFailed(jobId)
+  })
+
   register(IPC.jobCancel, (payload) => {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
     return jobManager.cancel(jobId)
@@ -344,10 +372,13 @@ export function registerIpcHandlers(services: Services): void {
       totalBytes: job.totalBytes,
       bytesDone: job.bytesDone,
       bytesPerSecond: 0,
+      averageBytesPerSecond: 0,
       currentFile: null,
       activeFiles: [],
       targets: store.listTargetProgress(jobId),
       etaSeconds: null,
+      etaFinishAt: null,
+      speedHistory: [],
       analyzeDone: 0,
       analyzeTotal: 0
     }

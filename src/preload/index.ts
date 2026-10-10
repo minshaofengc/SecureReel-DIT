@@ -16,6 +16,9 @@ const api: SecureReelApi = {
   app: {
     info: () => invoke(IPC.appInfo)
   },
+  media: {
+    encoders: () => invoke(IPC.mediaEncoders)
+  },
   settings: {
     get: () => invoke(IPC.settingsGet),
     update: (patch) => invoke(IPC.settingsUpdate, patch)
@@ -37,6 +40,7 @@ const api: SecureReelApi = {
     start: (jobId) => invoke(IPC.jobStart, { jobId }),
     pause: (jobId) => invoke(IPC.jobPause, { jobId }),
     resume: (jobId) => invoke(IPC.jobResume, { jobId }),
+    retryFailed: (jobId) => invoke(IPC.jobRetryFailed, { jobId }),
     cancel: (jobId) => invoke(IPC.jobCancel, { jobId }),
     remove: (jobId) => invoke(IPC.jobDelete, { jobId }),
     recoverable: () => invoke(IPC.jobRecoverable),

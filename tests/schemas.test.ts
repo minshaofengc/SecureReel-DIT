@@ -6,12 +6,14 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_SETTINGS,
   LEGACY_THEME_IDS,
   MAX_COPY_NOTES_LENGTH,
   MAX_CREW_ROWS,
   MAX_LENS_ROWS,
   MAX_PARENT_NAME_LENGTH,
-  MAX_PROJECT_NOTES_LENGTH
+  MAX_PROJECT_NOTES_LENGTH,
+  PROXY_PROFILES
 } from '../src/shared/types'
 import {
   absolutePathSchema,
@@ -299,6 +301,50 @@ describe('设置更新校验', () => {
     expect(settingsPatchSchema.safeParse({ ffmpegDir: '/opt/homebrew/bin' }).success).toBe(true)
     expect(settingsPatchSchema.safeParse({ ffmpegDir: null }).success).toBe(true)
     expect(settingsPatchSchema.safeParse({ ffmpegDir: 'relative/path' }).success).toBe(false)
+  })
+
+  /*
+   * 2026-10-11 的事故绊线：settingsPatchSchema 是手写镜像，
+   * 2.0.6 新增 7 个设置字段时漏改这里，zod 默认静默剥离未知键 ——
+   * 界面点了、IPC 返回 ok、值却被还原成默认值，所有新开关都"点不动"。
+   * 这条用例遍历 DEFAULT_SETTINGS（类型上等于 AppSettings 的全集），
+   * 任何一个字段漏配都会在这里变红。
+   */
+  it('每个 AppSettings 字段都能原样通过补丁校验', () => {
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+      const parsed = settingsPatchSchema.parse({ [key]: value }) as Record<string, unknown>
+      expect(Object.keys(parsed), `字段 ${key} 被 schema 静默丢弃`).toEqual([key])
+      expect(parsed[key], `字段 ${key} 的值被改写`).toEqual(value)
+    }
+  })
+
+  it('代理设置只在合法范围内取值', () => {
+    expect(settingsPatchSchema.safeParse({ proxyEnabled: true }).success).toBe(true)
+    for (const profile of PROXY_PROFILES) {
+      expect(settingsPatchSchema.safeParse({ proxyProfile: profile }).success).toBe(true)
+    }
+    expect(settingsPatchSchema.safeParse({ proxyProfile: '4444-xq' }).success).toBe(false)
+    expect(settingsPatchSchema.safeParse({ proxyConcurrency: 1 }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ proxyConcurrency: 4 }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ proxyConcurrency: 0 }).success).toBe(false)
+    expect(settingsPatchSchema.safeParse({ proxyConcurrency: 5 }).success).toBe(false)
+    expect(settingsPatchSchema.safeParse({ proxyConcurrency: 1.5 }).success).toBe(false)
+    expect(settingsPatchSchema.safeParse({ stillFrameCount: 0 }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ stillFrameCount: 4 }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ stillFrameCount: 5 }).success).toBe(false)
+    expect(settingsPatchSchema.safeParse({ stillFrameCount: 1.5 }).success).toBe(false)
+  })
+
+  it('报告与关机设置接受合法值、拒绝非法值', () => {
+    expect(settingsPatchSchema.safeParse({ generateReport: false }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ shutdownAfterCopy: true }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ reportOutputDir: '/tmp/reports' }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ reportOutputDir: null }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ reportOutputDir: 'relative/dir' }).success).toBe(false)
+  })
+
+  it('未知设置键直接报错，不再静默丢弃', () => {
+    expect(settingsPatchSchema.safeParse({ notASetting: true }).success).toBe(false)
   })
 })
 

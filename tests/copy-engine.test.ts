@@ -83,6 +83,11 @@ async function seedJob(
     hashAlgorithm: algorithm,
     manifestFormat: 'asc-mhl-2.0',
     verifyAfterWrite: true,
+    proxyEnabled: false,
+    proxyResolution: '1080p',
+    proxyCodec: 'prores',
+    proxyProfile: '422-proxy',
+    proxyLutPath: null,
     state: 'draft',
     totalFiles: scan.files.length,
     totalBytes: scan.totalBytes,
@@ -354,6 +359,44 @@ describe('断点续传', () => {
     const reset = store.resetInFlightFiles(job.id)
     expect(reset).toBe(1)
     expect(store.listPendingFiles(job.id, 10)).toHaveLength(1)
+  })
+})
+
+describe('重试失败项', () => {
+  it('失败文件回到待处理，已通过的目标不重拷，重试后计数不翻倍', async () => {
+    const payload = Buffer.from('retry-payload')
+    const source = await makeSource({ 'clip.mov': payload })
+    const targets = await makeTargets(2)
+    const targetA = targets[0] as string
+    const targetB = targets[1] as string
+
+    // A 上先放一个同尺寸、内容不同的文件：第一轮必然校验失败，且按红线不覆盖
+    const existing = join(targetA, 'clip.mov')
+    await writeFile(existing, Buffer.from('xxxxxxxxxxxxx'))
+
+    const job = await seedJob(source, targets)
+    const first = await runEngine(job)
+    expect(first.state).toBe('completed-with-errors')
+    expect(store.getJob(job.id)?.filesFailed).toBe(1)
+    expect(store.getJob(job.id)?.filesDone).toBe(0)
+
+    // 现场把坏文件换成正确内容（模拟换盘/修复后重试）
+    await writeFile(existing, payload)
+
+    const reset = store.resetFailedFilesForRetry(job.id)
+    expect(reset).toBe(1)
+    expect(store.getJob(job.id)?.filesFailed).toBe(0)
+    expect(store.listPendingFiles(job.id, 10)).toHaveLength(1)
+
+    const second = await runEngine(store.getJob(job.id) as CopyJob)
+    expect(second.state).toBe('completed')
+    const loaded = store.getJob(job.id)
+    expect(loaded?.filesDone).toBe(1)
+    expect(loaded?.filesFailed).toBe(0)
+
+    // 两个目标上的最终内容都正确
+    expect(await readFile(join(targetA, 'clip.mov'))).toEqual(payload)
+    expect(await readFile(join(targetB, 'clip.mov'))).toEqual(payload)
   })
 })
 

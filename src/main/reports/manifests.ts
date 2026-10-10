@@ -468,10 +468,23 @@ export async function writeJsonManifest(
 
 function buildComment(context: ManifestContext): string {
   const parts: string[] = []
-  if (context.project.parentProjectName !== null && context.project.parentProjectName !== '') {
-    parts.push(`母项目：${context.project.parentProjectName}`)
+  const parent = context.project.parentProjectName
+  const hasParent = parent !== null && parent !== ''
+  if (hasParent) {
+    parts.push(`母项目：${parent}`)
   }
-  if (context.project.projectName !== '') parts.push(`项目：${context.project.projectName}`)
+  /*
+   * 「项目」这一条只在它**不与母项目重复**时才打。
+   *
+   * 选了母项目之后，项目名往往就是母项目的名字 —— 两条都打出来会变成
+   * 「母项目：母亲 / 项目：母亲」这种同行重复。既然母项目名已经在了，
+   * 项目名相同或为空就没有再写的必要；只有用户确实单独填过不同的项目名
+   * （母项目为空、或两者不同）时才打第二条。
+   */
+  const duplicateOfParent = hasParent && (context.project.projectName === '' || context.project.projectName === parent)
+  if (context.project.projectName !== '' && !duplicateOfParent) {
+    parts.push(`项目：${context.project.projectName}`)
+  }
   if (context.project.shootDay !== '') parts.push(`拍摄日：${context.project.shootDay}`)
   if (context.project.camera !== '') parts.push(`机型：${context.project.camera}`)
   const lenses = describeLenses(context.project)
