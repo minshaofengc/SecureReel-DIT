@@ -7,7 +7,7 @@
  */
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import type { CopyJob, FileTargetResult, ParentProject, ProjectInfo } from '../src/shared/types'
-import { DEFAULT_SETTINGS } from '../src/shared/types'
+import { DEFAULT_SETTINGS, LEGACY_THEME_IDS } from '../src/shared/types'
 import { Store } from '../src/main/db/store'
 import { emptyProjectInfo } from '../src/shared/project'
 
@@ -389,11 +389,34 @@ describe('设置', () => {
   })
 
   it('保存后能读回，缺失字段由默认值补齐', () => {
-    store.saveSettings({ ...DEFAULT_SETTINGS, themeId: 'wuguang', language: 'en' })
+    store.saveSettings({ ...DEFAULT_SETTINGS, themeId: 'steel', language: 'en' })
     const loaded = store.getSettings()
-    expect(loaded.themeId).toBe('wuguang')
+    expect(loaded.themeId).toBe('steel')
     expect(loaded.language).toBe('en')
     expect(loaded.maxParallelTargets).toBe(DEFAULT_SETTINGS.maxParallelTargets)
+  })
+
+  /*
+   * 老用户升级路径。
+   *
+   * `getSettings` 是**软合并、不校验**的，所以老用户库里存着的
+   * themeId:'qinghe'（或单套时期的 'studio'）会原样漏到 <html data-skin="…">。
+   * tokens.css 只认 data-skin / data-mode，于是所有 --accent 之类全部取不到值 ——
+   * 界面变成一片无样式的透明块，看起来像应用崩了，而且不报任何错。
+   * 这条测试就是钉住那个归一化不许被改掉。
+   */
+  it.each(LEGACY_THEME_IDS)('旧主题 id %s 会被归一化成当前主题，不会漏到界面上', (legacy) => {
+    /*
+     * 走setKv 写**原始 JSON** 模拟老存档，而不是用 saveSettings ——
+     * 后者会过一遍类型，压根塞不进旧值，测不到真实路径。
+     */
+    store.setKv('app', JSON.stringify({ ...DEFAULT_SETTINGS, themeId: legacy }))
+    expect(store.getSettings().themeId).toBe(DEFAULT_SETTINGS.themeId)
+  })
+
+  it('完全无法识别的 themeId 也回落到默认，而不是原样透传', () => {
+    store.setKv('app', JSON.stringify({ ...DEFAULT_SETTINGS, themeId: '不存在的配色' }))
+    expect(store.getSettings().themeId).toBe(DEFAULT_SETTINGS.themeId)
   })
 })
 

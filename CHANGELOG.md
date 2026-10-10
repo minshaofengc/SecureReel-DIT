@@ -2,6 +2,56 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)；版本号遵循语义化版本。
 
+## [2.0.5] - 2026-10-10
+
+> Theme / 本版主题: **back to open source — and an interface rebuilt around
+> "what should I do now".**
+> **重新开源，以及一次终于围绕"我现在该干什么"重做的界面。**
+
+### Changed / 变更
+
+- **The app is GPL-3.0-only again.** 2.0.4 shipped as a commercially licensed,
+  time-limited build. 2.0.5 returns the project to free and open source under the
+  same licence as 2.0.3, and removes the 60-day trial and the entire offline
+  licence-key subsystem (machine binding, activation, registration, purchase
+  request) — no trial, no activation, no nag. 2.0.3 and earlier remain GPL-3.0;
+  2.0.4 was the only commercially licensed release.
+
+- **重新开源：本版恢复 GPL-3.0-only。** 2.0.4 曾是商业许可的限时版本；2.0.5 把项目
+  恢复到与 2.0.3 相同的免费开源许可，并**全部移除** 60 天试用与整套离线授权子系统
+  （机器绑定、激活、登记、购买申请）——没有试用期、没有激活码、没有提醒。
+  2.0.3 及更早仍是 GPL-3.0；2.0.4 是唯一一个商业许可版本。
+
+### Added / 新增
+
+- **A rebuilt interface.** A new workbench home page answers "what should I do now"
+  (the running job if there is one, otherwise "pick a source") instead of always
+  landing on the offload page. Navigation is now three stages — create → monitor →
+  deliver — replacing the 01–07 numbering, which implied an order that did not
+  exist. Settings and Help moved to the top-right.
+
+- **界面重做。** 新增「工作台」首页回答"我现在该干什么"（有任务在跑就显示那个任务，
+  否则显示"选来源"），不再一律落在拷贝页。导航改为三段——产出 → 监控 → 交付——
+  取代了暗示不存在顺序的 01–07 编号；设置与帮助移到右上角。
+
+- **Three view modes** (cards / compact / focus), switched from a dock in the
+  bottom-right corner. They change layout only, never data.
+
+- **三种视图模式**（卡片式 / 紧凑式 / 专注式），从右下角停靠区切换。只改版式，不动数据。
+
+- **Appearance settings: light / dark and five colour schemes** (Darkroom, Steel,
+  Mono, Sand, Indigo). Contrast is guarded by a test that reads the real tokens.
+
+- **外观设置：明暗两档与五套配色**（暗房 / 石墨蓝 / 中性 / 暖砂 / 靛青）。
+  对比度由一条直接读真实 tokens 的测试守着。
+
+### Removed / 移除
+
+- The trial period, the offline licence-key system, the first-run activation
+  wizard, the licence card and the expiry banner.
+
+- 试用期、离线授权系统、首启激活向导、许可证卡片与到期横幅。
+
 ## [2.0.3] - 2026-10-04
 
 > Theme / 本版主题: **a splash screen, seven checksum algorithms, four manifest formats,

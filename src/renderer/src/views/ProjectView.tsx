@@ -8,9 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { ProjectDetails } from '@shared/types'
 import { emptyProjectDetails } from '@shared/project'
 import { humanBytes } from '@shared/format'
-import { Card, Empty, JobStateBadge, Note } from '../components/ui'
+import { Card, Empty, JobStateBadge, Note, PageHead } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
+import { PAGE_INDEX } from '../nav'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
@@ -166,10 +167,12 @@ export function ProjectView(): ReactNode {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h2>{t('parent.title')}</h2>
-        <p>{t('parent.subtitle')}</p>
-      </header>
+      <PageHead
+        index={PAGE_INDEX.project}
+        kicker={t('nav.project')}
+        title={t('parent.title')}
+        subtitle={t('parent.subtitle')}
+      />
 
       <Card
         title={t('parent.pick')}

@@ -35,6 +35,7 @@ import { renderHtmlToPdf } from './reports/pdf'
 import { FfprobeRunner } from './media/probe'
 import { walkFiles } from './fs-utils'
 import { resolveExecutable, runCommand } from './exec'
+import { executableName } from './platform'
 import { whichInPath } from './fs-utils'
 
 interface CheckResult {
@@ -44,6 +45,33 @@ interface CheckResult {
 }
 
 const results: CheckResult[] = []
+
+/**
+ * 解析自检要用的 ffmpeg。
+ *
+ * ⚠️ **优先用随包分发的那份**（打包后在 `resources/bin`，开发时在
+ * `vendor/ffmpeg/<平台-架构>`，与 `electron-builder.yml` 的 extraResources 一致），
+ * 只有找不到才退回系统 PATH。
+ *
+ * 原先这里直接 `whichInPath('ffmpeg')`，拿到的是 Homebrew 那份 —— 于是
+ * "换随包二进制、换构建参数"之后流水线照样全绿：它测的根本不是要发出去的东西。
+ * 这一条对 2.0.4 换 LGPL ffmpeg 尤其要紧，否则换了二进制没有回归网。
+ */
+async function resolveVerifyFfmpeg(): Promise<string | null> {
+  const bundled = app.isPackaged
+    ? join(process.resourcesPath, 'bin', executableName('ffmpeg'))
+    : join(
+        process.cwd(),
+        'vendor',
+        'ffmpeg',
+        `${process.platform}-${process.arch}`,
+        executableName('ffmpeg')
+      )
+
+  const resolved = await resolveExecutable(bundled)
+  if (resolved !== null) return resolved
+  return resolveExecutable(await whichInPath('ffmpeg'))
+}
 
 function check(name: string, ok: boolean, detail: string): void {
   results.push({ name, ok, detail })
@@ -179,7 +207,7 @@ async function main(): Promise<number> {
     await writeFile(join(source, '.DS_Store'), Buffer.from('junk'))
 
     // 真实 ProRes（有 ffmpeg 才造得出来）
-    const ffmpegPath = await resolveExecutable(await whichInPath('ffmpeg'))
+    const ffmpegPath = await resolveVerifyFfmpeg()
     let proresCreated = false
     if (ffmpegPath !== null) {
       const result = await runCommand(
@@ -208,7 +236,7 @@ async function main(): Promise<number> {
     check(
       '生成真实 ProRes 422 HQ 素材',
       proresCreated,
-      proresCreated ? '由本机 ffmpeg 编码' : '本机没有 ffmpeg，跳过这一项（其它检查照常）'
+      proresCreated ? `由 ${ffmpegPath ?? '?'} 编码` : '本机没有 ffmpeg，跳过这一项（其它检查照常）'
     )
 
     // 私有格式：结构复现（魔数 + 内嵌预览图）
@@ -792,8 +820,8 @@ async function main(): Promise<number> {
     store.updateJob(job.id, { parentProjectId: parentId })
     store.saveProjectInfo(job.id, { ...snapshot, parentProjectName: '母亲' })
     check('演示数据已恢复（便于人工检查分组与归属）', store.countJobsByParent(parentId) === 1, '1 个任务')
-
     /* ---------- 汇总 ---------- */
+
     const failed = results.filter((item) => !item.ok)
     process.stdout.write(
       `\n${'─'.repeat(64)}\n共 ${results.length} 项检查，通过 ${results.length - failed.length} 项，失败 ${failed.length} 项\n`

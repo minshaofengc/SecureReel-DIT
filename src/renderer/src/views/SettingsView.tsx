@@ -4,14 +4,16 @@ import {
   HASH_ALGORITHM_LABELS,
   LANGUAGES,
   MANIFEST_FORMATS,
-  THEMES,
   THEME_MODES,
   supportsAlgorithm,
   type HashAlgorithm,
-  type ManifestFormat
+  type ManifestFormat,
+  type ThemeId
 } from '@shared/types'
-import { Card, Field, PathPicker, Segmented, Note, Toggle } from '../components/ui'
+import { BlockGrid, Card, Field, PageHead, PathPicker, Segmented, Note, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
+import { SKINS } from '../theme'
+import { PAGE_INDEX } from '../nav'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
@@ -127,25 +129,19 @@ export function SettingsView(): ReactNode {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h2>{t('settings.title')}</h2>
-      </header>
+      <PageHead index={PAGE_INDEX.settings} kicker={t('nav.settings')} title={t('settings.title')} />
 
       <Card title={t('settings.appearance')}>
-        <Field label={t('settings.theme')}>
-          <div className="theme-grid">
-            {THEMES.map((theme) => (
-              <button
-                type="button"
-                key={theme}
-                className="theme-card"
-                aria-pressed={settings.themeId === theme}
-                onClick={() => void updateSettings({ themeId: theme })}
-              >
-                <span className="theme-name">{t(`settings.theme.${theme}` as never)}</span>
-              </button>
-            ))}
-          </div>
+        <Field label={t('settings.skin')} hint={t('settings.skinHint')}>
+          <SelectBox<ThemeId>
+            value={settings.themeId}
+            ariaLabel={t('settings.skin')}
+            options={SKINS.map((skin) => ({
+              value: skin,
+              label: t(`skin.${skin}` as never)
+            }))}
+            onChange={(next) => void updateSettings({ themeId: next })}
+          />
         </Field>
 
         <Field label={t('settings.mode')}>
@@ -153,7 +149,10 @@ export function SettingsView(): ReactNode {
             <Segmented
               value={settings.themeMode}
               onChange={(next) => void updateSettings({ themeMode: next })}
-              options={THEME_MODES.map((mode) => ({ value: mode, label: t(`settings.mode.${mode}` as never) }))}
+              options={THEME_MODES.map((mode) => ({
+                value: mode,
+                label: t(`settings.mode.${mode}` as never)
+              }))}
             />
           </div>
         </Field>
@@ -203,6 +202,7 @@ export function SettingsView(): ReactNode {
         </Field>
       </Card>
 
+      <BlockGrid>
       <Card title={t('settings.defaults')}>
         <Field label={t('copy.hashAlgorithm')} hint={t('copy.hashHint')}>
           <SelectBox<HashAlgorithm>
@@ -281,6 +281,7 @@ export function SettingsView(): ReactNode {
           <span>{t('settings.eject')}</span>
         </label>
       </Card>
+      </BlockGrid>
 
       <Card title={t('settings.frames')}>
         <label className="row-actions" style={{ cursor: 'pointer' }}>
@@ -323,6 +324,7 @@ export function SettingsView(): ReactNode {
         )}
       </Card>
 
+      <BlockGrid>
       <Card title={t('settings.tools')}>
         <Field label={t('settings.ffmpegDir')} hint={t('settings.ffmpegHint')}>
           <PathPicker
@@ -404,6 +406,7 @@ export function SettingsView(): ReactNode {
 
         <Note>{t('settings.privacy')}</Note>
       </Card>
+      </BlockGrid>
     </div>
   )
 }

@@ -253,8 +253,12 @@ describe('从文件读取内嵌预览', () => {
 
     const preview = await extractEmbeddedPreview(file)
     expect(preview).not.toBeNull()
-    // 复制过的话 byteOffset 必然为 0，而切片会带一个非零偏移
-    expect(preview?.jpeg.byteOffset).toBe(0)
+    // 判据说明：这里原先断言 `jpeg.byteOffset === 0`（"复制过就从 0 开始分配"）。
+    // 在 Node 26（Buffer.poolSize = 65536）上它不成立：小 Buffer 会被放进池里，
+    // 复制品同样带非零偏移 —— byteOffset 反映的是**分配器内部状态**，不是"有没有复制"。
+    // 真正要防的是"返回的切片挂着整块读窗口"，所以直接量底层缓冲的大小：
+    // 切片会共享上面那个 > 1 MiB 的窗口，复制品只会挂一块池（≤ 64 KiB）。
+    expect(preview?.jpeg.buffer.byteLength).toBeLessThan(512 * 1024)
     expect(preview?.jpeg.equals(jpeg)).toBe(true)
   })
 

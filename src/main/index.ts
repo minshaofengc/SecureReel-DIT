@@ -6,7 +6,7 @@
  */
 import { app, BrowserWindow, dialog, powerSaveBlocker, shell } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { DEFAULT_SETTINGS, THEMES, type AppSettings } from '@shared/types'
 import { APP_NAME, APP_VERSION } from '@shared/version'
 import { buildAppPaths } from './paths'
@@ -31,6 +31,16 @@ registerFrameScheme()
 // 冒烟模式下不需要真的显示窗口：在受限环境（无窗口服务器）里 show() 会让进程挂住
 const smokeScreenshotPath = process.env['SECUREREEL_SMOKE_SCREENSHOT']
 const smokeMode = smokeScreenshotPath !== undefined && smokeScreenshotPath !== ''
+/**
+ * 冒烟验证可选的隔离 userData 目录。
+ *
+ * 只在截图冒烟模式启用，且必须是绝对路径；正常启动 / 正式包完全忽略它。
+ * 这样可以用真实数据库的副本验证界面，而不碰用户正在使用的正式数据库。
+ */
+const smokeUserDataDir = process.env['SECUREREEL_SMOKE_USER_DATA_DIR']
+if (smokeMode && smokeUserDataDir !== undefined && isAbsolute(smokeUserDataDir)) {
+  app.setPath('userData', smokeUserDataDir)
+}
 /**
  * 冒烟时是否保留开屏窗（并改为截它）。
  *
@@ -98,7 +108,7 @@ function createWindow(settings: AppSettings): BrowserWindow {
     ...titleBarOptions(bootBackground),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      // AGENTS.md 硬性要求：渲染进程跑在沙箱里，开启上下文隔离，关闭 Node 集成
+      // 安全基线硬性要求：渲染进程跑在沙箱里，开启上下文隔离，关闭 Node 集成
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -200,12 +210,12 @@ function createWindow(settings: AppSettings): BrowserWindow {
               }
             }
 
-            // 写法：`wuguang` 或 `wuguang:dark`（只换主题时明暗不动）
+            // 写法：`steel` 或 `steel:light`（只换皮肤时明暗不动）
             //
-            // ⚠️ 主题名必须逐个比对 THEMES，不能只做字符消毒就写进去。
+            // ⚠️ 皮肤名必须逐个比对 THEMES，不能只做字符消毒就写进去。
             // 真实踩到过：`SECUREREEL_SMOKE_THEME=$t:light` 在 zsh 里会被
-            // 参数修饰符吃掉 `:l`（转小写），主题名变成 `qingheight`。
-            // 一个不存在的主题名不会报任何错，只会让六套配色同时失配 ——
+            // 参数修饰符吃掉 `:l`（转小写），名字变成 `steelight`。
+            // 一个不存在的名字不会报任何错，只会让配色同时失配 ——
             // --accent 等变量全空，界面变成一片无样式的透明块，看起来像应用崩了。
             // 所以这里宁可吵：不认识就明确说"不认识"，并列出合法值。
             const themeOverride = process.env['SECUREREEL_SMOKE_THEME']
@@ -224,7 +234,7 @@ function createWindow(settings: AppSettings): BrowserWindow {
                 }
                 await window.webContents.executeJavaScript(
                   `(() => {
-                     document.documentElement.dataset.theme = ${JSON.stringify(themeId)}
+                     document.documentElement.dataset.skin = ${JSON.stringify(themeId)}
                      ${modeId === null ? '' : `document.documentElement.dataset.mode = ${JSON.stringify(modeId)}`}
                      return true
                    })()`,
@@ -236,7 +246,7 @@ function createWindow(settings: AppSettings): BrowserWindow {
                   `(() => {
                      const root = getComputedStyle(document.documentElement)
                      return {
-                       theme: document.documentElement.dataset.theme,
+                       skin: document.documentElement.dataset.skin,
                        mode: document.documentElement.dataset.mode,
                        accent: root.getPropertyValue('--accent').trim()
                      }

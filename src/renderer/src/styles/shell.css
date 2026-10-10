@@ -1,0 +1,283 @@
+/*
+ * 外壳 —— 顶部三段导航 + 内容区 + 右下停靠区。
+ *
+ * 2026-10-05 第五次改（方案 E）引入。替换掉此前"左侧栏 + 01–07 竖排导航"的骨架。
+ *
+ * 为什么换成顶部：
+ *   ① 左侧栏在**宽而矮**的窗口里最吃亏 —— 现场笔记本外接一块屏，
+ *      高度只有 800 出头，7 项竖排 + 品牌 + 版本号吃掉一大截纵向空间，
+ *      而纵向恰恰是清单类界面最缺的；
+ *   ② 三段（建任务 / 监控 / 交付）是**横向的流程**，横着排才读得出先后；
+ *      竖着排它们看起来和"设置""帮助"是同一种东西；
+ *   ③ 顶部一条 42px 的横带能同时装下品牌、导航、运行状态、试用剩余、
+ *      工具入口 —— 这些原本散在侧栏底部、页面里、右下角三个地方。
+ *
+ * ⚠️ 本文件**排在 app.css 之后**（见 main.tsx 的 import 顺序），
+ * 同权重规则以本文件为准。app.css 里 `.sidebar` / `.rail-toggle` /
+ * `.sidebar-nav` / `.nav-item` 那几节已经没有对应 DOM，属于待清理的死代码。
+ */
+
+/* ---------------- 骨架 ---------------- */
+
+/*
+ * 用 flex 列而不是 grid 行：子标签行是**条件渲染**的
+ * （只有多页的段才出现），grid 的 `grid-template-rows` 写死行数会在
+ * 它缺席时把内容挤到错误的一行。flex 天然只排存在的孩子。
+ */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* 侧栏没了，但 --rail-w 还被 .action-bar 的 left 引用 —— 归零即可。 */
+  --rail-w: 0px;
+  transition: none;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ---------------- 顶栏 ---------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: var(--border-w) solid var(--line-soft);
+  /* 整条是窗口拖拽区；里面的可点元素逐个豁免 */
+  -webkit-app-region: drag;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 14px;
+  border-right: var(--border-w) solid var(--line-soft);
+  flex: 0 0 auto;
+}
+
+/* 品牌标记：一个圆角方块，不用图片 —— 离线包越小越好 */
+.topbar__mark {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.topbar__name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: var(--ls-tight);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.segs {
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * 段项。当前段用**淡底 + 亮字**，与内容区的选中行是同一套语言；
+ * 不用整块实蓝 —— 导航是工具，不该比内容响。
+ */
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 12px;
+  border: var(--border-w) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.seg:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.seg[aria-current='page'] {
+  background: var(--nav-current-bg);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 运行中任务数。只在监控段出现，且只在 >0 时渲染 */
+.seg__badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.topbar__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* 细状态条。比横幅轻得多 —— 常驻的东西不该喊 */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.pill b {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.pill__led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.pill--run {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.iconbtn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.iconbtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.iconbtn[aria-current='page'] {
+  background: var(--nav-current-bg);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ---------------- 段内子标签 ---------------- */
+
+/*
+ * 只在**该段有多于一页**时渲染（见 App.tsx）。一个只有一项的标签栏
+ * 纯属占地方，而且会让人以为"还有别的没显示出来"。
+ */
+.subtabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  height: 34px;
+  background: var(--bg-elevated);
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.subtab {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.subtab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.subtab[aria-current='page'] {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------------- 页头 ---------------- */
+
+/*
+ * 编号已废弃（见 nav.ts 的说明），所以眉标不再有那两位数字。
+ * 大标题也从 700 收到 500 —— 22px 的粗体在一屏里比内容还响，
+ * 而专业工具里"标题"只需要压住下面的正文，不需要喊。
+ */
+.page-head h2 {
+  font-weight: 500;
+}
+
+/* ---------------- 让位修正 ---------------- */
+
+/* 侧栏没了，吸底操作条从 0 起 */
+.action-bar {
+  left: 0;
+}
+
+/*
+ * Windows 的标题栏叠加层压在窗口顶部 40px。以前这 40px 让给 .page，
+ * 现在顶栏在最上面，该让位的是顶栏本身。
+ */
+[data-platform='windows'] .topbar {
+  height: calc(44px + var(--titlebar-height));
+  padding-top: var(--titlebar-height);
+}
+
+[data-platform='windows'] .page {
+  padding-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seg,
+  .subtab,
+  .iconbtn {
+    transition: none;
+  }
+}

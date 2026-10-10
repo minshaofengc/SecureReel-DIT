@@ -10,6 +10,99 @@ import type { CopyJob, FileState, JobState } from '@shared/types'
 import { HASH_ALGORITHM_LABELS } from '@shared/types'
 import { useI18n } from '../i18n'
 
+/**
+ * 页头（masthead）。
+ *
+ * 2026-10-05 第五次改（方案 E）收形。此前是一条**横向铺满的彩色条带**，
+ * 带 38px/800 的标题和两位编号 —— 那是海报语言，已随方案 B/C 一起退场。
+ *
+ * 现在它只是"一行小号眉标 + 一个 22px/500 的标题 + 一行说明"：
+ * 分区靠面板底色差，不靠色块。专业工具里标题只需要压住下面的正文，
+ * 不需要喊。
+ *
+ * ⚠️ `index` 已**废弃**（导航不再有 01–07 编号，见 nav.ts）。
+ * 传空串就不渲染那个编号块 —— 现有的几处视图还在传 `PAGE_INDEX[x]`，
+ * 那些值现在恒为空串，所以行为上已经等于"没有编号"。
+ */
+export function PageHead({
+  index,
+  kicker,
+  title,
+  subtitle
+}: {
+  /** @deprecated 传空串即不渲染编号块 */
+  index?: string
+  /** 眉标文字（一般是这一页在导航里的名字） */
+  kicker: string
+  title: string
+  subtitle?: string
+}): ReactNode {
+  const showIndex = index !== undefined && index !== ''
+  return (
+    <header className="page-head">
+      <span className="page-head__kicker">
+        {showIndex && <span className="page-head__index">{index}</span>}
+        {kicker}
+      </span>
+      <h2>{title}</h2>
+      {subtitle !== undefined && <p>{subtitle}</p>}
+    </header>
+  )
+}
+
+/**
+ * 主步骤区块（2026-10-04 推倒重做引入，2026-10-05 改形）。
+ *
+ * 一个页面里通常只有一件事是"用户现在最该做的"（拷贝页是选来源、
+ * 队列页是看进度、设置页是改参数）。这个区块把那一件事**抬成唯一的重心**。
+ *
+ * ⚠️ 曾经的实现是"电光绿标题带 + 墨色编号方块" —— 那是方案 B 的视觉语言，
+ * 随荧光绿一起退场了（boss 原话"太丑太卡通"）。现在的做法是
+ * **左侧 3px 强调色竖条 + 比底亮一档的面板**，见 workbench.css 的 `.lead`。
+ *
+ * 编号保留：它同时表达"顺序"和"数量"（一共几步），这是不靠颜色也能读出的信息。
+ */
+export function LeadBlock({
+  step,
+  title,
+  hint,
+  actions,
+  children
+}: {
+  /** 第几步，从 1 起。传 undefined 就不渲染编号圆点 */
+  step?: number
+  title: string
+  hint?: string
+  /** 标题右侧的操作区（暂停/取消/删除这类） */
+  actions?: ReactNode
+  children: ReactNode
+}): ReactNode {
+  return (
+    <section className="block--lead">
+      <div className="block__head">
+        {step !== undefined && <span className="block__num">{step}</span>}
+        <div className="block__headText">
+          <h2 className="block__title">{title}</h2>
+          {hint !== undefined && <div className="block__hint">{hint}</div>}
+        </div>
+        {actions !== undefined && <div className="block__actions">{actions}</div>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+/**
+ * 次要区块并排容器。
+ *
+ * 配合 LeadBlock 使用：主步骤一块，次要步骤两列并排。
+ * 此前它们是一列到底的等宽卡片，一屏要滚很久；
+ * 两列之后一屏能看完一整个流程。
+ */
+export function BlockGrid({ children }: { children: ReactNode }): ReactNode {
+  return <div className="block-grid">{children}</div>
+}
+
 export function Card({
   title,
   hint,

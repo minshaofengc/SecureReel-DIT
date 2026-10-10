@@ -1,0 +1,563 @@
+/*
+ * 监控页（三栏任务工作台）。
+ *
+ * 2026-10-05 第五次改（方案 E）。三栏分别回答三个不同问题：
+ *   左：我有哪些任务？（窄，供快速选择）
+ *   中：选中的任务现在发生什么？（宽，主工作区）
+ *   右：它的归属和参数是什么？（窄，参考信息）
+ *
+ * 不把三栏包进三个 Card —— 那会把三种不同的信息重新做成同一种东西。
+ * 面板底色、细分隔线、行高层级就是全部结构。
+ */
+
+:root {
+  --topbar-height: 44px;
+}
+
+[data-platform='windows'] {
+  --topbar-height: calc(44px + var(--titlebar-height));
+}
+
+.page--monitor {
+  max-width: none;
+  height: 100%;
+  min-height: calc(100vh - var(--topbar-height));
+  padding: 0;
+}
+
+.monitor {
+  display: grid;
+  grid-template-columns: 224px minmax(420px, 1fr) 276px;
+  min-height: calc(100vh - var(--topbar-height));
+  align-items: stretch;
+}
+
+.monitor__list,
+.monitor__meta {
+  min-width: 0;
+  background: var(--bg-elevated);
+}
+
+.monitor__list {
+  border-right: var(--border-w) solid var(--line-soft);
+}
+
+.monitor__meta {
+  border-left: var(--border-w) solid var(--line-soft);
+}
+
+.pane-h {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: var(--border-w) solid var(--line-soft);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: var(--ls-wide);
+}
+
+.pane-h__n {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+.monitor__scroll {
+  max-height: calc(100vh - var(--topbar-height) - 38px);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+/* 左栏：分组标题是弱信息；行是任务，当前行只用低亮度底色与细边。 */
+.qgroup {
+  padding: 12px 12px 5px;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-wide);
+}
+
+.qrow {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px 7px 13px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.qrow:hover {
+  background: var(--surface-2);
+}
+
+.qrow[aria-current='true'] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.qrow__id {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.qrow__name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+.qrow__sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font: 400 var(--fs-2xs)/1.3 var(--font-mono);
+}
+
+.qrow__rt {
+  flex: 0 0 auto;
+  max-width: 82px;
+  overflow: hidden;
+}
+
+.qrow__rt .badge {
+  max-width: 100%;
+}
+
+.qrow__flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--fs-2xs);
+  vertical-align: 1px;
+}
+
+.monitor__empty {
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 9px;
+  min-height: 120px;
+  padding: 18px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.monitor__empty p {
+  margin: 0;
+}
+
+/* 恢复任务不是另一张卡：一条提示 + 恢复按钮 + 任务行。 */
+.recov {
+  padding: 10px 8px 8px;
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.recov__h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0 4px 5px;
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+}
+
+/* 中栏：实际工作区。 */
+.monitor__main {
+  min-width: 0;
+  padding: 16px 20px 32px;
+}
+
+.mhead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.mhead__id {
+  min-width: 0;
+}
+
+.mhead h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-h2);
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mhead__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.mhead__acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  padding: 0 7px;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: 400 var(--fs-2xs)/1.3 var(--font-mono);
+}
+
+.progwrap {
+  padding: 12px 14px 13px;
+  margin-bottom: 14px;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.progwrap--sub {
+  margin-top: 12px;
+  padding: 9px 11px;
+  background: var(--bg-elevated);
+}
+
+.progtop {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.lb {
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-wide);
+}
+
+.progtop .statline {
+  gap: 0;
+}
+
+.progtop .st {
+  padding: 0 10px;
+}
+
+.progtop .st__k {
+  white-space: nowrap;
+}
+
+.progtop .st__v {
+  white-space: nowrap;
+}
+
+/* 目标盘：用行 + 一条细进度，不拿五列表格装一行信息。 */
+.tgt {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.2fr) minmax(80px, 1fr) 70px 86px auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 47px;
+  padding: 7px 2px;
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.tgt:last-child {
+  border-bottom: 0;
+}
+
+.tgt__id {
+  min-width: 0;
+}
+
+.tgt__name,
+.tgt__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tgt__name {
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+.tgt__path {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+}
+
+.tgt__v {
+  color: var(--text-muted);
+  font: 400 var(--fs-2xs)/1.2 var(--font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tgt .progress {
+  height: 4px;
+}
+
+.tgt__err {
+  grid-column: 1 / -1;
+  padding-left: 2px;
+  font-size: var(--fs-2xs);
+}
+
+/* 文件清单：高密度、表头贴住、路径省略可悬停查看。 */
+.monitor__main .table-wrap {
+  max-height: min(430px, 48vh);
+  overflow: auto;
+  border-top: var(--border-w) solid var(--line-soft);
+  scrollbar-gutter: stable;
+}
+
+.monitor__main table.data {
+  width: 100%;
+  table-layout: auto;
+}
+
+.monitor__main table.data thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+
+.monitor__main table.data th,
+.monitor__main table.data td {
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.monitor__main table.data th {
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  letter-spacing: var(--ls-wide);
+}
+
+.monitor__main table.data td {
+  font-size: var(--fs-xs);
+}
+
+.monitor__main table.data td:nth-child(2) {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.w-thumb {
+  width: 46px;
+  min-width: 46px;
+}
+
+.thumb {
+  display: block;
+  width: 38px;
+  height: 24px;
+  object-fit: cover;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--surface-2);
+}
+
+.thumb--empty {
+  background: var(--surface-3);
+}
+
+/* 活跃文件：名字 + 已读/总大小 */
+.active-files {
+  padding: 0 2px 12px;
+}
+
+.active-files ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.active-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: var(--border-w) solid var(--line-soft);
+  font-size: var(--fs-2xs);
+}
+
+.active-files li > .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 右栏：参数、归属、元数据。背景不做卡片，靠分组标题与线分开。 */
+.monitor__meta .pane-h {
+  justify-content: flex-start;
+}
+
+.seg-tight {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.seg-tight button {
+  min-height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 400 var(--fs-2xs)/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+.seg-tight button[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.monitor__meta .monitor__scroll {
+  padding: 10px 12px 24px;
+}
+
+.monitor__meta .field {
+  margin-bottom: 10px;
+}
+
+.monitor__meta .field-label {
+  margin-bottom: 4px;
+  font-size: var(--fs-2xs);
+}
+
+.monitor__meta .input,
+.monitor__meta .textarea,
+.monitor__meta .combo-trigger {
+  min-height: 28px;
+  padding: 5px 7px;
+  font-size: var(--fs-xs);
+}
+
+.monitor__meta .textarea {
+  min-height: 64px;
+}
+
+.monitor__meta .grid-2 {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.monitor__meta .note {
+  padding: 8px 9px;
+  margin: 8px 0 12px;
+  font-size: var(--fs-2xs);
+}
+
+.kv {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.kv tr {
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.kv th,
+.kv td {
+  padding: 6px 3px;
+  font-size: var(--fs-2xs);
+  text-align: left;
+  vertical-align: top;
+}
+
+.kv th {
+  width: 76px;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.kv td {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.monitor__meta .log {
+  padding: 4px 0;
+  background: transparent;
+  font-size: var(--fs-2xs);
+}
+
+@media (max-width: 1180px) {
+  .monitor {
+    grid-template-columns: 196px minmax(360px, 1fr) 244px;
+  }
+
+  .monitor__main {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .tgt {
+    grid-template-columns: minmax(105px, 1fr) minmax(64px, .8fr) 58px 72px auto;
+    gap: 7px;
+  }
+}
+
+@media (max-width: 900px) {
+  .monitor {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .monitor__meta {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qrow {
+    transition: none;
+  }
+}

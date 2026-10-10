@@ -1,4 +1,27 @@
-/* 全局样式与基础组件。所有颜色一律走 tokens.css 里的变量。 */
+/*
+ * 全局样式与基础组件 —— v2.0.4「方案 D：专业工具语言」
+ *
+ * 2026-10-05 第四次重写。参照物是行业标准工具本身（Pomfort Silverstack）。
+ * 前一版（方案 C）的颜色已经收住了，但**骨架**还是海报的：大面积纯色标题带、
+ * 38px 的页头大字、0 圆角、上下贯通的色块。摆在专业工具旁边仍然"重"。
+ *
+ * 本版把骨架也换掉，四条规律：
+ *
+ *   1. **没有色块标题带**。区块标题就是一行小号灰字 + 一条 1px 细分隔线，
+ *      坐在面板底色上。分区靠"面板比底亮一档"，不靠填色。
+ *   2. **面板靠背景值差立起来，不靠边框**。卡片是 --surface，背景是 --bg，
+ *      两者差一档明度；边框只用来收口，且只有 8% 不透明度。
+ *   3. **小字号高密度**。正文 13px、标签 10~11px、页头 22px 就是"大标题"。
+ *      信息密度本身就是专业感 —— 它意味着"这软件装得下活儿"。
+ *   4. **蓝色是唯一的强调色**，只出现在：选中行、主按钮、进度条、聚焦环。
+ *      其余一切都是灰阶。
+ *
+ * ⚠️ 所有颜色一律走 tokens.css 里的变量，本文件里**不允许出现任何色值**。
+ *
+ * ⚠️ 吸底操作条（.action-bar）是 `position: fixed`，不是 sticky。
+ * 上一版用 sticky + 24px 渐隐遮罩，遮罩把最后一行内容
+ * （"写入后独立重读校验"复选框）压得看不见。现在让位交给 .page 的底部内边距。
+ */
 
 *,
 *::before,
@@ -15,8 +38,8 @@ body,
 
 body {
   font-family: var(--font-sans);
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: var(--fs-body);
+  line-height: var(--lh-base);
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -33,166 +56,367 @@ select {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/*
+ * 全局滚动条。
+ *
+ * 专业工具的滚动条是**细、暗、不抢视线**的 —— 它常驻在每一屏的右侧，
+ * 粗一条在深色面板旁边非常显眼。8px + 无轨道 + 悬停才加深。
+ */
+.main::-webkit-scrollbar,
+.combo-panel::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.main::-webkit-scrollbar-thumb,
+.combo-panel::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+.main::-webkit-scrollbar-track,
+.combo-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 
 /* ---------------- 布局 ---------------- */
 
 .shell {
   display: grid;
-  grid-template-columns: 216px 1fr;
+  grid-template-columns: var(--rail-w) 1fr;
   height: 100%;
+  /*
+   * 收起 / 展开的过渡。
+   * 宽度走 @property 注册过的 --rail-w（见 tokens.css），所以网格列宽与
+   * 吸底条的 left 会一起平滑推进，不会一个动一个不动。
+   */
+  transition: --rail-w var(--dur-base) var(--ease);
 }
 
+.shell[data-rail='collapsed'] {
+  --rail-w: var(--rail-w-collapsed);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell {
+    transition: none;
+  }
+}
+
+/*
+ * 侧栏。
+ *
+ * 比主内容区**再深一档**（--rail < --bg）。这是专业工具里"骨架"的做法：
+ * 侧栏是框，主区是纸，靠明度差分开，不靠一条分割线。
+ */
 .sidebar {
   display: flex;
   flex-direction: column;
-  background: var(--bg-elevated);
-  border-right: 1px solid var(--border);
+  background: var(--rail);
+  color: var(--rail-text);
   padding-top: 40px;
   -webkit-app-region: drag;
 }
 
 .sidebar-brand {
-  padding: 0 18px 18px;
+  position: relative;
+  padding: 0 14px 14px 18px;
+  border-bottom: var(--border-w) solid var(--rail-line);
 }
 
 .sidebar-brand h1 {
   margin: 0;
-  font-size: 15px;
-  letter-spacing: 0.01em;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: var(--ls-tight);
 }
 
 .sidebar-brand p {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: var(--text-faint);
+  margin: 3px 0 0;
+  font-size: var(--fs-2xs);
+  color: var(--rail-text-dim);
 }
 
+/*
+ * 侧栏收放按钮。
+ *
+ * 绝对定位在品牌区右上角，而不是排在文档流里：
+ * 收起之后品牌文字会消失，若按钮在流里就会跟着往上跳；
+ * 绝对定位让它在两种状态下的位置几乎不动，手不用重新找。
+ */
+.rail-toggle {
+  position: absolute;
+  top: 0;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: var(--border-w) solid var(--rail-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--rail-text-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  /* 品牌区整体是拖拽区，按钮必须单独豁免，否则点不动 */
+  -webkit-app-region: no-drag;
+}
+
+.rail-toggle:hover {
+  background: var(--rail-hover);
+  color: var(--rail-text);
+}
+
+/*
+ * 导航。
+ *
+ * 与 Silverstack 的素材库大纲同一种做法：一行一项、细分隔线、
+ * 图标 + 文字 + 右侧计数。当前项用**蓝色淡底 + 白字**（见下）。
+ */
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 0 10px;
+  padding: 6px 8px;
+  gap: 1px;
   -webkit-app-region: no-drag;
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   padding: 7px 10px;
-  border-radius: var(--radius-sm);
   border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--rail-text-dim);
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .nav-item:hover {
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--rail-hover);
+  color: var(--rail-text);
 }
 
 /*
- * 当前页：辅色（粉 / 各主题的辅色）只出现在"浅底 + 左侧竖条"上，
- * 文字仍用 --text。理由：把文字直接染成辅色，在奶酪这种浅底主题上
- * 会掉到 WCAG AA 以下（#c2860f on #fbeecb 只有 2.71:1）；
- * 竖条 + 浅底既让辅色有存在感，对比度又天然由文字色兜住。
+ * 当前页：蓝色**淡底** + 白字 + 左侧 2px 竖条。
  *
- * 竖条宽度走 --accent-2-bar：渐变、浅底这类连续的东西能在单色主题上
- * 自然退化成平色，但竖条是个真元素，退不了 —— 只能让单色主题把它配成
- * 0px，才能保证清和 / 奶酪的外观跟以前一模一样。
+ * ⚠️ 刻意不是整块实蓝。2026-10-04 boss 反馈过"整块电光绿太扎眼"——
+ * 侧栏是导航工具，不该比内容响。淡底 + 白字已经足够定位，
+ * 而且这一版强调色是低饱和的蓝，比当年的荧光绿安静得多。
  */
 .nav-item[aria-current='page'] {
-  background: var(--accent-2-soft);
-  color: var(--text);
+  background: var(--nav-current-bg);
+  color: var(--nav-current-text);
   font-weight: 600;
-  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2);
+  box-shadow: inset var(--focus-ring-w) 0 0 var(--accent);
+}
+
+.nav-index {
+  flex: 0 0 auto;
+  width: 16px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
 }
 
 .nav-icon {
-  width: 16px;
-  text-align: center;
-  font-size: 14px;
   flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+}
+
+.nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-badge {
   margin-left: auto;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--warn-soft);
-  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .sidebar-foot {
   margin-top: auto;
-  padding: 12px 14px 14px;
-  font-size: 11px;
-  color: var(--text-faint);
+  padding: 10px 18px 12px;
+  border-top: var(--border-w) solid var(--rail-line);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--rail-text-dim);
   -webkit-app-region: no-drag;
 }
 
-.main {
-  overflow-y: auto;
-  padding: 40px 32px 64px;
-}
-
 /*
- * ---------------- Windows 的窗口 chrome ----------------
- *
- * Windows 走的是「无边框 + 系统绘制的标题栏叠加层」（见 src/main/index.ts）：
- * 窗口最上面 40px 由系统画成一条标题栏，右端放最小化/最大化/关闭三个按钮。
- * 那块区域**不归我们画**，所以界面必须让开它。
- *
- * 好在两处留白本来就对得上 —— .sidebar 与 .main 的顶部都是 40px
- * （原本是给 macOS 红绿灯留的位置），所以这两个值一行都不用改。
- *
- * 真正需要处理的是**吸顶元素**：它们的 top: 0 是相对 .main 的滚动视口算的，
- * 也就是窗口最顶端 —— 在 Windows 上那正好被标题栏盖住，表头一滚动就凭空消失。
- * 往下让一个标题栏的高度即可。
- *
- * macOS 分支完全不受影响：这些规则都被 [data-platform='windows'] 限定了。
- * .combo-group-label 也是 sticky，但它在下拉浮层自己的滚动容器里，不能动。
+ * 收起态：只剩品牌首字、收放按钮、一列图标。
+ * 文字全部隐藏，但每项都留了 `title`，悬停能看到名字。
  */
-[data-platform='windows'] table.data th,
-[data-platform='windows'] .group-row td {
-  top: var(--titlebar-height);
+.shell[data-rail='collapsed'] .sidebar-brand {
+  padding: 0 0 12px;
 }
 
-.page {
-  max-width: 980px;
+.shell[data-rail='collapsed'] .sidebar-brand h1,
+.shell[data-rail='collapsed'] .sidebar-brand p {
+  display: none;
+}
+
+.shell[data-rail='collapsed'] .rail-toggle {
+  position: static;
   margin: 0 auto;
 }
 
+.shell[data-rail='collapsed'] .sidebar-nav {
+  padding: 6px;
+}
+
+.shell[data-rail='collapsed'] .nav-item {
+  justify-content: center;
+  padding: 8px 0;
+  gap: 0;
+}
+
+.shell[data-rail='collapsed'] .nav-index,
+.shell[data-rail='collapsed'] .nav-label {
+  display: none;
+}
+
+.shell[data-rail='collapsed'] .nav-badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  margin-left: 0;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.shell[data-rail='collapsed'] .sidebar-foot {
+  display: none;
+}
+
+/*
+ * 主内容区。
+ *
+ * ⚠️ 这里**没有内边距**：页头的分隔线要贴着窗口左右缘铺满，留白交给 .page。
+ */
+.main {
+  overflow-y: auto;
+  padding: 0;
+}
+
+.page {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 var(--page-pad) 56px;
+}
+
+/*
+ * 只有拷贝页有吸底操作条（约 60px 高），所以只有它需要把内容抬得更高。
+ * 其余页面给 56px 的正常收尾即可。
+ */
+.main[data-page='copy'] .page {
+  padding-bottom: 92px;
+}
+
+/* Windows 上窗口最上面 40px 被系统标题栏叠加层占着，页头必须让开 */
+[data-platform='windows'] .page {
+  padding-top: var(--titlebar-height);
+}
+
+/* ---------------- 页头 ----------------
+ *
+ * 2026-10-05 从"彩色条带"改成**窄条 + 下沿分隔线**。
+ *
+ * 方案 B/C 的页头是一条填满宽度的深色带、38px 大字、顶部一条荧光细线。
+ * 那是海报的做法：它把"我在哪一页"喊得很大声。专业工具相反 ——
+ * Silverstack 的页头只有一行 `‹ › Backup`，22px，下面是内容。
+ * 信息本来就在标题里，不需要再用颜色和字号喊一遍。
+ *
+ * 结构保留：眉标（编号 + 页名，小号灰字）→ 标题 → 一行说明。
+ */
 .page-head {
-  margin-bottom: 22px;
+  position: relative;
+  display: block;
+  margin: 0 calc(-1 * var(--page-pad)) var(--sp-4);
+  padding: 18px var(--page-pad) 14px;
+  background: transparent;
+  color: var(--text);
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.page-head__kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-wide);
+  color: var(--text-faint);
+}
+
+.page-head__index {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
 }
 
 .page-head h2 {
-  margin: 0 0 4px;
-  font-size: 21px;
-  letter-spacing: 0.01em;
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  color: var(--text);
 }
 
 .page-head p {
-  margin: 0;
+  margin: 6px 0 0;
+  max-width: 76ch;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
   color: var(--text-muted);
 }
 
-/* ---------------- 卡片 ---------------- */
+/* ---------------- 卡片 ----------------
+ *
+ * 面板比底亮一档 + 一圈 8% 的收口线。**没有填色标题带。**
+ * 标题就是面板里的一行小号灰字，下面一条细分隔线 —— 与 Silverstack 一致。
+ */
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--border-w) solid var(--line-soft);
   border-radius: var(--radius-md);
-  padding: 16px 18px;
-  margin-bottom: 14px;
-  box-shadow: var(--shadow-sm);
+  padding: 14px 16px;
+  margin-bottom: var(--sp-3);
+  box-shadow: none;
 }
 
 .card-head {
@@ -200,23 +424,87 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin: 0 0 12px;
+  padding: 0 0 10px;
+  background: none;
+  color: var(--text);
+  border-bottom: var(--border-w) solid var(--line-soft);
 }
 
 .card-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .card-head .hint {
-  font-size: 12px;
+  margin-top: 2px;
+  font-size: var(--fs-2xs);
   color: var(--text-faint);
+}
+
+.card-head .faint,
+.card-head .muted {
+  color: var(--text-faint);
+}
+
+/* 标题行上的按钮：比正文按钮再小一档，避免和标题抢 */
+.card-head .btn {
+  padding: 4px 9px;
+  font-size: var(--fs-2xs);
 }
 
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
+}
+
+/* ---------------- 入场动效 ----------------
+ * 极轻：只做 6px 的上浮 + 淡入，120ms 错落。专业工具不该"弹"。
+ * 全部包在 prefers-reduced-motion 里。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .card,
+  .block--lead {
+    animation: rise-in var(--dur-slow) var(--ease-out-expo) both;
+  }
+
+  .card:nth-child(1) {
+    animation-delay: 20ms;
+  }
+  .card:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .card:nth-child(3) {
+    animation-delay: 60ms;
+  }
+  .card:nth-child(4) {
+    animation-delay: 80ms;
+  }
+  .card:nth-child(5) {
+    animation-delay: 100ms;
+  }
+  .card:nth-child(6) {
+    animation-delay: 120ms;
+  }
+  .card:nth-child(n + 7) {
+    animation-delay: 140ms;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ---------------- 表单 ---------------- */
@@ -226,34 +514,82 @@ select {
   margin-bottom: 12px;
 }
 
+/*
+ * 字段标签：小号、常规体、灰。**不是大写拉开字距的眉标** ——
+ * 那是海报语言。专业工具里标签就是"这格填什么"，读得快比看起来重要。
+ */
 .field-label {
   display: block;
-  font-size: 12px;
-  color: var(--text-muted);
   margin-bottom: 5px;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.hint {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.row {
+  display: flex;
 }
 
 .input,
 .textarea {
   width: 100%;
-  padding: 7px 10px;
-  border: 1px solid var(--border-strong);
+  padding: 7px 9px;
+  border: var(--border-w) solid var(--hard-line);
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  background: var(--surface-2);
+  /*
+   * ⚠️ 必须显式给颜色，不能靠继承。
+   *
+   * 输入框会出现在各种容器里（含深色面板），靠继承会拿到容器的浅色文字，
+   * 变成"浅底 + 浅字"，整个控件看不见。实测抓到过：
+   * 报告页的任务下拉挂在深色容器上，算出来的 color 是 rgb(247,245,239)、
+   * 背景是纯白。表单控件的文字色只跟自己的底色走。
+   */
+  color: var(--text);
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
+/*
+ * 焦点环：一圈 2px 实心强调色。**不用柔光** ——
+ * 深色面板上柔光几乎不可见，硬环才读得出来。
+ */
 .input:focus,
 .textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--accent-soft);
+}
+
+/*
+ * 占位符。浏览器默认那条浅灰在深色下几乎看不见，
+ * 而本项目的占位符承载的是**真实提示**（"例如：A002 卡 · 现场备份"），
+ * 不是可省略的装饰。
+ */
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
 }
 
 .textarea {
-  min-height: 96px;
+  min-height: 80px;
   resize: vertical;
   font-family: var(--font-sans);
+}
+
+/* 复选框 / 单选钮统一染成强调色，否则是系统蓝，在这套配色里很突兀 */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  cursor: pointer;
 }
 
 .path-row {
@@ -263,7 +599,7 @@ select {
 
 .path-row .input {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .path-row .btn {
@@ -287,7 +623,6 @@ select {
 /*
  * 网格项的 min-width 默认是 auto，一列里放个长文本的输入框就能把这一列撑宽、
  * 把同一行的「所属人」和「移除」挤出可视区。职务可以自由输入，尤其容易踩到。
- * 镜头行同理，一起兜住。
  */
 .crew-row > * {
   min-width: 0;
@@ -295,24 +630,26 @@ select {
 
 /*
  * 任务列表里的母项目分组标题行。
- * 贴在表头上一点、比普通行更暗，扫一眼就能看出"下面这几条是同一部戏的"。
+ * 比普通行更重一档（浅底 + 小号大写灰字），扫一眼能看出"下面这几条是同一部戏的"。
  */
 .group-row td {
   background: var(--surface-2);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 0.02em;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
   position: sticky;
   top: 0;
 }
 
 .sub-title {
-  margin: 16px 0 8px;
-  font-size: 12px;
-  font-weight: 600;
+  margin: 14px 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
   color: var(--text-muted);
-  letter-spacing: 0.02em;
 }
 
 .info-pane table {
@@ -323,27 +660,23 @@ select {
   text-align: left;
   font-weight: 600;
   color: var(--text-muted);
-  font-size: 12px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-2xs);
+  padding: 6px 9px;
+  border-bottom: var(--border-w) solid var(--line-soft);
   background: none;
 }
 
 .info-pane table td {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  padding: 6px 9px;
+  border-bottom: var(--border-w) solid var(--line-soft);
+  font-size: var(--fs-sm);
 }
 
-/*
- * 字段组（镜头列表、剧组人员列表）。
- * 用一条细细的分隔线把它们和上面的基础字段分开，避免出现
- * "一行输入框紧贴下一行输入框"、看不出哪些属于一组的糊状排版。
- */
+/* 字段组（镜头列表、剧组人员列表）：用一条细线把一组字段与上一组分开 */
 .sub-block {
   margin: 14px 0 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--border);
+  border-top: var(--border-w) solid var(--line-soft);
 }
 
 .sub-head {
@@ -355,24 +688,25 @@ select {
 }
 
 .counter {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
   color: var(--text-faint);
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .counter.over {
   color: var(--danger);
+  font-weight: 600;
 }
 
-/* ---------------- 自研下拉 ---------------- */
-
-/*
+/* ---------------- 自研下拉 ----------------
+ *
  * 为什么要自己写：原生 <select> / <datalist> 的弹层由操作系统绘制，
- * 不在 DOM 里，CSS 一行都够不着 —— 换主题时它永远是系统那一套灰。
+ * 不在 DOM 里，CSS 一行都够不着 —— 换配色时它永远是系统那一套灰。
  *
  * 浮层用 position: fixed 而不是 absolute：.main 是 overflow-y: auto 的滚动容器，
- * 用 absolute 的话靠近窗口底部的下拉会被裁掉。fixed + 打开时测量同时解决了
- * 「被裁剪」和「该向上还是向下弹」两件事。
+ * 用 absolute 的话靠近窗口底部的下拉会被裁掉。
  *
  * 状态一律用属性选择器表达（和现有的 [aria-current] / [aria-pressed] 一个路子），
  * 不用 .is-open 这类额外 class —— 少一套需要手动同步的状态。
@@ -380,31 +714,21 @@ select {
 
 .combo {
   position: relative;
-  /*
-   * width: 100% 是为了在 .path-row 里跟 .input 表现一致：
-   * .path-row 是 flex 行，原来那枚 <select class="select"> 就带 width: 100%，
-   * 靠 flex-shrink 让位给旁边的按钮。少了这一条，触发器会缩成内容宽。
-   */
   width: 100%;
   min-width: 0; /* 作为网格项时不许被内容撑爆列宽 */
 }
 
 .combo-trigger {
-  /* 外观全部复用 .input，这里只补箭头要占的位置 */
-  padding-right: 26px;
+  padding-right: 24px;
   cursor: pointer;
   text-overflow: ellipsis;
 }
 
 .combo-trigger[aria-expanded='true'] {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--accent-soft);
 }
 
-/*
- * 箭头用 Unicode 字符而不是图标：App.tsx 的侧栏图标也是这么做的，
- * 项目里没有图标库，也没必要为一个小三角引入一个。
- */
 .combo-caret {
   position: absolute;
   top: 0;
@@ -417,7 +741,7 @@ select {
   border: none;
   background: none;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 9px;
   line-height: 1;
   cursor: pointer;
   transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -425,19 +749,19 @@ select {
 
 .combo-trigger[aria-expanded='true'] + .combo-caret {
   transform: rotate(180deg);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .combo-panel {
   position: fixed;
-  z-index: 50; /* 高于表头的 1，低于 .toasts 的 60 */
-  max-height: 264px;
+  z-index: 50; /* 高于表头的 1，低于 .dock 的 60 */
+  max-height: 300px;
   overflow-y: auto;
   overscroll-behavior: contain; /* 滚到头别把 .main 一起滚走 */
   padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: var(--border-w) solid var(--border-strong);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   animation: combo-in var(--dur-fast) var(--ease);
 }
@@ -445,7 +769,7 @@ select {
 @keyframes combo-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-3px);
   }
   to {
     opacity: 1;
@@ -464,7 +788,7 @@ select {
   align-items: center;
   gap: 8px;
   padding: 6px 9px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
   white-space: nowrap;
@@ -474,39 +798,36 @@ select {
 
 /* 悬停和键盘共用同一个高亮，避免"鼠标一格、键盘一格"两个高亮打架 */
 .combo-option[data-active='true'] {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 /*
- * 选中项：辅色只用在"浅底 + 左侧竖条"上，值文字保持 --text。
- * 理由同侧栏当前页：把文字直接染成辅色，在浅底主题上会掉到 WCAG AA 以下。
- * 竖条宽度同样走 --accent-2-bar，单色主题下为 0px。
+ * 选中项：蓝色淡底 + 强调色文字 + 左侧竖条。
+ * 与侧栏当前项同一套读法 —— 全项目"选中"只有这一种表达。
  */
 .combo-option[aria-selected='true'] {
-  background: var(--accent-2-soft);
-  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2);
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-weight: 600;
+  box-shadow: inset var(--focus-ring-w) 0 0 var(--accent);
 }
 
 .combo-option[aria-selected='true'][data-active='true'] {
-  box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2), inset 0 0 0 1px var(--accent-2-soft);
+  background: var(--surface-3);
 }
 
 .combo-option[aria-disabled='true'] {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-/*
- * 动作项：「+ 新建母项目…」这类不是值的选项。
- * 用分隔线拉开距离 + 辅色，免得和真实母项目混成一片。
- */
+/* 动作项：「+ 新建母项目…」这类不是值的选项 */
 .combo-option[data-tone='action'] {
   margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  border-radius: 0 0 4px 4px;
-  color: var(--accent-2);
+  border-top: var(--border-w) solid var(--line-soft);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--accent-text);
+  font-weight: 600;
 }
 
 .combo-group-label {
@@ -514,142 +835,96 @@ select {
   top: 0;
   z-index: 1;
   padding: 6px 9px 3px;
-  background: var(--surface);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  background: var(--bg-elevated);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
   color: var(--text-faint);
 }
 
 .combo-empty {
   padding: 10px 9px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
-}
-
-/* Electron 就是 Chromium，::-webkit-scrollbar 一定生效 */
-.combo-panel::-webkit-scrollbar {
-  width: 8px;
-}
-
-.combo-panel::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 999px;
-}
-
-.combo-panel::-webkit-scrollbar-track {
-  background: transparent;
 }
 
 .combo[data-disabled='true'] .combo-trigger,
 .combo[data-disabled='true'] .combo-caret {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-/* ---------------- 主题选择 ---------------- */
-
-/*
- * 主题选择：三个带名字的方框。
+/* ---------------- 按钮 ----------------
  *
- * 这里原本还有一个 30px 高的"配色预览条"（底色 / 主色 / 辅色 / 文字 四段色块），
- * 已按需求去掉 —— 一是那几个色块本身显得杂，二是它并非必要：点一下主题是**立即生效**的，
- * 当前界面马上跟着换，不需要先看小样再决定。
- * 去掉之后卡片只剩一行文字，所以顺手把纵向排列和间距撤了、改成居中。
+ * 小号 chip：1px 边 + 浅底 + 6~7px 内边距。不是"块"。
+ * 主按钮是全项目唯一一处实心强调色 —— 那是"往下就点这个"的信号。
  */
-.theme-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-  gap: 10px;
-}
-
-.theme-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
-}
-
-.theme-card:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.theme-card[aria-pressed='true'] {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.theme-name {
-  font-size: 13px;
-}
-
-/* ---------------- 按钮 ---------------- */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: 5px;
+  padding: 6px 11px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
+  border: var(--border-w) solid var(--hard-line);
+  background: var(--surface-2);
   color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
+    color var(--dur-fast) var(--ease);
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 /*
- * 主按钮用**纯主色**，不做渐变。
- *
- * 曾经这里写的是 linear-gradient(..., var(--accent), var(--accent-2))
- * —— 主色到辅色的对角微渐变。对竹林 / 奶酪来说那等于平色（它们的辅色
- * 就是主色），但雾光会渲染成明显的蓝→粉斜纹，观感偏"网页模板"，
- * 所以按需求去掉了渐变，各套主题统一成实心块。
+ * 主按钮用**纯主色**，不做渐变（旧版主色→辅色差 137°，渲染成彩色斜纹，
+ * 观感偏"网页模板"，而且容易被误读成"两个阶段"）。
  */
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--accent-contrast);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  color: var(--accent-ink);
 }
 
+/*
+ * 危险按钮：红字红边、**不填色**。
+ *
+ * 实测问题：母项目页的「删除母项目」用实心红底时，它是整屏唯一的高饱和色块，
+ * 视觉权重超过了主行动按钮 —— 而"删除"不可逆，权重高于"创建任务"是错的。
+ */
 .btn-danger {
   border-color: var(--danger);
   color: var(--danger);
+  background: transparent;
 }
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .btn-ghost {
@@ -660,49 +935,70 @@ select {
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--surface-2);
+  border-color: transparent;
   color: var(--text);
 }
 
 .btn-sm {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 4px 9px;
+  font-size: var(--fs-2xs);
 }
 
 /* ---------------- 分段控件 ---------------- */
 
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border-strong);
+  padding: 2px;
+  gap: 2px;
+  border: var(--border-w) solid var(--line-soft);
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  background: var(--surface-2);
 }
 
 .segmented button {
-  padding: 6px 13px;
+  padding: 4px 11px;
   border: none;
-  background: var(--surface);
+  border-radius: 2px;
+  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
-}
-
-.segmented button + button {
-  border-left: 1px solid var(--border);
-}
-
-.segmented button[aria-pressed='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  font-size: var(--fs-sm);
   font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-/* ---------------- 徽标 ---------------- */
+.segmented button:hover {
+  color: var(--text);
+}
+
+/*
+ * 选中：中性浅片 + **强调色文字** + 一圈细边。
+ *
+ * ⚠️ 不能用 --bg-elevated 当选中底。暗色下 --bg-elevated(#232327) 比
+ * 轨道 --surface-2(#2e2e34) **更暗**，选中项看起来像被按下去了。
+ * 用 --surface-3（两种模式下都比轨道更"凸"）配强调色文字 ——
+ * 既读得出"选中"，又不用整块实色（那是主按钮的语言，不是分段控件的）。
+ */
+.segmented button[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--accent-text);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+/* ---------------- 徽标 ----------------
+ *
+ * 方角小片、1px 边、实心淡底。状态色只以这种小块出现，
+ * 绝不铺面 —— 铺面就会和"选中/强调"抢语义。
+ */
 
 .badge {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  border: 1px solid var(--border-strong);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  border: var(--border-w) solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-muted);
   white-space: nowrap;
@@ -732,32 +1028,26 @@ select {
   color: var(--info);
 }
 
+/* 运行中：实底强调色，是列表里唯一会"亮起来"的徽标 */
 .badge.accent {
   border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
-/* ---------------- 进度条 ---------------- */
+/* ---------------- 进度条 ----------------
+ *
+ * 6px 细条 + 圆角。方案 B/C 是 12px 加粗边框，太"粗壮"；
+ * 专业工具里进度条是细的，因为它旁边永远有数字。
+ */
 
 .progress {
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   overflow: hidden;
 }
 
-/*
- * 进度条用**纯主色**，不做渐变。
- *
- * 曾经写的是 linear-gradient(90deg, var(--accent), var(--accent-2))，理由是
- * "DIT 会长时间盯着它，渐变便于余光捕捉到它在动"。现场反馈是相反的：
- * 雾光的青→粉横跨 137°，渲染成一条彩色斜纹，既晃眼，又容易让人误以为
- * 它在表达别的东西（比如"两个阶段混在一起"）。
- * 按需求改成实心主色 —— 与主按钮（见 .btn-primary）同一次教训。
- *
- * 一条要长时间盯着的进度条，信息量应当尽量低：一个颜色 + 一个长度。
- */
 .progress > span {
   display: block;
   height: 100%;
@@ -769,9 +1059,12 @@ select {
   background: var(--warn);
 }
 
+.progress.danger > span {
+  background: var(--danger);
+}
+
 /*
  * 不定态：一条来回走的滑块，只表达"在动"，不假装知道还剩多久。
- *
  * 用 transform 而不是改 width —— transform 走合成层，不触发布局。
  * 拷贝正在满速吃磁盘和读卡器的时候，界面不该再抢一份渲染开销。
  */
@@ -790,7 +1083,7 @@ select {
   }
 }
 
-/* 系统开了「减弱动态效果」时不来回滑，改成呼吸式明暗 —— 仍在动，但不晃眼 */
+/* 系统开了「减弱动态效果」时不来回滑，改成呼吸式明暗 */
 @media (prefers-reduced-motion: reduce) {
   .progress.indeterminate > span {
     width: 100%;
@@ -808,32 +1101,39 @@ select {
   }
 }
 
-.progress.danger > span {
-  background: var(--danger);
-}
-
+/*
+ * 统计格。
+ *
+ * 2026-10-05 从"1px 网格 + 分隔线"改成**无框**：标签在上、数字在下，
+ * 靠间距分组。Silverstack 的元数据摘要就是这么排的 ——
+ * 数字本身够大够清楚，再加框线只是噪音。
+ */
 .meter {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 12px 16px;
   margin-top: 12px;
 }
 
 .meter .item .label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
   color: var(--text-faint);
 }
 
 .meter .item .value {
-  font-size: 15px;
+  margin-top: 1px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
 /*
  * 正在处理的文件列表。
- *
- * 放在进度统计下面，回答的是另一类问题：统计数字说"还剩多久"，
- * 这里说"现在到底在动没有"。大文件拷贝时字节数会长时间不动，
+ * 回答的是"现在到底在动没有"：大文件拷贝时字节数会长时间不动，
  * 没有这一块，用户只能盯着一个不动的数字猜程序是不是卡死了。
  */
 .active-files {
@@ -843,7 +1143,7 @@ select {
 .active-files ul {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
@@ -854,7 +1154,7 @@ select {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* 路径可能很长，让它先被截断，字节数永远保留完整 */
@@ -870,42 +1170,63 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-/* 音量滑块：用原生 range，只把它染上主色 —— 否则在深色主题里会是一条突兀的白杠 */
+/* 音量滑块：用原生 range，只把它染上强调色 */
 .volume-slider {
-  width: 160px;
+  width: 150px;
   accent-color: var(--accent);
 }
 
-/* ---------------- 表格 ---------------- */
+/* ---------------- 表格 ----------------
+ *
+ * 专业工具的表格是**无框**的：没有外框、没有竖线，
+ * 只有行之间一条极细的分隔线 + 表头一行小号灰字。
+ * 框线越多，表格越像电子表格，越不像工具。
+ */
 
 .table-wrap {
   overflow-x: auto;
-  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
 table.data {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 table.data th,
 table.data td {
   text-align: left;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 6px 9px;
+  border-bottom: var(--border-w) solid var(--line-soft);
   vertical-align: top;
 }
 
 table.data th {
-  background: var(--surface-2);
-  color: var(--text-muted);
+  background: var(--surface);
+  color: var(--text-faint);
   font-weight: 600;
-  font-size: 11.5px;
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  border-bottom: var(--border-w) solid var(--hard-line);
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+/* 任务表是可点的，给一行悬停反馈 —— 没有它，用户不知道"这一行能点" */
+table.data tbody tr:hover > td {
+  background: var(--surface-2);
+}
+
+/* 选中的任务行：蓝色淡底 + 左侧竖条，与侧栏当前项同一套读法 */
+table.data tbody tr[aria-selected='true'] > td {
+  background: var(--accent-soft);
+}
+
+table.data tbody tr[aria-selected='true'] > td:first-child {
+  box-shadow: inset var(--focus-ring-w) 0 0 var(--accent);
 }
 
 table.data tr:last-child td {
@@ -920,18 +1241,18 @@ table.data td.num {
 
 .mono {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   word-break: break-all;
 }
 
 /* 首帧缩略图：固定尺寸，避免加载前后表格行高跳动 */
 .thumb {
   display: block;
-  width: 84px;
-  height: 48px;
+  width: 76px;
+  height: 44px;
   object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border);
   background: var(--surface-2);
 }
 
@@ -959,17 +1280,27 @@ table.data td.num {
 
 .empty {
   text-align: center;
-  padding: 40px 20px;
+  padding: 44px 20px;
   color: var(--text-faint);
+  font-size: var(--fs-sm);
 }
 
+.empty p {
+  margin: 0 0 12px;
+}
+
+/*
+ * 提示块：左侧 2px 实色竖条 + 淡底。
+ * 用竖条而不是整框，是为了让它"贴着"内容而不是"贴在"页面上 ——
+ * 现场最常出现的那些提示（空间不足、校验未开、降级说明）不该像弹窗。
+ */
 .note {
-  border-left: 3px solid var(--accent);
+  border-left: var(--focus-ring-w) solid var(--accent);
   background: var(--accent-soft);
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   margin: 10px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .note.warn {
@@ -990,43 +1321,60 @@ table.data td.num {
   font-family: var(--font-sans);
 }
 
-/* ---------------- Toast ---------------- */
+/* ---------------- Toast 与右下角停靠区 ----------------
+ *
+ * 视图切换器常驻右下角，临时提示叠在它上方。
+ * 两者合用一个 flex 列（.dock）而不是各自 fixed + 算 bottom：
+ * 上一版就是两块各自算 bottom，结果"恢复提示 + toast"同时出现时算到了同一个值，
+ * 直接叠在一起。用布局保证不重叠，比用魔法数字可靠。
+ */
 
-.toasts {
+.dock {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 60;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
-  z-index: 60;
-  max-width: 380px;
+}
+
+/* 拷贝页有吸底操作条，整块停靠区要为它让位 */
+.main[data-page='copy'] ~ .dock {
+  bottom: 76px;
 }
 
 .toast {
-  padding: 9px 14px;
+  max-width: 380px;
+  padding: 9px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
+  border: var(--border-w) solid var(--border-strong);
+  border-left-width: var(--focus-ring-w);
+  background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
-  font-size: 12.5px;
-  animation: toast-in var(--dur-base) var(--ease);
+  font-size: var(--fs-sm);
+  animation: toast-in var(--dur-base) var(--ease-out-expo);
+  cursor: pointer;
 }
 
 .toast.ok {
-  border-color: var(--ok);
+  border-left-color: var(--ok);
 }
 .toast.warn {
-  border-color: var(--warn);
+  border-left-color: var(--warn);
 }
 .toast.error {
-  border-color: var(--danger);
+  border-left-color: var(--danger);
+}
+.toast.info {
+  border-left-color: var(--info);
 }
 
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -1034,18 +1382,297 @@ table.data td.num {
   }
 }
 
-/* ---------------- 日志面板 ---------------- */
+/* ---------------- 视图切换器 ----------------
+ *
+ * 三档：卡片 / 紧凑 / 专注（语义见 ViewSwitch.tsx）。
+ *
+ * 它是个**控件**，所以走"控件"的语言：面板底 + 细边 + 小圆角，
+ * 与下拉浮层同族，不跟纸面上的表单抢注意力。
+ *
+ * 选中态用一块**会滑动的强调色底板**表达。底板是 .viewswitch 里的第一个
+ * 子元素，绝对定位、靠 `--i`（下标）算位移 —— 三个按钮等宽，
+ * 所以 `translateX(var(--i) * 100%)` 永远落在正确的格子上。
+ * 换文案、换字号、换语言都不会错位；用 JS 量像素则会。
+ */
+.viewswitch {
+  position: relative;
+  display: flex;
+  width: 246px;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: var(--border-w) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: toast-in var(--dur-slow) var(--ease-out-expo) both;
+}
 
+.viewswitch__thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 3);
+  border-radius: 2px;
+  background: var(--accent);
+  /*
+   * 位移用下标算，不用像素 —— 见上面那段说明。
+   * 曲线用 --ease-spring：末段轻微过冲，滑块"落定"到格子上。
+   */
+  transform: translateX(calc(var(--i, 0) * 100%));
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+
+.viewswitch__btn {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 4px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-base) var(--ease);
+}
+
+.viewswitch__btn:hover {
+  color: var(--text);
+}
+
+/* 选中项：深字压在强调色底板上 */
+.viewswitch__btn[aria-pressed='true'] {
+  color: var(--accent-ink);
+}
+
+.viewswitch__icon {
+  display: flex;
+  align-items: center;
+}
+
+/* 窗口窄到 900px 以下时只留图标 */
+@media (max-width: 900px) {
+  .viewswitch {
+    width: auto;
+  }
+
+  .viewswitch__label {
+    display: none;
+  }
+
+  .viewswitch__btn {
+    padding: 5px 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewswitch,
+  .viewswitch__thumb {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ---------------- 视图模式（三种排法） ----------------
+ *
+ * 同一批 DOM，换一套 CSS。不改任何业务数据，所以切换是瞬时的。
+ *
+ *   cards   默认：面板 + 两列网格，信息层次最清楚
+ *   compact 紧凑：列更宽、间距与字号再收一档，一屏尽量多塞
+ *   focus   专注：单列窄栏、字号放大一档，一次只面对一件事
+ *
+ * 切换时的平滑感来自给这些属性挂 transition（不是重放动画）——
+ * 用户看得见"间距在收、列在变"。每个属性只列它真正会变的那些，不用 `all`：
+ * `all` 会把颜色、阴影一起拖进过渡，切配色时会看到一片颜色在爬。
+ */
+.page,
+.card,
+.block--lead,
+.card-head,
+.block--lead .block__head,
+.block-grid,
+.grid-2,
+.field,
+.page-head,
+.page-head h2,
+.meter .item .value {
+  transition:
+    max-width var(--dur-base) var(--ease),
+    padding var(--dur-base) var(--ease),
+    margin var(--dur-base) var(--ease),
+    gap var(--dur-base) var(--ease),
+    grid-template-columns var(--dur-base) var(--ease),
+    font-size var(--dur-base) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page,
+  .card,
+  .block--lead,
+  .card-head,
+  .block--lead .block__head,
+  .block-grid,
+  .grid-2,
+  .field,
+  .page-head,
+  .page-head h2,
+  .meter .item .value {
+    transition: none;
+  }
+}
+
+/*
+ * —— 紧凑 ——
+ * 现场用 13" 笔记本、或者已经熟了只想快点过一遍的人。
+ * 页头矮下去、卡片挨紧、网格从两列变三列。
+ */
+.shell[data-view='compact'] {
+  --content-max: 1440px;
+  --page-pad: 20px;
+}
+
+.shell[data-view='compact'] .page-head {
+  padding: 12px var(--page-pad) 10px;
+}
+
+.shell[data-view='compact'] .page-head h2 {
+  font-size: 18px;
+}
+
+.shell[data-view='compact'] .page-head p {
+  display: none; /* 紧凑模式里说明文字最占地方、信息量最低 */
+}
+
+.shell[data-view='compact'] .card {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.shell[data-view='compact'] .card-head {
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+}
+
+.shell[data-view='compact'] .block--lead {
+  padding: 10px 12px;
+}
+
+.shell[data-view='compact'] .block--lead .block__head {
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+}
+
+.shell[data-view='compact'] .block-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.shell[data-view='compact'] .grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.shell[data-view='compact'] .field {
+  margin-bottom: 8px;
+}
+
+.shell[data-view='compact'] table.data th,
+.shell[data-view='compact'] table.data td {
+  padding: 3px 7px;
+}
+
+.shell[data-view='compact'] .meter {
+  gap: 8px 12px;
+}
+
+.shell[data-view='compact'] .meter .item .value {
+  font-size: 15px;
+}
+
+.shell[data-view='compact'] .block--lead .scanStat {
+  font-size: 18px;
+}
+
+/*
+ * —— 专注 ——
+ * 现场照着做、或者给客户/学生演示时用：一屏只有一件事，视线不用横向扫。
+ * 780px 是"一行文字读起来不累"的上限。
+ */
+.shell[data-view='focus'] {
+  --content-max: 820px;
+  --page-pad: 32px;
+}
+
+.shell[data-view='focus'] .page-head {
+  padding: 26px var(--page-pad) 20px;
+}
+
+.shell[data-view='focus'] .page-head h2 {
+  font-size: 28px;
+}
+
+.shell[data-view='focus'] .page-head p {
+  font-size: var(--fs-body);
+}
+
+.shell[data-view='focus'] .block-grid {
+  /* 次要步骤也拉成一列：专注模式里没有"并排"这回事 */
+  grid-template-columns: 1fr;
+}
+
+.shell[data-view='focus'] .card {
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.shell[data-view='focus'] .block--lead {
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.shell[data-view='focus'] .field {
+  margin-bottom: 16px;
+}
+
+.shell[data-view='focus'] .field-label {
+  font-size: var(--fs-xs);
+}
+
+.shell[data-view='focus'] .meter {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.shell[data-view='focus'] .meter .item .value {
+  font-size: 22px;
+}
+
+.shell[data-view='focus'] .block--lead .scanStat {
+  font-size: 26px;
+}
+
+/* ---------------- 日志面板 ----------------
+ *
+ * 深色终端面。日志是"机器说的话"，给它一块深底等宽字，
+ * 与周围的面板形成对比 —— 也更像现场要的那台仪器。
+ */
 .log {
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  background: var(--band);
+  color: var(--band-ink-dim);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  max-height: 220px;
+  max-height: 260px;
   overflow-y: auto;
   white-space: pre-wrap;
-  color: var(--text-muted);
 }
 
 /* ---------------- 目标列表 ---------------- */
@@ -1053,22 +1680,26 @@ table.data td.num {
 .target-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
+/*
+ * 目标盘行。与 Silverstack 的 "Destinations" 列表同一种做法：
+ * 一行一块浅底、圆角、左侧图标、右侧状态 —— 不是表格。
+ */
 .target-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border: var(--border-w) solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  background: var(--surface-2);
 }
 
 .target-item .target-path {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   flex: 1;
   min-width: 0;
@@ -1087,17 +1718,17 @@ table.data td.num {
 }
 
 .frames img {
-  width: 148px;
+  width: 140px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: var(--border-w) solid var(--border);
   display: block;
 }
 
 .kv {
   display: grid;
-  grid-template-columns: 132px 1fr;
-  gap: 4px 12px;
-  font-size: 12.5px;
+  grid-template-columns: 148px 1fr;
+  gap: 5px 12px;
+  font-size: var(--fs-sm);
 }
 
 .kv dt {
@@ -1110,26 +1741,250 @@ table.data td.num {
 }
 
 .scroll-area {
-  max-height: 420px;
+  max-height: 460px;
   overflow-y: auto;
 }
 
+/*
+ * 帮助页：卡片改两列。
+ * 这一页全是静态内容，卡片大小本来就差不多（没有"主次"可言），
+ * 所以不适合 LeadBlock —— 用 BlockGrid 让它从 8 屏压到 4 屏。
+ */
+.help .block-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.help .block-grid .card {
+  margin-bottom: 0;
+}
+
 .help section {
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 
 .help h3 {
-  font-size: 14px;
+  font-size: var(--fs-h2);
   margin: 0 0 6px;
 }
 
 .help p,
 .help li {
   color: var(--text-muted);
-  font-size: 12.8px;
+  font-size: var(--fs-sm);
 }
 
 .help ul {
   margin: 6px 0;
   padding-left: 20px;
+}
+
+/* ---------------- 激活向导（首启动全屏） ----------------
+ *
+ * 三屏向导。设计目标：让"买过码但不知道从哪激活"的人，
+ * 打开软件 20 秒内完成激活，或者明确知道自己还剩多少天。
+ *
+ * 为什么用全屏而不是设置页里的一张卡：
+ * 七件事挤在一屏时没有任何视觉主线，用户读完一圈还是不知道下一步做什么。
+ */
+
+/* ---------------- 主次区块 ----------------
+ *
+ * 每个页面里通常只有一件事是"用户现在最该做的"（拷贝页是选来源、
+ * 队列页是看进度）。它比普通卡片多两样东西：**左侧一条 3px 强调色竖条**
+ * 与更重的标题。就这么点差别 —— 专业工具里的"主次"从来不是靠填色喊出来的。
+ *
+ * 方案 B/C 这里走过两个弯路，都记下来：
+ *   ① 近黑承载：boss 反馈"明暗对比太强烈"，一块 780px 宽的黑块砸在页面正中。
+ *   ② 浅黄绿底 + 黑边 / 彩色标题带：不刺眼了，但"海报感"正是从那儿来的。
+ */
+.block--lead {
+  position: relative;
+  background: var(--lead-bg);
+  border: var(--border-w) solid var(--lead-border);
+  border-left: var(--rule-accent-w) solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: var(--sp-3);
+  color: var(--text);
+}
+
+.block--lead .block__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 0 0 10px;
+  background: none;
+  color: var(--text);
+  border-bottom: var(--border-w) solid var(--line-soft);
+}
+
+.block__num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.block__title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.block__hint {
+  margin-top: 1px;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+.block--lead .block__headText {
+  flex: 1;
+  min-width: 0;
+}
+
+.block--lead .block__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+/* 次要步骤并排 */
+.block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  align-items: start;
+}
+
+.block-grid .card {
+  margin-bottom: 0;
+}
+
+/* 主区块里的统计数字：文件数 / 总字节 —— 扫完卡之后的第一眼信息 */
+.block--lead .scanStat {
+  margin-top: 1px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.block--lead .progress {
+  background: var(--lead-track);
+}
+
+.block--lead .meter .item .value {
+  font-weight: 600;
+}
+
+/*
+ * ---------------- 吸底操作条 ----------------
+ *
+ * 2026-10-04 加的：此前主按钮排在页面最末尾，一屏放不下，
+ * 实测 `inViewport: false` —— 用户要滚过 5 个区块才能找到"开始拷贝"。
+ *
+ * ⚠️ 2026-10-05 从 sticky 改成 **fixed**，并且**删掉了那条渐隐遮罩**。
+ *
+ * 原因是实打实的 bug：sticky 的定位基准是 .page 的内容盒，
+ * 而 .page 必须留出与条等高的底部内边距才能让内容滚出来 ——
+ * 两者叠加的结果是"滚到底时条会抬离窗口下缘一段"，观感像没贴住。
+ * 更糟的是条上方那条 24px 的渐隐遮罩（linear-gradient 到 --bg），
+ * 它盖住了紧挨着的最后一行内容 —— boss 的截图抓到的正是
+ * 「写入后独立重读校验」那行复选框被压得半透明看不清。
+ *
+ * 现在：条固定在主内容区底部（左边界 = 侧栏宽），不参与滚动、不透明、无遮罩；
+ * 让位交给 .page 的 92px 底部内边距。
+ */
+.action-bar {
+  position: fixed;
+  left: var(--rail-w);
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  /* 左右内边距与 .page 的内容列对齐（居中列 + 页边距） */
+  padding: 11px max(var(--page-pad), calc((100% - var(--content-max)) / 2 + var(--page-pad)));
+  background: var(--bg-elevated);
+  border-top: var(--border-w) solid var(--line-soft);
+  /* 向上的一层柔影，把它和下面的内容分开 */
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.action-bar .faint,
+.action-bar .muted {
+  color: var(--text-faint);
+}
+
+.btn--xl {
+  /*
+   * 页面里唯一的主行动。尺寸比普通按钮大一档，但**不是巨型** ——
+   * 专业工具里没有 17px 的按钮，一屏里最大的字是数据，不是按钮。
+   */
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.action-bar .btn--xl:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--xl:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--xl .kbd {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: var(--accent-ink-dim);
+  color: var(--accent);
+}
+
+/*
+ * ---------------- Windows 的窗口 chrome ----------------
+ *
+ * Windows 走的是「无边框 + 系统绘制的标题栏叠加层」：
+ * 窗口最上面 40px 由系统画成一条标题栏，右端放三个按钮。
+ * 那块区域**不归我们画**，所以界面必须让开它（见 .page 的 padding-top）。
+ *
+ * 真正还需要处理的是**吸顶元素**：它们的 top: 0 是相对 .main 的滚动视口算的，
+ * 也就是窗口最顶端 —— 在 Windows 上那正好被标题栏盖住，表头一滚动就凭空消失。
+ * 往下让一个标题栏的高度即可。
+ *
+ * macOS 分支完全不受影响：这些规则都被 [data-platform='windows'] 限定了。
+ * .combo-group-label 也是 sticky，但它在下拉浮层自己的滚动容器里，不能动。
+ */
+[data-platform='windows'] table.data th,
+[data-platform='windows'] .group-row td {
+  top: var(--titlebar-height);
 }

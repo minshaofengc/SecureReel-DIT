@@ -73,11 +73,57 @@ describe('开屏页面模板', () => {
     )
   })
 
-  it('配色是合法十六进制（拼错了 CSS 会静默失效，看不出来）', () => {
+  it('配色是合法色值（拼错了 CSS 会静默失效，看不出来）', () => {
+    /*
+     * 2026-10-04 扩展到 rgba —— 1.5px 粗描边在米白底上用 6 位hex 会太重，
+     * 描边与齿孔都需要半透明。检查的**本意**是"色值格式合法"（拼错会静默失效），
+     * 而不是"必须是 hex"，所以放宽格式、保留检查。
+     */
+    const hex = /^#[0-9a-f]{6}$/
+    const rgba = /^rgba\(\s*\d{1,3},\s*\d{1,3},\s*\d{1,3},\s*(0|1|0?\.\d+)\s*\)$/
     for (const palette of [SPLASH_PALETTE.light, SPLASH_PALETTE.dark]) {
       for (const value of Object.values(palette)) {
-        expect(value).toMatch(/^#[0-9a-f]{6}$/)
+        expect(value).toMatch(new RegExp(`(?:${hex.source})|(?:${rgba.source})`))
       }
+    }
+  })
+
+  /*
+   * 时码块是开屏里唯一的大色块，字压在上面 —— 这两个色值的关系直接决定
+   * "看得见"还是"糊成一片"。
+   *
+   * ⚠️ 2026-10-05 改写过。原来断言的是"accentInk 必须比 accent 暗"，
+   * 那条只在"亮色块 + 深色字"这一种配对下成立。默认皮肤换成钢蓝之后，
+   * 强调色本身是深的，正确的配对**反过来**是浅字 —— 旧断言直接把
+   * 一个正确的配色判成失败。
+   *
+   * 真正的不变量是**对比度**，与谁深谁浅无关。这里换成 WCAG 对比度，
+   * 比原来的方向断言更强：它同时挡住了"配成同一个色"和"配得不够"。
+   */
+  it('时码块上的文字与底色对比度达 WCAG AA（4.5:1）', () => {
+    // sRGB 相对亮度（WCAG 2.1 定义），与简单加权平均不是一回事
+    const channel = (v: number): number => {
+      const s = v / 255
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+    }
+    const luminance = (hex: string): number => {
+      const n = parseInt(hex.slice(1), 16)
+      return (
+        0.2126 * channel((n >> 16) & 255) +
+        0.7152 * channel((n >> 8) & 255) +
+        0.0722 * channel(n & 255)
+      )
+    }
+    const contrast = (a: string, b: string): number => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+      return (hi + 0.05) / (lo + 0.05)
+    }
+
+    for (const palette of [SPLASH_PALETTE.light, SPLASH_PALETTE.dark]) {
+      expect(contrast(palette.accentInk, palette.accent)).toBeGreaterThanOrEqual(4.5)
+      // 正文与次要文字也要能读
+      expect(contrast(palette.text, palette.card)).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(palette.muted, palette.card)).toBeGreaterThanOrEqual(4.5)
     }
   })
 })

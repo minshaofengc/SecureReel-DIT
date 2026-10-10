@@ -26,6 +26,8 @@ import {
   reportPathSchema,
   setJobParentSchema,
   settingsPatchSchema,
+  kvGetSchema,
+  kvSetSchema,
   tailSchema,
   titleBarOverlaySchema,
   updateParentProjectSchema
@@ -499,6 +501,27 @@ export function registerIpcHandlers(services: Services): void {
     const scan = await scanSource(safePath)
     const declared = typeof model === 'string' ? (model as never) : 'auto'
     return hde.decide(safePath, scan, declared)
+  })
+
+  /* ---------------- 通用键值 ---------------- */
+
+  /*
+   * `settings_kv` 里不属于 AppSettings 的零散状态（界面偏好等）。
+   *
+   * 这类状态不该混进 AppSettings（不是用户偏好、不该被"重置设置"清掉），
+   * 而渲染层要能跨重启记住它，就只能落盘。
+   *
+   * 键名与值的长度限制在 schema 里（kvGetSchema / kvSetSchema），
+   * 不在这里补 —— 校验集中在一处，才改一次就全生效。
+   */
+  register(IPC.kvGet, (payload) => {
+    const { key } = parseOrThrow<{ key: string }>(kvGetSchema, payload ?? {})
+    return store.getKv(key)
+  })
+
+  register(IPC.kvSet, (payload) => {
+    const { key, value } = parseOrThrow<{ key: string; value: string }>(kvSetSchema, payload ?? {})
+    store.setKv(key, value)
   })
 
   /* ---------------- 日志 ---------------- */

@@ -71,6 +71,10 @@ export const IPC = {
   hdeStatus: 'hde:status',
   hdeDecide: 'hde:decide',
 
+  /** 通用键值（`settings_kv` 里不属于 AppSettings 的零散状态） */
+  kvGet: 'kv:get',
+  kvSet: 'kv:set',
+
   logsTail: 'logs:tail',
   logsReveal: 'logs:reveal',
   logsExportDiagnostics: 'logs:export-diagnostics',
@@ -201,6 +205,16 @@ export interface SecureReelApi {
   hde: {
     status(): Promise<IpcResult<HdeToolStatus>>
     decide(path: string): Promise<IpcResult<HdeCapabilityDecision>>
+  }
+  /**
+   * 通用键值（`settings_kv` 里不属于 AppSettings 的零散状态）。
+   *
+   * 用于界面偏好这类不该混进 AppSettings 的零散状态（如视图模式）。
+   * 键名限 64 字符、值限 200 字符，校验在主进程（见 kvGetSchema / kvSetSchema）。
+   */
+  kv: {
+    get(key: string): Promise<IpcResult<string | null>>
+    set(key: string, value: string): Promise<IpcResult<void>>
   }
   logs: {
     tail(lines?: number): Promise<IpcResult<string[]>>

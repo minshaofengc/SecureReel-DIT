@@ -67,6 +67,10 @@ const api: SecureReelApi = {
     status: () => invoke(IPC.hdeStatus),
     decide: (path) => invoke(IPC.hdeDecide, { path })
   },
+  kv: {
+    get: (key) => invoke(IPC.kvGet, { key }),
+    set: (key, value) => invoke(IPC.kvSet, { key, value })
+  },
   logs: {
     tail: (lines) => invoke(IPC.logsTail, { lines }),
     reveal: () => invoke(IPC.logsReveal),

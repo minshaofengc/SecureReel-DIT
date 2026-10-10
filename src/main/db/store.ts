@@ -22,7 +22,7 @@ import type {
   TargetProgress,
   VolumeKind
 } from '@shared/types'
-import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, VOLUME_KINDS } from '@shared/types'
+import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, migrateThemeId, VOLUME_KINDS } from '@shared/types'
 import {
   fillMissingDetails,
   hasCrew,
@@ -230,7 +230,17 @@ export class Store {
     if (row === undefined) return { ...DEFAULT_SETTINGS }
     try {
       const parsed = JSON.parse(asString(row.value)) as Partial<AppSettings>
-      return { ...DEFAULT_SETTINGS, ...parsed }
+      /*
+       * themeId 必须显式归一化，不能只靠展开合并。
+       *
+       * 2026-10-04 起主题从四套收成一套（见 types.ts 的 THEMES），
+       * 而这里读出来是**软合并、不校验**的 —— 老用户升上来时themeId 仍是
+       * 'qinghe' 这类旧值，会一路漏到 <html data-theme="qinghe">。
+       * tokens.css 现在按 data-mode 匹配、不看 data-theme，于是
+       * 所有 --accent 之类全部取不到值，界面变成一片无样式的透明块，
+       * 看起来像应用崩了 —— 而且不报任何错。
+       */
+      return { ...DEFAULT_SETTINGS, ...parsed, themeId: migrateThemeId(parsed.themeId) }
     } catch {
       return { ...DEFAULT_SETTINGS }
     }

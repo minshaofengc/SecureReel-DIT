@@ -1,0 +1,436 @@
+/*
+ * 工作台与监控页。
+ *
+ * 2026-10-05 第五次改（方案 E）引入。这两页是本轮的重点 ——
+ * 前四版失败的真正原因不是配色，是**屏幕上大片空白**：
+ * 报告页 90% 是空的、队列页一半格子是 `—` / `0 B` / `待处理`。
+ *
+ * 本文件的每一条规则都服务于同一句话：
+ * **分区靠背景值差与细线，不靠卡片；能省的空值一律不渲染。**
+ *
+ * ⚠️ 排在 app.css 之后（见 main.tsx），同权重以本文件为准。
+ */
+
+/* =========================================================================
+ * 工作台
+ * ========================================================================= */
+
+/*
+ * 主列 + 侧列。侧列固定 300px 而不是按比例 ——
+ * 它是"待处理 / 最近交付"这类短清单，宽了只会让每行后半截空着。
+ */
+.home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+}
+
+.home__main {
+  padding: var(--sp-4) var(--page-pad) var(--sp-6) 0;
+  min-width: 0;
+}
+
+.home__side {
+  padding: var(--sp-4) 0 var(--sp-6) var(--sp-4);
+  border-left: var(--border-w) solid var(--line-soft);
+  min-height: 100%;
+  min-width: 0;
+}
+
+/* ---------------- 顶部状态条 ----------------
+ * 四格数字，替代原来"页面里挂一条试用横幅"的做法。
+ * 常驻的东西要轻 —— 横幅是"有事发生"的语气，状态条是"现在怎样"的语气。
+ */
+.hstrip {
+  display: flex;
+  align-items: stretch;
+  padding: 12px 4px;
+  margin-bottom: var(--sp-4);
+  background: var(--surface);
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.hs {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 16px;
+  border-left: var(--border-w) solid var(--line-soft);
+}
+
+.hs:first-child {
+  border-left: 0;
+}
+
+.hs__k {
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-wide);
+  color: var(--text-faint);
+  margin-bottom: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hs__v {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.hs__v small {
+  margin-left: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* 有任务在跑的那一格才亮 —— 让眼睛先落到"现在有事"上 */
+.hs[data-hot] .hs__v {
+  color: var(--accent-text);
+}
+
+/* ---------------- 主块 ----------------
+ * 一屏只有这一块是"重的"。左侧 3px 竖条 + 比底亮一档的面板，
+ * **不用整块色带**（色带是海报语言，已退场）。
+ */
+.lead {
+  padding: 14px 16px;
+  margin-bottom: var(--sp-5);
+  background: var(--surface);
+  border: var(--border-w) solid var(--line-soft);
+  border-left: var(--rule-accent-w) solid var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.lead__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.lead__title {
+  font-size: var(--fs-h2);
+  font-weight: 500;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lead__acts {
+  margin-left: auto;
+  display: flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+/* 空态下按钮排在步骤说明下面，从左起 */
+.lead__acts--start {
+  margin-left: 0;
+  margin-top: var(--sp-4);
+}
+
+.lead__stats {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+/* ---------------- 大数字 ----------------
+ * 等宽 + 紧字距。数字用等宽的意义是**同一位置的数字永远对齐** ——
+ * 进度从 9% 跳到 100% 时不会左右抖。
+ */
+.bigrow {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.big {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.unit {
+  font-size: var(--fs-h2);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* 统计列：右对齐 + 左分隔线，靠"列"而不是"卡片"分组 */
+.statline {
+  display: flex;
+  margin-left: auto;
+}
+
+.st {
+  padding: 0 13px;
+  border-left: var(--border-w) solid var(--line-soft);
+  text-align: right;
+}
+
+.st:first-child {
+  border-left: 0;
+}
+
+.st__k {
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-wide);
+  color: var(--text-faint);
+  margin-bottom: 3px;
+}
+
+.st__v {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ---------------- 分区标题 ----------------
+ * 一行小号灰字 + 一条延伸到右端的细线。
+ * 这是全项目**唯一**的分区手段 —— 没有标题带、没有图标、没有底色。
+ */
+.sec-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  letter-spacing: var(--ls-wide);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.sec-h::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+/* ---------------- 行式清单 ----------------
+ * 清单一律行式，不用卡片。`.rw` 挂在 `<button>` 上，所以要显式重置按钮样式。
+ */
+.rowlist {
+  display: flex;
+  flex-direction: column;
+}
+
+.rw {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 80px 56px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 8px;
+  margin: 0 -8px;
+  border: none;
+  border-bottom: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.rw:last-child {
+  border-bottom: 0;
+}
+
+.rw:hover {
+  background: var(--surface-2);
+}
+
+.rw--tight {
+  grid-template-columns: minmax(0, 1fr) 76px;
+}
+
+.rw__id {
+  min-width: 0;
+}
+
+.rw__name {
+  font-size: var(--fs-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw__sub {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw__state {
+  text-align: right;
+}
+
+.rw__num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+/* ---------------- 待处理 ----------------
+ * 只在"确实有需要动手的事"时出现。没有就不渲染 —— 不摆空态占位。
+ */
+.todo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: var(--border-w) solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.todo__ic {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.todo[data-tone='warn'] .todo__ic {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.todo[data-tone='danger'] .todo__ic {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.todo__tx {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.todo__s {
+  margin-top: 2px;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+/* ---------------- 三步引导 ----------------
+ * 空状态即教程：不渲染一张空表，而是把"下一步做什么"摊开。
+ */
+.steps {
+  display: flex;
+  margin-top: var(--sp-3);
+}
+
+.step {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 14px;
+  border-left: var(--border-w) solid var(--line-soft);
+}
+
+.step:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.step__n {
+  width: 20px;
+  height: 20px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.step[data-on] .step__n {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.step__t {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.step__s {
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+/* 状态点。用 6px 圆点而不是徽标 —— 列表里徽标会抢标题的注意力 */
+.dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.dot[data-tone='run'] {
+  background: var(--accent);
+}
+
+.dot[data-tone='ok'] {
+  background: var(--ok);
+}
+
+.dot[data-tone='warn'] {
+  background: var(--warn);
+}
+
+.dot[data-tone='danger'] {
+  background: var(--danger);
+}
+
+/* 工作台没有页头（状态条已经回答了"现在怎样"），去掉多余的上留白 */
+.page--home {
+  max-width: none;
+  padding: 0;
+}
+
+@media (max-width: 1080px) {
+  .home {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home__side {
+    border-left: 0;
+    border-top: var(--border-w) solid var(--line-soft);
+    padding-left: 0;
+  }
+}

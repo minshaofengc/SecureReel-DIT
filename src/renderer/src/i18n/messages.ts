@@ -22,6 +22,53 @@ export const zhCN = {
   'nav.project': '母项目',
   'nav.settings': '设置',
   'nav.help': '帮助',
+  'nav.collapse': '收起侧栏',
+  'nav.expand': '展开侧栏',
+  'nav.home': '工作台',
+
+  'seg.label': '工作阶段',
+  'seg.build': '建任务',
+  'seg.monitor': '监控',
+  'seg.deliver': '交付',
+
+  'top.running': '运行中',
+
+  'home.running': '运行中',
+  'home.doneToday': '今日完成',
+  'home.pending': '待处理',
+  'home.parents': '母项目',
+  'home.jobs': '个任务',
+  'home.items': '项',
+  'home.open': '查看',
+  'home.newJob': '新建拷贝任务',
+  'home.step1': '选来源',
+  'home.step1hint': '素材卡或文件夹',
+  'home.step2': '加目标',
+  'home.step2hint': '最多 8 个，可存预设',
+  'home.step3': '开始',
+  'home.step3hint': '逐文件独立校验',
+  'home.pickSource': '选择来源…',
+  'home.useTemplate': '套用母项目模板',
+  'home.recent': '最近任务',
+  'home.delivered': '最近交付',
+  'home.empty': '还没有任务。到「建任务」开始第一张卡。',
+  'home.errHint': '有文件校验失败，可重新校验',
+  'home.recoveredHint': '上次中断未完成，已写入的部分可续传',
+  'home.handle': '处理',
+  'common.ungrouped': '未分组',
+
+  'view.label': '视图模式',
+  'view.cards': '卡片',
+  'view.compact': '紧凑',
+  'view.focus': '专注',
+
+  'settings.skin': '配色',
+  'settings.skinHint': '五套配色只是颜色不同，版式完全一致。切换会立刻生效，不用重启。',
+  'skin.darkroom': '暗房',
+  'skin.steel': '石墨蓝',
+  'skin.mono': '中性',
+  'skin.sand': '暖砂',
+  'skin.indigo': '靛青',
 
   'common.ok': '好',
   'common.clear': '清空',
@@ -197,6 +244,7 @@ export const zhCN = {
   'queue.title': '任务队列',
   'queue.subtitle': '任务在后台运行，切换页面或关闭窗口都不会中断。',
   'queue.empty': '还没有任何任务。到「拷贝」页新建一个。',
+  'queue.pickOne': '从左侧选择一个任务查看详情。',
   'queue.progress': '进度',
   'queue.speed': '速度',
   'queue.eta': '预计剩余',
@@ -304,10 +352,7 @@ export const zhCN = {
 
   'settings.title': '设置',
   'settings.appearance': '外观',
-  'settings.theme': '主题',
-  'settings.theme.qinghe': '竹林「清和」',
-  'settings.theme.wuguang': '粉蓝「雾光」',
-  'settings.mode': '模式',
+  'settings.mode': '明暗',
   'settings.mode.system': '跟随系统',
   'settings.mode.light': '明亮',
   'settings.mode.dark': '黑暗',
@@ -338,8 +383,6 @@ export const zhCN = {
   'settings.privacy':
     '本软件不上传遥测、不格式化磁盘、不删除源素材。所有数据都留在本机。',
 
-  'settings.theme.cheese': '奶酪「熟成」',
-  'settings.theme.iris': '蓝紫「鸢尾」',
   'settings.frames': '素材首帧',
   'settings.extractFrames': '为视频素材提取首帧并写进报告',
   'settings.extractFramesHint':
@@ -396,9 +439,14 @@ export const zhCN = {
   'help.thanks': '鸣谢',
   'help.platform': '平台',
   'help.license': '许可',
+  'help.licenseValue': 'GPL-3.0-only（详见随包的 LICENSE 与 THIRD_PARTY_NOTICES）',
+  'help.patent': '编解码器专利',
+  'help.patentBody':
+    '本软件的解码能力来自 FFmpeg。某些编解码器（如 H.264 / HEVC）可能涉及第三方专利，本项目不提供任何专利许可，使用者应自行确认其使用场景的合规性。',
   'help.privacy': '隐私与免责',
   'help.privacyBody':
-    '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。'
+    '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。',
+
 } as const
 
 export type MessageKey = keyof typeof zhCN
@@ -419,6 +467,54 @@ export const en: Record<MessageKey, string> = {
   'nav.project': 'Parent projects',
   'nav.settings': 'Settings',
   'nav.help': 'Help',
+  'nav.collapse': 'Collapse sidebar',
+  'nav.expand': 'Expand sidebar',
+  'nav.home': 'Workbench',
+
+  'seg.label': 'Workflow stage',
+  'seg.build': 'Create',
+  'seg.monitor': 'Monitor',
+  'seg.deliver': 'Deliver',
+
+  'top.running': 'Running',
+
+  'home.running': 'Running',
+  'home.doneToday': 'Done today',
+  'home.pending': 'Needs attention',
+  'home.parents': 'Parent projects',
+  'home.jobs': 'jobs',
+  'home.items': 'items',
+  'home.open': 'Open',
+  'home.newJob': 'New offload job',
+  'home.step1': 'Pick source',
+  'home.step1hint': 'Camera card or folder',
+  'home.step2': 'Add destinations',
+  'home.step2hint': 'Up to 8, saveable as presets',
+  'home.step3': 'Start',
+  'home.step3hint': 'Per-file independent verification',
+  'home.pickSource': 'Choose source…',
+  'home.useTemplate': 'Use parent project template',
+  'home.recent': 'Recent jobs',
+  'home.delivered': 'Recently delivered',
+  'home.empty': 'No jobs yet. Start with your first card under Create.',
+  'home.errHint': 'Some files failed verification',
+  'home.recoveredHint': 'Interrupted last time — resumable',
+  'home.handle': 'Handle',
+  'common.ungrouped': 'Ungrouped',
+
+  'view.label': 'View mode',
+  'view.cards': 'Cards',
+  'view.compact': 'Compact',
+  'view.focus': 'Focus',
+
+  'settings.skin': 'Colour',
+  'settings.skinHint':
+    'The five palettes differ in colour only — the layout is identical. Switching applies instantly.',
+  'skin.darkroom': 'Darkroom',
+  'skin.steel': 'Steel',
+  'skin.mono': 'Mono',
+  'skin.sand': 'Sand',
+  'skin.indigo': 'Indigo',
 
   'common.ok': 'OK',
   'common.clear': 'Clear',
@@ -592,6 +688,7 @@ export const en: Record<MessageKey, string> = {
   'queue.title': 'Jobs',
   'queue.subtitle': 'Jobs run in the background; switching pages or closing the window will not stop them.',
   'queue.empty': 'No jobs yet. Create one from the Offload page.',
+  'queue.pickOne': 'Select a job on the left to inspect its details.',
   'queue.progress': 'Progress',
   'queue.speed': 'Speed',
   'queue.eta': 'ETA',
@@ -701,9 +798,6 @@ export const en: Record<MessageKey, string> = {
 
   'settings.title': 'Settings',
   'settings.appearance': 'Appearance',
-  'settings.theme': 'Theme',
-  'settings.theme.qinghe': 'Bamboo Grove “Qinghe”',
-  'settings.theme.wuguang': 'Pink Blue “Wuguang”',
   'settings.mode': 'Mode',
   'settings.mode.system': 'System',
   'settings.mode.light': 'Light',
@@ -737,8 +831,6 @@ export const en: Record<MessageKey, string> = {
   'settings.privacy':
     'No telemetry, no disk formatting, no deleting source media. Everything stays on this machine.',
 
-  'settings.theme.cheese': 'Cheese “Aged”',
-  'settings.theme.iris': 'Blue Violet “Iris”',
   'settings.frames': 'Clip first frames',
   'settings.extractFrames': 'Extract a first frame from every video clip',
   'settings.extractFramesHint':
@@ -797,7 +889,12 @@ export const en: Record<MessageKey, string> = {
   'help.thanks': 'Acknowledgements',
   'help.platform': 'Platform',
   'help.license': 'License',
+  'help.licenseValue': 'GPL-3.0-only (see the bundled LICENSE and THIRD_PARTY_NOTICES)',
+  'help.patent': 'Codec patents',
+  'help.patentBody':
+    'Decoding is provided by FFmpeg. Some codecs (such as H.264 / HEVC) may be covered by third-party patents; this project grants no patent licence, and users should confirm compliance for their own use.',
   'help.privacy': 'Privacy & disclaimer',
   'help.privacyBody':
-    'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.'
+    'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.',
+
 }

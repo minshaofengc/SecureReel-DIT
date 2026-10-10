@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  LEGACY_THEME_IDS,
   MAX_COPY_NOTES_LENGTH,
   MAX_CREW_ROWS,
   MAX_LENS_ROWS,
@@ -266,7 +267,7 @@ describe('创建任务时的项目信息校验', () => {
 
 describe('设置更新校验', () => {
   it('接受合法补丁', () => {
-    expect(settingsPatchSchema.safeParse({ themeId: 'wuguang', themeMode: 'dark' }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ themeId: 'steel', themeMode: 'dark' }).success).toBe(true)
     expect(settingsPatchSchema.safeParse({ language: 'en' }).success).toBe(true)
     expect(settingsPatchSchema.safeParse({}).success).toBe(true)
   })
@@ -274,6 +275,17 @@ describe('设置更新校验', () => {
   it('拒绝未知的主题与模式', () => {
     expect(settingsPatchSchema.safeParse({ themeId: 'neon' }).success).toBe(false)
     expect(settingsPatchSchema.safeParse({ themeMode: 'sepia' }).success).toBe(false)
+  })
+
+  /*
+   * 历史旧 id（清和/雾光/熟成/鸢尾，以及单套时期的 studio）必须被 zod 拒掉 ——
+   * 它们只允许以"老存档里的脏数据"身份存在，由 `getSettings()` 里的
+   * `migrateThemeId` 归一化后落回当前值。一旦这里放行，
+   * 某个改动就可能让旧值一路漏到 <html data-skin>，
+   * 界面会变成一片无样式的透明块（tokens.css 只认 data-skin / data-mode）。
+   */
+  it.each(LEGACY_THEME_IDS)('拒绝旧主题 id %s（老存档由 getSettings 归一化，不走这里）', (legacy) => {
+    expect(settingsPatchSchema.safeParse({ themeId: legacy }).success).toBe(false)
   })
 
   it('并发数被限制在 1–8', () => {

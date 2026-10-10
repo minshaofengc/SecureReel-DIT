@@ -2,7 +2,7 @@
  * 所有来自渲染进程的输入都在这里做 Zod 校验。
  *
  * 主进程的 IPC 处理器一律先 `safeParse` 再使用，绝不信任界面传来的任何字符串。
- * 这既是 AGENTS.md 的硬性要求，也是防止路径穿越与命令注入的第一道闸门。
+ * 这既是项目的硬性要求，也是防止路径穿越与命令注入的第一道闸门。
  */
 import { z } from 'zod'
 import {
@@ -190,4 +190,24 @@ export const reportPathSchema = z.object({
 
 export const tailSchema = z.object({
   lines: z.number().int().min(1).max(2000).optional()
+})
+
+/**
+ * 通用键值读写（`settings_kv` 里**不属于 AppSettings** 的那些零散状态）。
+ *
+ * 存在的理由和主进程里`getKv` / `setKv` 的注释一样：
+ * 有些状态既不是用户偏好（不该跟着设置被重置），
+ * 也不该为此给 AppSettings 加一个字段。
+ *
+ * 键名限死成一段安全字符：这条通道直通SQLite 的键，
+ * 而渲染层拿得到用户输入，写进不认识的键只会把库里搅脏。
+ * 值限 200 字符 —— 已够放一个标记位，不必给它开口子。
+ */
+export const kvGetSchema = z.object({
+  key: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/)
+})
+
+export const kvSetSchema = z.object({
+  key: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/),
+  value: z.string().max(200)
 })

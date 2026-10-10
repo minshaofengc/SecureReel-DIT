@@ -43,7 +43,7 @@ describe('诊断包导出', () => {
   it('把近几天的日志与系统信息打进 zip', async () => {
     // 造两天日志：今天 + 三天前（后者应被排除）
     logger.info('app', '今天是这条')
-    logger.flush()
+    await logger.flush()
     await writeFile(
       join(paths.logsDir, 'securereel-2020-01-01.jsonl'),
       '{"at":"2020-01-01T00:00:00Z","level":"info","scope":"x","message":"太老了"}\n',

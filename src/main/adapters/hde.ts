@@ -1,7 +1,7 @@
 /**
  * HDE 外部工具适配层。
  *
- * ⚠️ 合规红线（AGENTS.md）：
+ * ⚠️ 项目合规红线：
  *   · 本文件**不实现**任何 HDE 编码算法，只负责发现并参数化调用官方工具
  *   · **不逆向工程** CODEX Device Manager 或 ARRIRAW HDE Transcoder
  *   · **不打包**任何 CODEX / ARRI 专有二进制到分发包
@@ -43,7 +43,8 @@ function windowsProgramDirs(): string[] {
  * 我们查不到 ARRI / CODEX 官方工具是否提供 Windows 版本。所以这里的策略是
  * 「多猜几个位置 + 兜底去 PATH 里找」，找不到就老实走降级链，
  * 绝不因为「路径没猜中」而假报成工具不存在。
- * 真机上准确的安装位置，由 `windows 版本/Windows 自检清单.md` 的 H 组反馈回来。
+ * 真机上准确的安装位置，由工作区里的「Windows 自检清单」H 组反馈回来 ——
+ * 它在 `05-文档与报告/`，**不属于本仓库**（本仓库只含当前这一层）。
  */
 const CODEX_BUNDLE_CANDIDATES = IS_WINDOWS
   ? windowsProgramDirs().flatMap((dir) => [
@@ -352,13 +353,39 @@ function signalsFromScan(scan: ScanResult): HdeSignals {
   }
 }
 
-function inferModel(root: string, signals: HdeSignals): HdeCameraModel {
-  const lower = root.toLowerCase()
-  if (lower.includes('265') || lower.includes('alexa265')) return 'alexa-265'
-  if (lower.includes('35xtreme') || lower.includes('35 xtreme')) return 'alexa-35-xtreme'
-  if (lower.includes('alexa35') || lower.includes('alexa 35')) return 'alexa-35'
-  if (lower.includes('minilf') || lower.includes('mini lf')) return 'alexa-mini-lf'
-  if (lower.includes('min')) return 'alexa-mini'
+/**
+ * 机型判定的路径规范化：小写 + 把一切非字母数字压成空格。
+ *
+ * `_` `-` `.` `/` `\` 与中文都会变成分隔符，于是 `A001_MINI`、`A001-Mini`、
+ * `素材/A001MINI` 归一化成同一形状，后面才能用「词」而不是「子串」去判定。
+ */
+function normalizeForModel(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+}
+
+/**
+ * 依据源盘路径与内容特征推断机型。
+ *
+ * ⚠️ 这里**只认独立词**，不做裸子串匹配。曾经写成 `path.includes('min')`，
+ * 于是 `admin`、`minolta`、`administrator`、`minimal` 都会被判成 ALEXA Mini，
+ * 进而把这些普通素材盘拖进 CODEX VFS / HDE 流程 —— 现场事故。
+ * 同理 `includes('265')` 会把任何含 265 的卷标或日期判成 ALEXA 265，一并收紧。
+ *
+ * 返回 `unknown` 是**设计意图**而不是失败：宁可让用户在界面上手动指定机型，
+ * 也不要猜错机型跑错流程。
+ */
+export function inferModel(root: string, signals: HdeSignals): HdeCameraModel {
+  const normalized = normalizeForModel(root)
+
+  // 顺序有意义：具体型号在前，通用型号在后。
+  if (/\balexa\s*265\b/.test(normalized)) return 'alexa-265'
+  if (/35\s*xtreme\b/.test(normalized)) return 'alexa-35-xtreme'
+  if (/\balexa\s*35\b/.test(normalized)) return 'alexa-35'
+  // Mini LF 必须先于 Mini 判定：`mini lf` 里同时含独立的 mini 词。
+  if (/(?:^|[^a-z])mini\s*lf\d*\b/.test(normalized)) return 'alexa-mini-lf'
+  // 独立的 mini 词：`mini`、`MINI2`、`MINI_02`、`A001MINI`。
+  // `admin` / `minolta` / `administrator` / `minimal` / `mining` 都不命中。
+  if (/(?:^|[^a-z])mini\d*\b/.test(normalized)) return 'alexa-mini'
 
   if (signals.arxCount > 0) return 'alexa-mini'
   if (signals.hintInName) return 'unknown'

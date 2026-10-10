@@ -645,18 +645,42 @@ export interface LastJobDraft {
 }
 
 /**
- * 主题 id 列表。**数组顺序就是设置页里卡片的排列顺序。**
+ * 配色皮肤 id 列表。
  *
- * 加一套主题要同时动三处，漏一处就出问题：
- *   1. 这里（类型与顺序）—— 漏了则设置页根本不出现这张卡片
- *   2. `styles/tokens.css` 里 light / dark 两个块 —— 漏了则整套变量取不到值，
- *      界面会变成一片无样式的透明块，看起来像应用崩了（而且不报错）
- *   3. `i18n/messages.ts` 的中英两份主题名 —— 漏了则编译不过（`en` 由 `zhCN` 推导）
+ * 2026-10-05 起为**五套皮肤**（暗房 / 石墨蓝 / 中性 / 暖砂 / 靛青）。
+ * 此前走过两个阶段：四套配色（清和 / 雾光 / 熟成 / 鸢尾）→ 收成单套。
+ * 现在这五套都在 `styles/tokens.css` 里以 `html[data-skin='…'][data-mode='…']`
+ * 的形式实现，`darkroom` 是默认皮肤（它没有覆盖块，走 `html[data-mode]` 那两块兜底）。
  *
- * id 只用于 CSS 选择器、设置存储与冒烟钩子，界面上不显示；显示的是翻译后的名字。
+ * 皮肤只换颜色，不换版式；版式由视图模式（见 ViewSwitch）负责。
+ * 明暗两档（`themeMode`）与皮肤正交，两者都在设置页的「外观」卡里选。
+ *
+ * ⚠️ 加第六个皮肤要同时动三处，漏一处**都不报错**但会出问题：
+ *   1. 这里（类型与顺序）
+ *   2. `styles/tokens.css` 里的明暗两块覆盖 —— 漏了是"点了没反应"
+ *   3. `i18n/messages.ts` 的中英两份皮肤名 —— 漏了是界面上冒出键名
  */
-export const THEMES = ['qinghe', 'wuguang', 'cheese', 'iris'] as const
+export const THEMES = ['darkroom', 'steel', 'mono', 'sand', 'indigo'] as const
 export type ThemeId = (typeof THEMES)[number]
+
+/**
+ * v2.0.3 及更早存进数据库的旧主题 id。
+ *
+ * 必须留一份：设置是从 `settings_kv` 里软合并读出来的（`getSettings` 不做校验），
+ * 老用户升上来时 `themeId` 仍是 `'qinghe'` 这类值。若不归一化，
+ * 它会一路漏到 `<html data-theme="qinghe">`，而 tokens.css 已没有匹配这个
+ * 属性的块 —— 于是所有 `--accent` 之类全部取不到值，界面变成一片无样式的
+ * 透明块，看起来像应用崩了，**而且不报任何错**。
+ */
+export const LEGACY_THEME_IDS = ['qinghe', 'wuguang', 'cheese', 'iris', 'studio'] as const
+
+/** 把任意历史值归一化成当前合法主题 id。未知值一律回落到默认。 */
+export function migrateThemeId(value: unknown): ThemeId {
+  if (typeof value === 'string' && (THEMES as readonly string[]).includes(value)) {
+    return value as ThemeId
+  }
+  return DEFAULT_SETTINGS.themeId
+}
 
 export const THEME_MODES = ['system', 'light', 'dark'] as const
 export type ThemeMode = (typeof THEME_MODES)[number]
@@ -712,8 +736,8 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   language: 'zh-CN',
-  themeId: 'qinghe',
-  themeMode: 'system',
+  themeId: 'darkroom',
+  themeMode: 'dark',
   hashAlgorithm: 'xxhash64',
   manifestFormat: 'asc-mhl-2.0',
   verifyAfterWrite: true,

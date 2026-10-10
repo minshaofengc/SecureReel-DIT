@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { CopyJob, ReportRevision } from '@shared/types'
 import { isJobLive } from '@shared/types'
 import { humanBytes, humanDuration } from '@shared/format'
-import { Card, Empty, Note } from '../components/ui'
+import { Card, Empty, Note, PageHead } from '../components/ui'
 import { SelectBox, type ComboGroup, type ComboOption } from '../components/ComboBox'
+import { PAGE_INDEX } from '../nav'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 import { revealLabelKey } from '../platform'
@@ -124,10 +125,12 @@ export function ReportsView(): ReactNode {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h2>{t('reports.title')}</h2>
-        <p>{t('reports.subtitle')}</p>
-      </header>
+      <PageHead
+        index={PAGE_INDEX.reports}
+        kicker={t('nav.reports')}
+        title={t('reports.title')}
+        subtitle={t('reports.subtitle')}
+      />
 
       <Card
         actions={

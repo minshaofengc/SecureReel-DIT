@@ -7,7 +7,10 @@
 # 两个平台都从这一个文件出包：
 #   npm run dist:mac   → dmg + zip（universal）
 #   npm run dist:win   → NSIS 安装程序 + 免安装单文件 + 免安装 zip（x64）
-# Windows 的产物目录由 dist:win 脚本指到「windows 版本」文件夹。
+# 产物目录由各自的脚本指到工作区根（2026-10-04 重排后源码在 01-源码/ 里，
+# 工作区根 = 源码根的上两层）：
+#   mac     → 02-Mac 版/     （scripts/dist-mac.sh）
+#   Windows → 03-Windows 版/ （scripts/dist-win.sh）
 
 # appId 与 productName 都带上 "2"：
 # 装进「应用程序」时不与 1.x 互相顶掉，两版可以共存（boss 的明确要求）。
@@ -43,6 +46,11 @@ extraResources:
     to: THIRD_PARTY_NOTICES.md
   - from: node_modules/electron/LICENSE
     to: LICENSES/electron.txt
+  # FFmpeg 是 LGPL：许可全文必须随包分发（两个平台用的版本不同，两份都带）
+  - from: build/licenses/LGPL-2.1.txt
+    to: LICENSES/LGPL-2.1.txt
+  - from: build/licenses/LGPL-3.0.txt
+    to: LICENSES/LGPL-3.0.txt
 
 mac:
   category: public.app-category.video

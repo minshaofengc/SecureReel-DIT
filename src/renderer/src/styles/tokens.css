@@ -1,332 +1,707 @@
 /**
- * 主题令牌。
+ * 设计令牌 —— v2.0.4 视觉重设计（方案 D：专业工具语言 · 暗房配色）
  *
- * 四套配色：
- *   · 竹林「清和」—— 青绿为主，低饱和，适合长时间盯进度条
- *   · 粉蓝「雾光」—— 青蓝配暖粉（色相差 137°），明亮通透，是两个颜色的对撞
- *   · 奶酪「熟成」—— 奶油底配琥珀金，暖色系，长时间看不刺眼
- *   · 蓝紫「鸢尾」—— 紫罗兰配兰紫（色相差 22°），一个颜色的深浅，沉稳偏冷
+ * 2026-10-05 第四次改。前面三次的结论都留在这里，免得以后再走回去：
  *
- * 每套都有 light / dark 两组值，由 <html data-theme data-mode> 切换。
- * 界面里任何颜色都必须走这里的变量 —— 不允许在组件里写死色值，
- * 否则换主题时一定会漏掉某处。
- * 这条现在是**绝对**的：曾经唯一的例外是设置页那排主题预览色卡
- * （要展示「别的」主题，本主题的变量里当然没有），那排色卡已按需求移除，
- * 所以全项目不再有任何内联色值。以后若又想加"预览别的主题"之类的组件，
- * 先想清楚它是不是又要破例 —— 能不破就不破。
+ *   方案 A（旧）：米白底 + 白卡 + 灰描边 + 大圆角。反馈"太像网页模板"。
+ *   方案 B：转播海报风 —— 荧光绿 + 纯黑 2px 粗边 + 硬偏移投影。骨架立住了，
+ *     但反馈"配色太丑、太卡通"。
+ *   方案 C：保留 B 的骨架，换成四套降噪配色（石墨蓝/中性/暖砂/靛青）。
+ *     颜色是收住了，但**骨架本身**还是海报的 —— 大面积纯色标题带、
+ *     38px 的页头大字、0 圆角、上下贯通的色块，摆在专业工具里仍然"重"。
  *
- * 每套配色有**主 / 辅两个强调色**：--accent 是主色（按钮、焦点环、徽标、
- * 进度条），--accent-2 是辅色（选中态的 2px 竖条与浅底、动作型下拉项的文字）。
+ * 方案 D（本版）的参照物是**行业标准工具本身**（Pomfort Silverstack，
+ * 以及 DaVinci Resolve 一类）：看它的界面截图可以量出六条规律 ——
  *
- * 进度条**用纯色主色，不做渐变**。主按钮当年也是主→辅渐变，同样去掉了。
- * 两次的理由一模一样：对竹林 / 奶酪等于平色，而雾光的青→粉会渲染成一条
- * 彩色斜纹，观感偏"网页模板"。DIT 要长时间盯着它，实心块更稳。
+ *   ① **没有色块标题带**。区块标题就是一行小号灰字 + 一条极细的分隔线，
+ *      坐在面板底色上。颜色不参与分区，分区靠"面板比底略亮一档"。
+ *   ② **面板比背景亮、不靠边框**。卡片与背景的差别是背景值差（#26262b vs #1c1c1f），
+ *      分隔线只在需要收口时出现，且只有 8% 白。
+ *   ③ **小圆角**（3~5px），不是 0 也不是 12px。
+ *   ④ **小字号高密度**。正文 12~13px，标签 10~11px，页头 22px 就已经是"大标题"。
+ *      信息密度本身就是专业感 —— 它意味着"这软件装得下活儿"。
+ *   ⑤ **蓝色是唯一的强调色**，只出现在：选中行、开关、主按钮、进度条。
+ *      其余一切都是灰阶。
+ *   ⑥ **等宽字体只给数字与路径**，不给标题。
  *
- * ⚠️ 八个主题块必须**全部**定义 --accent-2 系列，一个都不能少。
- * 漏配的后果是**静默**的，而且分两处：
- *   · 选中态写的是 box-shadow: inset var(--accent-2-bar) 0 0 var(--accent-2)，
- *     变量取不到值 → 整条 box-shadow 在计算值阶段变成 "invalid at computed-value
- *     time" 并被当成 unset → 竖条**直接消失**（只剩浅底）
- *   · 动作型下拉项写的是 color: var(--accent-2) → 那条 color 同样失效，
- *     文字退回继承色，和普通选项长得一样
- * type-check 和 lint 都抓不到，只能靠冒烟探针把真实元素的计算值读出来。
+ * ---------------------------------------------------------------------------
+ * ⚠️ 铁律（沿用，绝不破例）
  *
- * --accent-2-bar 是「选中态竖条」的宽度。
- * 单色主题（竹林、奶酪）沿等主色，色块与浅底能自然退化成平色，
- * 但**竖条是离散元素，退化不了** —— 给它们留个 0px，选中态就完全维持原样：
- * 浅底 + 加粗，没有竖条。雾光与鸢尾吃得到这根 2px 的线。
+ * 界面里任何颜色都必须走这里的变量 —— 不允许在组件里写死色值。
+ *
+ * ⚠️ 默认皮肤（`html[data-mode='light' | 'dark']` 两块）**必须把色彩令牌配全**。
+ * 漏一个不会报错，只会让整条 `var(--x)` 声明失效（回退成 unset），
+ * 界面看起来像坏了。
+ *
+ * ⚠️ 皮肤覆盖块（`html[data-skin='…'][data-mode='…']`）覆盖**同一组**令牌。
+ * 少覆盖一个，那一项就沿用默认皮肤的值 —— 症状是"这套皮肤好像没生效"，
+ * 而且只在那一处。加令牌时所有皮肤一起加。
+ * 不随皮肤变化的东西（圆角、间距、字阶、动效、尺寸）放 `:root`。
+ * ---------------------------------------------------------------------------
+ *
+ * 【accent 的两种用法 —— 这是本文件最要紧的一处设计】
+ *
+ * `--accent` 是**填充色**：主按钮底、进度条、选中行、聚焦环。
+ * 铺底时配 `--accent-ink` 当文字色，五套皮肤都保证 ≥4.5:1。
+ *
+ * `--accent-text` 是**同色系但压深（亮色）/ 提亮（暗色）**的一档，
+ * 专门给"把强调色当文字用"的场合（下拉动作项、徽标文字）。
+ * 直接把 --accent 当文字色，在浅底上会掉到 4.5:1 以下 —— 那是看不见。
+ *
+ * 进度条与主按钮一律**纯色**，不做渐变（旧版主色→辅色差 137° 渲染成彩色斜纹，
+ * 观感偏"网页模板"，而且容易被误读成"两个阶段"）。
  */
 
+/*
+ * 把侧栏宽度注册成一个**可动画的长度**。
+ *
+ * 自定义属性默认是"字符串替换"，浏览器不知道该插值，改它就是一帧跳变。
+ * 用 @property 声明成 <length> 之后，`transition: --rail-w` 才有意义 ——
+ * 收起侧栏时网格列宽、吸底条的 left 会跟着一起平滑推进。
+ *
+ * `inherits: true` 是必须的：值要能从 .shell 传给里面的 .action-bar。
+ * 不支持 @property 的环境只是没有过渡，功能不受影响。
+ */
+@property --rail-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 248px;
+}
+
 :root {
+  /* ---------------- 圆角 ----------------
+   * 6~10px。0 是海报（方案 B/C），12px+ 是网页卡片（方案 A），3px 太"硬"
+   * （方案 D 用的 3/5/6，被评"特别丑"）。Silverstack 的浮动面板量出来是
+   * 8~12px —— 看得出是圆角，但绝不"圆润"。
+   */
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* 内容区左右留白。页头分隔线靠它的负值横向铺满。 */
+  --page-pad: 28px;
+
+  /*
+   * 内容列的最大宽度。
+   * 页头分隔线与吸底操作条都靠它算居中偏移，必须与 .page 的 max-width 一致。
+   * 视图模式会覆盖它。
+   */
+  --content-max: 1240px;
+
+  /*
+   * 侧栏宽度（展开 / 收起两档）。
+   * 三处依赖它：.shell 的网格列宽、.action-bar 的 `left`、以及收起动画。
+   */
+  --rail-w: 232px;
+  --rail-w-collapsed: 60px;
+
   /*
    * Windows 标题栏叠加层的高度（与 src/main/platform.ts 的 TITLE_BAR_HEIGHT 必须一致）。
-   *
-   * 它不是颜色，所以放在 :root 一份就够 —— 不需要在六个主题块里重复。
    * macOS 上不生效：用到它的规则都被 [data-platform='windows'] 限定了。
    */
   --titlebar-height: 40px;
+
+  /* ---------------- 字体 ---------------- */
   --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
     'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-  --dur-fast: 120ms;
-  --dur-base: 200ms;
+
+  /*
+   * 字阶。本版整体**降两档**：专业工具的"大"是 22px 而不是 38px。
+   * 信息密度本身就是专业感 —— 把一屏塞满、塞清楚，比把标题放大更难也更值钱。
+   */
+  --fs-display: 22px; /* 页头主视觉 */
+  --fs-h1: 17px;       /* 区块标题 */
+  --fs-h2: 14px;       /* 卡片标题 */
+  --fs-body: 13px;     /* 正文 */
+  --fs-sm: 12px;       /* 辅助文字 */
+  --fs-xs: 11px;       /* 标签 / 徽章 */
+  --fs-2xs: 10px;      /* 表头 / 极小注解 */
+
+  --lh-tight: 1.25;    /* 标题 */
+  --lh-base: 1.55;     /* 正文 */
+
+  /*
+   * 字距：本版只保留"小字微放开"一档。
+   * 方案 B/C 的 --ls-wider（0.16em）是为"大写眉标"服务的，
+   * 现在标题带没了，眉标也收成正常句子，那档夸张的字距不再需要。
+   */
+  --ls-tight: -0.01em;
+  --ls-snug: 0;
+  --ls-wide: 0.04em;
+
+  /* ---------------- 间距（4 的倍数） ----------------
+   * 整体比方案 B/C 收一档：卡片间距 12、卡片内边距 14/16。
+   */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 28px;
+  --sp-7: 40px;
+  --sp-8: 56px;
+
+  /* ---------------- 描边 ----------------
+   * 全部 1px，且**不再有"粗描边"这一档**。
+   * 分区靠背景值差（面板比底亮一档）与 --line-soft，不靠描边的重量。
+   */
+  --border-w-hair: 1px;
+  --border-w: 1px;
+  --border-w-bold: 1px;
+  --border-w-hero: 1px;
+
+  /* 聚焦环 / 主区块左侧竖条的宽度 */
+  --focus-ring-w: 2px;
+  --rule-accent-w: 3px;
+
+  /* ---------------- 动效 ---------------- */
+  --dur-fast: 110ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /* 入场专用：起步慢、收尾快，让元素"落定"而不是"弹出来" */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* 回弹：末段轻微过冲。只给小控件（视图切换器的滑块）用 */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* ---------------- 竹林「清和」 ---------------- */
-
-html[data-theme='qinghe'][data-mode='light'] {
-  --bg: #f5f5f0;
-  --bg-elevated: #fbfbf8;
-  --surface: #ffffff;
-  --surface-2: #f1f2ec;
-  --border: #dfe1d8;
-  --border-strong: #c7cabf;
-  --text: #1b2a23;
-  --text-muted: #62736a;
-  --text-faint: #8b9a91;
-  --accent: #3d7a58;
-  --accent-hover: #336a4b;
-  --accent-soft: #e4f0e8;
-  --accent-contrast: #ffffff;
-  /* 竹林不配第二色：辅色沿等同主色，渐变退化成平色，观感与从前完全一致 */
-  --accent-2: var(--accent);
-  --accent-2-soft: var(--accent-soft);
-  --accent-2-bar: 0px;
-  --ok: #2c7a52;
-  --ok-soft: #e6f3eb;
-  --warn: #9a6b1f;
-  --warn-soft: #fbf2df;
-  --danger: #b03a33;
-  --danger-soft: #fbeceb;
-  --info: #35657f;
-  --info-soft: #e7f0f5;
-  --shadow-sm: 0 1px 2px rgba(27, 42, 35, 0.06);
-  --shadow-md: 0 6px 20px rgba(27, 42, 35, 0.09);
-  --grid-line: rgba(61, 122, 88, 0.08);
-}
-
-html[data-theme='qinghe'][data-mode='dark'] {
-  --bg: #131a16;
-  --bg-elevated: #182220;
-  --surface: #1c2723;
-  --surface-2: #212e29;
-  --border: #2e3d36;
-  --border-strong: #3d5047;
-  --text: #e6efe9;
-  --text-muted: #9aada3;
-  --text-faint: #75877d;
-  --accent: #74bf95;
-  --accent-hover: #8ad0a8;
-  --accent-soft: #22352c;
-  --accent-contrast: #10201a;
-  --accent-2: var(--accent);
-  --accent-2-soft: var(--accent-soft);
-  --accent-2-bar: 0px;
-  --ok: #74bf95;
-  --ok-soft: #1f3229;
-  --warn: #dcb464;
-  --warn-soft: #342c1c;
-  --danger: #e08279;
-  --danger-soft: #3a2421;
-  --info: #7fb2cc;
-  --info-soft: #1e2f38;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --grid-line: rgba(116, 191, 149, 0.1);
-}
-
-/* ---------------- 粉蓝「雾光」 ---------------- */
-
-html[data-theme='wuguang'][data-mode='light'] {
-  --bg: #f4f8fa;
-  --bg-elevated: #fbfdfe;
-  --surface: #ffffff;
-  --surface-2: #ecf2f6;
-  --border: #d8e3ea;
-  --border-strong: #bacdd9;
-  --text: #1e2a33;
-  --text-muted: #5d7181;
-  --text-faint: #8293a1;
-  /* 青蓝（色相 203°）。2026-10-04 从原来的靛蓝 #586ec4（色相 234°）挪过来 ——
-     它和鸢尾的紫罗兰只差 30°，两套主题摆在一起分不出谁是谁。
-     现在雾光是"青"，鸢尾是"紫"，主色相相差 62°。
-     对比度：5.32:1 vs 白。 */
-  --accent: #26719f;
-  --accent-hover: #1f6289;
-  --accent-soft: #e4eff6;
-  --accent-contrast: #ffffff;
-  /* 暖粉（色相 340°）。和青蓝的色相差 137°，是全项目里拉得最开的一对 ——
-     雾光的身份就是"两个颜色"，不是"一个颜色的深浅"。
-     ⚠️ 它**会承载文字**（下拉里的「+ 新建母项目…」这类动作项就是辅色字），
-     所以 4.80:1 vs 白这条线不能松。 */
-  --accent-2: #c2456f;
-  --accent-2-soft: #fbeaf1;
-  --accent-2-bar: 2px;
-  --ok: #2f7a68;
-  --ok-soft: #e5f1ed;
-  --warn: #9c6b1c;
-  --warn-soft: #fbf1de;
-  --danger: #bb4436;
-  --danger-soft: #fbeae7;
-  --info: #26719f;
-  --info-soft: #e6f0f6;
-  --shadow-sm: 0 1px 2px rgba(30, 42, 51, 0.06);
-  --shadow-md: 0 6px 20px rgba(30, 42, 51, 0.1);
-  --grid-line: rgba(38, 113, 159, 0.08);
-}
-
-html[data-theme='wuguang'][data-mode='dark'] {
-  --bg: #101820;
-  --bg-elevated: #16202a;
-  --surface: #1a242e;
-  --surface-2: #202c38;
-  --border: #2b3946;
-  --border-strong: #3d4f60;
-  --text: #e6eef3;
-  --text-muted: #9db0bd;
-  --text-faint: #77899a;
-  --accent: #7cc0e8;
-  --accent-hover: #95cfef;
-  --accent-soft: #1b2c39;
-  --accent-contrast: #101820;
-  /* 深色下同样提亮，色相不变：9.15:1 vs #101820（粉是 8.65:1） */
-  --accent-2: #ef9ab8;
-  --accent-2-soft: #38232e;
-  --accent-2-bar: 2px;
-  --ok: #7cc4ab;
-  --ok-soft: #1f312c;
-  --warn: #e0bc74;
-  --warn-soft: #33291a;
-  --danger: #f29589;
-  --danger-soft: #3a2320;
-  --info: #8cc6e8;
-  --info-soft: #1c2c38;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --grid-line: rgba(124, 192, 232, 0.1);
-}
-
-/* ---------------- 奶酪「熟成」 ---------------- */
-
-html[data-theme='cheese'][data-mode='light'] {
-  --bg: #f8f3e6;
-  --bg-elevated: #fdfaf1;
-  --surface: #ffffff;
-  --surface-2: #f2ead6;
-  --border: #e2d6b8;
-  --border-strong: #c9b98f;
-  --text: #362c18;
-  --text-muted: #756543;
-  --text-faint: #a2916a;
-  --accent: #c2860f;
-  --accent-hover: #a8730a;
-  --accent-soft: #fbeecb;
-  --accent-contrast: #ffffff;
-  /* 奶酪不配第二色，同竹林 */
-  --accent-2: var(--accent);
-  --accent-2-soft: var(--accent-soft);
-  --accent-2-bar: 0px;
-  --ok: #4f7a33;
-  --ok-soft: #eaf2dd;
-  --warn: #a86a0d;
-  --warn-soft: #fbefd6;
-  --danger: #b2452c;
-  --danger-soft: #fbe9e4;
-  --info: #7d6428;
-  --info-soft: #f3ecda;
-  --shadow-sm: 0 1px 2px rgba(54, 44, 24, 0.07);
-  --shadow-md: 0 6px 20px rgba(54, 44, 24, 0.11);
-  --grid-line: rgba(194, 134, 15, 0.09);
-}
-
-html[data-theme='cheese'][data-mode='dark'] {
-  --bg: #1c1710;
-  --bg-elevated: #231d13;
-  --surface: #292218;
-  --surface-2: #332a1c;
-  --border: #453921;
-  --border-strong: #5e4e2d;
-  --text: #f3e9d6;
-  --text-muted: #c0ae8c;
-  --text-faint: #94856a;
-  --accent: #e6b23c;
-  --accent-hover: #f0c45c;
-  --accent-soft: #3b2f16;
-  --accent-contrast: #1c1710;
-  --accent-2: var(--accent);
-  --accent-2-soft: var(--accent-soft);
-  --accent-2-bar: 0px;
-  --ok: #93c47d;
-  --ok-soft: #26301f;
-  --warn: #e6b23c;
-  --warn-soft: #382d18;
-  --danger: #e88a72;
-  --danger-soft: #3a251e;
-  --info: #d8c390;
-  --info-soft: #302a1c;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --grid-line: rgba(230, 178, 60, 0.1);
-}
-
-/* ---------------- 蓝紫「鸢尾」 ---------------- */
-
-/*
- * 紫罗兰主题。2026-10-04 做了一次"拉开差距"的调整：
- * 原来主色是靛蓝 #5560cf（色相 234°），和雾光的靛蓝只差 30° ——
- * 两套都偏蓝，摆在一起分不清。现在整体推向紫：主色色相 265°，
- * 辅色 287°，底色也更冷更深。雾光走的另一头（青蓝 203°），
- * 两套主色相差 62°，一眼就能分开。
+/* =========================================================================
+ * 默认皮肤 · 暗房（Darkroom）
  *
- * 雾光的身份是"两个颜色"（青蓝配暖粉，差 137°），鸢尾是"一个颜色的深浅"
- * （紫罗兰配兰紫，差 22°）—— 这是两套主题气质上的分工，别把两者调得雷同。
- */
-html[data-theme='iris'][data-mode='light'] {
-  --bg: #f3f1fa;
-  --bg-elevated: #faf9fe;
-  --surface: #ffffff;
-  --surface-2: #ebe8f7;
-  --border: #dbd6ef;
-  --border-strong: #bfb8e2;
-  --text: #221f38;
-  --text-muted: #645e8c;
-  --text-faint: #8d87b0;
-  /* 对比度：6.06:1 vs 白 */
-  --accent: #7b3fd0;
-  --accent-hover: #6b34bb;
-  --accent-soft: #eee6fb;
-  --accent-contrast: #ffffff;
-  /* 兰紫（色相 287°）。明度比主色略高一点（L* 46.8 vs 41.7），
-     它只出现在 2px 竖条与选中浅底上，不承载文字也能被看见。
-     对比度：5.03:1 vs 白（万一将来被用作文字色，这条线也够）。 */
-  --accent-2: #a83fc4;
-  --accent-2-soft: #f9e9f9;
-  --accent-2-bar: 2px;
-  --ok: #2f7a63;
-  --ok-soft: #e4f1ee;
-  --warn: #9a6b1f;
-  --warn-soft: #fbf1de;
-  --danger: #b83b46;
-  --danger-soft: #fbe9ec;
-  --info: #6b4fc9;
-  --info-soft: #ece8fa;
-  --shadow-sm: 0 1px 2px rgba(34, 31, 56, 0.06);
-  --shadow-md: 0 6px 20px rgba(34, 31, 56, 0.1);
-  --grid-line: rgba(123, 63, 208, 0.08);
+ * 2026-10-05 第五次改（方案 E）。前四次的结论都留在这里，免得再走回去：
+ *
+ *   方案 A：米白底 + 白卡 + 大圆角。反馈"太像网页模板"。
+ *   方案 B：转播海报风 —— 荧光绿 + 纯黑 2px 粗边 + 硬偏移投影。反馈"太丑太卡通"。
+ *   方案 C：四套降噪配色（石墨蓝/中性/暖砂/靛青）。颜色收住了，但骨架还是海报的。
+ *   方案 D：专业工具语言（小圆角、小字号、面板比底亮一档）。**被否** ——
+ *     反馈"queue-dark 特别丑"。事后对照 Silverstack 的真实界面截图才找到病根：
+ *     **D 的底色是中间调的灰蓝（#1c1c1f / #26262b），面板与底只差一档 → 糊成一块。**
+ *     Silverstack 用的是**近黑**（#0a0b0d 一档），面板与底拉开得更狠，
+ *     于是"分区靠背景值差"这条才真正成立。
+ *
+ * 方案 E（本版）的改动只有两处，但都是要害：
+ *   ① **底色下沉到近黑**（#0a0b0d / #14161a），面板与底差 ≥ 10 个亮度点；
+ *   ② **界面靠"满"而不是靠"空"** —— 空值（—、0 B、待处理）一律不渲染。
+ *      前四次失败的根本原因不是配色，是屏幕上大片空白：**空的地方换什么颜色都还是空。**
+ * ========================================================================= */
+
+html[data-mode='dark'] {
+  --bg: #0a0b0d;
+  --bg-elevated: #101216;
+  --surface: #14161a;      /* 面板：比背景亮一档，这就是分区的全部手段 */
+  --surface-2: #1a1d21;    /* 输入框、chips */
+  --surface-3: #21252a;    /* 悬停面 */
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --line-soft: rgba(255, 255, 255, 0.07); /* 面板内的细分隔线 */
+  --hard-line: rgba(255, 255, 255, 0.16); /* 需要收口的地方（输入框、表格头） */
+  --text: #e6e9ed;
+  --text-muted: #98a0aa;
+  --text-faint: #636b75;
+
+  --band: #14161a;         /* 日志面板这类"深色面" */
+  --band-ink: #e6e9ed;
+  --band-ink-dim: rgba(230, 233, 237, 0.6);
+  --band-danger: #f08a8d;
+
+  --accent: #4a8cf7;       /* 蓝，全项目唯一的强调色；深字压上去 5.9:1 */
+  --accent-hover: #5f9bf8;
+  --accent-soft: #16233a;  /* 选中行 / 浅底强调 */
+  --accent-ink: #08111f;
+  --accent-ink-dim: rgba(8, 17, 31, 0.72);
+  --accent-text: #6ba6ec;  /* 当文字用，vs 面板 7.1:1 */
+  --accent-contrast: #08111f;
+
+  --ok: #3ecf8e;
+  --ok-soft: #12261d;
+  --warn: #e0a03a;
+  --warn-soft: #2a2110;
+  --danger: #e5484d;
+  --danger-soft: #2b1416;
+  --info: #6ba6ec;
+  --info-soft: #16233a;
+
+  --shadow-sm: none;
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --grid-line: rgba(255, 255, 255, 0.06);
+
+  --rail: #06070a;         /* 侧栏比主区再深一档 */
+  --rail-text: #e6e9ed;
+  --rail-text-dim: #7d858f;
+  --rail-hover: #14161a;
+  --rail-line: rgba(255, 255, 255, 0.08);
+
+  --on-dark-bg: #21252a;
+  --on-dark-border: rgba(255, 255, 255, 0.16);
+  --on-dark-text: #e6e9ed;
+
+  /* 当前导航项：蓝色**淡底**而不是整块实蓝 —— 导航是工具，不该比内容响 */
+  --nav-current-bg: rgba(74, 140, 247, 0.16);
+  --nav-current-text: #ffffff;
+
+  --lead-bg: var(--surface);
+  --lead-border: var(--line-soft);
+  --lead-track: var(--surface-2);
+
+  --accent-2: var(--accent-text);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
 }
 
-html[data-theme='iris'][data-mode='dark'] {
-  --bg: #130f22;
-  --bg-elevated: #1a162b;
-  --surface: #1e1a30;
-  --surface-2: #262040;
-  --border: #322b4d;
-  --border-strong: #453c6b;
-  --text: #e9e5f6;
-  --text-muted: #a39cc5;
-  --text-faint: #7d769e;
-  /* 深色下两头都提亮，明度几乎相等（L* 71.0 与 71.3）：
-     8.33:1 与 8.41:1 vs #1e1a30。 */
-  --accent: #b9a0f7;
-  --accent-hover: #c8b3f9;
-  --accent-soft: #2a2148;
-  --accent-contrast: #130f22;
-  --accent-2: #cf9af0;
-  --accent-2-soft: #3a2547;
-  --accent-2-bar: 2px;
-  --ok: #7cc9b0;
-  --ok-soft: #1f312d;
-  --warn: #e2be76;
-  --warn-soft: #33291a;
-  --danger: #f2969c;
-  --danger-soft: #3a2328;
-  --info: #b3a6f2;
-  --info-soft: #272148;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --grid-line: rgba(185, 160, 247, 0.1);
+html[data-mode='light'] {
+  --bg: #eef0f3;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f4f6f8;
+  --surface-3: #e8ebef;
+  --border: rgba(16, 20, 26, 0.1);
+  --border-strong: rgba(16, 20, 26, 0.18);
+  --line-soft: rgba(16, 20, 26, 0.08);
+  --hard-line: rgba(16, 20, 26, 0.18);
+  --text: #14181e;
+  --text-muted: #545a63;
+  --text-faint: #838a94;
+
+  --band: #14181e;
+  --band-ink: #eef0f3;
+  --band-ink-dim: rgba(238, 240, 243, 0.62);
+  --band-danger: #ff8f73;
+
+  --accent: #2f6fb5;       /* 白字压上去 5.2:1 */
+  --accent-hover: #3a80c9;
+  --accent-soft: #e4eef8;
+  --accent-ink: #ffffff;
+  --accent-ink-dim: rgba(255, 255, 255, 0.74);
+  --accent-text: #28629f;  /* 当文字用，vs 白 6.3:1 */
+  --accent-contrast: #ffffff;
+
+  --ok: #1e7d5a;
+  --ok-soft: #e2f0ea;
+  --warn: #96631a;
+  --warn-soft: #f8eeda;
+  --danger: #bb3a24;
+  --danger-soft: #fae6e0;
+  --info: #2f6fb5;
+  --info-soft: #e4eef8;
+
+  --shadow-sm: none;
+  --shadow-md: 0 6px 18px rgba(16, 20, 26, 0.12);
+  --grid-line: rgba(16, 20, 26, 0.06);
+
+  --rail: #14181e;
+  --rail-text: #eef0f3;
+  --rail-text-dim: #8d939c;
+  --rail-hover: #222831;
+  --rail-line: rgba(238, 240, 243, 0.12);
+
+  --on-dark-bg: #222831;
+  --on-dark-border: rgba(238, 240, 243, 0.18);
+  --on-dark-text: #eef0f3;
+
+  --nav-current-bg: rgba(47, 111, 181, 0.18);
+  --nav-current-text: #ffffff;
+
+  --lead-bg: var(--surface);
+  --lead-border: var(--line-soft);
+  --lead-track: var(--surface-2);
+
+  --accent-2: var(--accent-text);
+  --accent-2-soft: var(--accent-soft);
+  --accent-2-bar: 0px;
+}
+
+/* =========================================================================
+ * 皮肤 · 石墨蓝（Steel）
+ *
+ * 2026-10-05 的前一版默认。中性冷灰 + 钢蓝，比「暗房」浅、比「中性」有色彩。
+ * 亮色下比暗房更"办公"，暗色下比暗房更灰。
+ * ========================================================================= */
+
+html[data-skin='steel'][data-mode='light'] {
+  --bg: #f2f4f7;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f4f6f9;
+  --surface-3: #e8ecf1;
+  --border: rgba(18, 24, 32, 0.1);
+  --border-strong: rgba(18, 24, 32, 0.2);
+  --line-soft: rgba(18, 24, 32, 0.08);
+  --hard-line: rgba(18, 24, 32, 0.2);
+  --text: #121820;
+  --text-muted: #4b5563;
+  --text-faint: #7b8593;
+  --band: #1c2530;
+  --band-ink: #eef2f7;
+  --band-ink-dim: rgba(238, 242, 247, 0.62);
+  --band-danger: #ff9b84;
+  --accent: #2f6f96;
+  --accent-hover: #3a82ad;
+  --accent-soft: #e2edf5;
+  --accent-ink: #ffffff;
+  --accent-ink-dim: rgba(255, 255, 255, 0.74);
+  --accent-text: #245a7b;
+  --accent-contrast: #ffffff;
+  --ok: #1c7d5c;
+  --ok-soft: #e0f0e9;
+  --warn: #96631a;
+  --warn-soft: #f8eeda;
+  --danger: #b83a22;
+  --danger-soft: #fae6e0;
+  --info: #2b6a92;
+  --info-soft: #e2edf5;
+  --shadow-md: 0 6px 20px rgba(18, 24, 32, 0.1);
+  --rail: #151b23;
+  --rail-text: #eef2f7;
+  --rail-text-dim: #8e97a3;
+  --rail-hover: #1f2731;
+  --rail-line: rgba(238, 242, 247, 0.12);
+  --on-dark-bg: #1f2731;
+  --on-dark-border: rgba(238, 242, 247, 0.2);
+  --on-dark-text: #eef2f7;
+  --nav-current-bg: rgba(47, 111, 150, 0.18);
+  --nav-current-text: #ffffff;
+}
+
+html[data-skin='steel'][data-mode='dark'] {
+  --bg: #10141a;
+  --bg-elevated: #171c23;
+  --surface: #171c23;
+  --surface-2: #20262f;
+  --surface-3: #29313c;
+  --border: rgba(238, 242, 247, 0.1);
+  --border-strong: rgba(238, 242, 247, 0.18);
+  --line-soft: rgba(238, 242, 247, 0.07);
+  --hard-line: rgba(238, 242, 247, 0.18);
+  --text: #eef2f7;
+  --text-muted: #aeb6c1;
+  --text-faint: #78818d;
+  --band: #222a35;
+  --band-ink: #eef2f7;
+  --band-ink-dim: rgba(238, 242, 247, 0.58);
+  --band-danger: #ff9b84;
+  --accent: #6ea9cc;
+  --accent-hover: #85bcdb;
+  --accent-soft: #172630;
+  --accent-ink: #0d1319;
+  --accent-ink-dim: rgba(13, 19, 25, 0.72);
+  --accent-text: #86bfdf;
+  --accent-contrast: #0d1319;
+  --ok: #4fc294;
+  --ok-soft: #16281f;
+  --warn: #dfae4a;
+  --warn-soft: #2c2415;
+  --danger: #f0705a;
+  --danger-soft: #2e1c17;
+  --info: #6cb0d8;
+  --info-soft: #17242c;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --rail: #0b0f14;
+  --rail-text: #eef2f7;
+  --rail-text-dim: #858e9a;
+  --rail-hover: #1a2029;
+  --rail-line: rgba(238, 242, 247, 0.1);
+  --on-dark-bg: #1a2029;
+  --on-dark-border: rgba(238, 242, 247, 0.18);
+  --on-dark-text: #eef2f7;
+  --nav-current-bg: rgba(110, 169, 204, 0.18);
+  --nav-current-text: #ffffff;
+}
+
+/* =========================================================================
+ * 皮肤 · 中性（Mono）
+ *
+ * 完全无彩。主按钮在亮色下是深石墨、暗色下是浅灰。
+ * 四套里最安静的一套，接近 DaVinci Resolve 的默认观感 ——
+ * 界面不表达任何情绪，注意力全部让给素材与数字。
+ * ========================================================================= */
+
+html[data-skin='mono'][data-mode='light'] {
+  --bg: #f4f5f6;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f4f5f6;
+  --surface-3: #e9eaec;
+  --border: rgba(22, 24, 26, 0.1);
+  --border-strong: rgba(22, 24, 26, 0.2);
+  --line-soft: rgba(22, 24, 26, 0.08);
+  --hard-line: rgba(22, 24, 26, 0.2);
+  --text: #16181a;
+  --text-muted: #50545a;
+  --text-faint: #7f858c;
+  --band: #23262b;
+  --band-ink: #f3f4f6;
+  --band-ink-dim: rgba(243, 244, 246, 0.6);
+  --band-danger: #ff9b84;
+  --accent: #3c434c;
+  --accent-hover: #4a525c;
+  --accent-soft: #e6e8ea;
+  --accent-ink: #ffffff;
+  --accent-ink-dim: rgba(255, 255, 255, 0.74);
+  --accent-text: #363c44;
+  --accent-contrast: #ffffff;
+  --ok: #1f7a5e;
+  --ok-soft: #e0efea;
+  --warn: #8c6318;
+  --warn-soft: #f6eeda;
+  --danger: #b03a24;
+  --danger-soft: #f8e6e0;
+  --info: #4a5a68;
+  --info-soft: #e7eaed;
+  --shadow-md: 0 6px 20px rgba(22, 24, 26, 0.1);
+  --rail: #1b1e22;
+  --rail-text: #f0f1f3;
+  --rail-text-dim: #8c9198;
+  --rail-hover: #262a2f;
+  --rail-line: rgba(240, 241, 243, 0.12);
+  --on-dark-bg: #262a2f;
+  --on-dark-border: rgba(240, 241, 243, 0.2);
+  --on-dark-text: #f0f1f3;
+  --nav-current-bg: rgba(240, 241, 243, 0.1);
+  --nav-current-text: #ffffff;
+}
+
+html[data-skin='mono'][data-mode='dark'] {
+  --bg: #121316;
+  --bg-elevated: #1a1c1f;
+  --surface: #1a1c1f;
+  --surface-2: #232529;
+  --surface-3: #2b2d32;
+  --border: rgba(236, 238, 240, 0.1);
+  --border-strong: rgba(236, 238, 240, 0.18);
+  --line-soft: rgba(236, 238, 240, 0.07);
+  --hard-line: rgba(236, 238, 240, 0.18);
+  --text: #eceef0;
+  --text-muted: #a9adb3;
+  --text-faint: #767b82;
+  --band: #26292d;
+  --band-ink: #eceef0;
+  --band-ink-dim: rgba(236, 238, 240, 0.56);
+  --band-danger: #ff9b84;
+  /* 暗色下的"无彩强调" = 浅灰实底 + 深字，与亮色正好互为反色 */
+  --accent: #b9bec6;
+  --accent-hover: #ccd1d8;
+  --accent-soft: #212429;
+  --accent-ink: #14161a;
+  --accent-ink-dim: rgba(20, 22, 26, 0.72);
+  --accent-text: #c6cbd2;
+  --accent-contrast: #14161a;
+  --ok: #4fc294;
+  --ok-soft: #16281f;
+  --warn: #dfae4a;
+  --warn-soft: #2c2415;
+  --danger: #f0705a;
+  --danger-soft: #2e1c17;
+  --info: #9aa3ad;
+  --info-soft: #212429;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --rail: #0c0d0f;
+  --rail-text: #eceef0;
+  --rail-text-dim: #83888e;
+  --rail-hover: #1c1e22;
+  --rail-line: rgba(236, 238, 240, 0.1);
+  --on-dark-bg: #1c1e22;
+  --on-dark-border: rgba(236, 238, 240, 0.18);
+  --on-dark-text: #eceef0;
+  --nav-current-bg: rgba(236, 238, 240, 0.1);
+  --nav-current-text: #ffffff;
+}
+
+/* =========================================================================
+ * 皮肤 · 暖砂（Sand）
+ *
+ * 暖米底 + 哑光琥珀。像片场的灯具与场记板：偏暖、低饱和、有纸感。
+ *
+ * ⚠️ 这一套的 --accent-ink 是**深棕**而不是白：琥珀明度偏高，白字只有 3.6:1。
+ * 而深棕也不能随便挑 —— 第一版用了 #a8712c + #201a10，实测只有 4.16:1，
+ * 是 tokens-contrast 测试抓出来的。现在这组是 5.18:1。
+ * **改琥珀色时必须一起复算 --accent-ink。**
+ * ========================================================================= */
+
+html[data-skin='sand'][data-mode='light'] {
+  --bg: #f7f2e9;
+  --bg-elevated: #fffdf9;
+  --surface: #fffdf9;
+  --surface-2: #f6f1e7;
+  --surface-3: #efe8dc;
+  --border: rgba(38, 30, 20, 0.12);
+  --border-strong: rgba(38, 30, 20, 0.22);
+  --line-soft: rgba(38, 30, 20, 0.1);
+  --hard-line: rgba(38, 30, 20, 0.22);
+  --text: #221c14;
+  --text-muted: #5c5346;
+  --text-faint: #8b8172;
+  --band: #2a231a;
+  --band-ink: #f7f2e9;
+  --band-ink-dim: rgba(247, 242, 233, 0.6);
+  --band-danger: #ff9b84;
+  --accent: #b57a30;
+  --accent-hover: #c98a3c;
+  --accent-soft: #f2e6d3;
+  --accent-ink: #16110a; /* 深棕字压琥珀底 5.18:1 —— 不是白字，见上 */
+  --accent-ink-dim: rgba(22, 17, 10, 0.72);
+  --accent-text: #8a5a1e;
+  --accent-contrast: #16110a;
+  --ok: #4a7a4e;
+  --ok-soft: #e6efe4;
+  --warn: #96631a;
+  --warn-soft: #f6ead2;
+  --danger: #ab3b24;
+  --danger-soft: #f8e5de;
+  --info: #6a6a52;
+  --info-soft: #ebe9dd;
+  --shadow-md: 0 6px 20px rgba(38, 30, 20, 0.12);
+  --rail: #221c14;
+  --rail-text: #f7f2e9;
+  --rail-text-dim: #9a8f7d;
+  --rail-hover: #2e261c;
+  --rail-line: rgba(247, 242, 233, 0.12);
+  --on-dark-bg: #2e261c;
+  --on-dark-border: rgba(247, 242, 233, 0.2);
+  --on-dark-text: #f7f2e9;
+  --nav-current-bg: rgba(181, 122, 48, 0.2);
+  --nav-current-text: #fffdf9;
+}
+
+html[data-skin='sand'][data-mode='dark'] {
+  --bg: #16120d;
+  --bg-elevated: #1f1a13;
+  --surface: #1f1a13;
+  --surface-2: #292219;
+  --surface-3: #332a1f;
+  --border: rgba(242, 236, 224, 0.1);
+  --border-strong: rgba(242, 236, 224, 0.18);
+  --line-soft: rgba(242, 236, 224, 0.07);
+  --hard-line: rgba(242, 236, 224, 0.18);
+  --text: #f2ece0;
+  --text-muted: #b8ad9c;
+  --text-faint: #857b6b;
+  --band: #2a2318;
+  --band-ink: #f2ece0;
+  --band-ink-dim: rgba(242, 236, 224, 0.56);
+  --band-danger: #ff9b84;
+  --accent: #cf9a4f;
+  --accent-hover: #ddac66;
+  --accent-soft: #241d13;
+  --accent-ink: #1a140c;
+  --accent-ink-dim: rgba(26, 20, 12, 0.72);
+  --accent-text: #d9a862;
+  --accent-contrast: #1a140c;
+  --ok: #5aa86f;
+  --ok-soft: #17251a;
+  --warn: #d3a34a;
+  --warn-soft: #2c2415;
+  --danger: #e0705a;
+  --danger-soft: #2e1b16;
+  --info: #a89a72;
+  --info-soft: #26221a;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --rail: #100d09;
+  --rail-text: #f2ece0;
+  --rail-text-dim: #8e8474;
+  --rail-hover: #221c14;
+  --rail-line: rgba(242, 236, 224, 0.1);
+  --on-dark-bg: #221c14;
+  --on-dark-border: rgba(242, 236, 224, 0.18);
+  --on-dark-text: #f2ece0;
+  --nav-current-bg: rgba(207, 154, 79, 0.2);
+  --nav-current-text: #fffdf9;
+}
+
+/* =========================================================================
+ * 皮肤 · 靛青（Indigo）
+ *
+ * 冷调深靛 + 青绿强调。比石墨蓝更"仪器"：色相偏青，
+ * 与现场监看设备上那些冷白指示灯是一族。暗色下观感最好。
+ * ========================================================================= */
+
+html[data-skin='indigo'][data-mode='light'] {
+  --bg: #eef2f3;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f5f6;
+  --surface-3: #e3e9ea;
+  --border: rgba(16, 28, 32, 0.1);
+  --border-strong: rgba(16, 28, 32, 0.2);
+  --line-soft: rgba(16, 28, 32, 0.08);
+  --hard-line: rgba(16, 28, 32, 0.2);
+  --text: #101c20;
+  --text-muted: #47595e;
+  --text-faint: #78898d;
+  --band: #14232a;
+  --band-ink: #eef4f5;
+  --band-ink-dim: rgba(238, 244, 245, 0.6);
+  --band-danger: #ff9b84;
+  --accent: #1d6d74;
+  --accent-hover: #26818a;
+  --accent-soft: #dfeef0;
+  --accent-ink: #ffffff;
+  --accent-ink-dim: rgba(255, 255, 255, 0.74);
+  --accent-text: #185a60;
+  --accent-contrast: #ffffff;
+  --ok: #1d7a5f;
+  --ok-soft: #dfefe9;
+  --warn: #8f6417;
+  --warn-soft: #f7eeda;
+  --danger: #b03d26;
+  --danger-soft: #f8e6e0;
+  --info: #2b6f8f;
+  --info-soft: #e1edf2;
+  --shadow-md: 0 6px 20px rgba(16, 28, 32, 0.1);
+  --rail: #101a1f;
+  --rail-text: #eef4f5;
+  --rail-text-dim: #869599;
+  --rail-hover: #17252b;
+  --rail-line: rgba(238, 244, 245, 0.12);
+  --on-dark-bg: #17252b;
+  --on-dark-border: rgba(238, 244, 245, 0.2);
+  --on-dark-text: #eef4f5;
+  --nav-current-bg: rgba(29, 109, 116, 0.2);
+  --nav-current-text: #ffffff;
+}
+
+html[data-skin='indigo'][data-mode='dark'] {
+  --bg: #0d1417;
+  --bg-elevated: #152025;
+  --surface: #152025;
+  --surface-2: #1d2b31;
+  --surface-3: #25343b;
+  --border: rgba(234, 242, 243, 0.1);
+  --border-strong: rgba(234, 242, 243, 0.18);
+  --line-soft: rgba(234, 242, 243, 0.07);
+  --hard-line: rgba(234, 242, 243, 0.18);
+  --text: #eaf2f3;
+  --text-muted: #a8b8bb;
+  --text-faint: #74868a;
+  --band: #1b2c34;
+  --band-ink: #eaf2f3;
+  --band-ink-dim: rgba(234, 242, 243, 0.56);
+  --band-danger: #ff9b84;
+  --accent: #4fb0b6;
+  --accent-hover: #66c2c7;
+  --accent-soft: #12272b;
+  --accent-ink: #08171a;
+  --accent-ink-dim: rgba(8, 23, 26, 0.72);
+  --accent-text: #62c3c8;
+  --accent-contrast: #08171a;
+  --ok: #4fc294;
+  --ok-soft: #16281f;
+  --warn: #dfae4a;
+  --warn-soft: #2c2415;
+  --danger: #f0705a;
+  --danger-soft: #2e1c17;
+  --info: #6cb0d8;
+  --info-soft: #17242c;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --rail: #080f12;
+  --rail-text: #eaf2f3;
+  --rail-text-dim: #7f9095;
+  --rail-hover: #16242a;
+  --rail-line: rgba(234, 242, 243, 0.1);
+  --on-dark-bg: #16242a;
+  --on-dark-border: rgba(234, 242, 243, 0.18);
+  --on-dark-text: #eaf2f3;
+  --nav-current-bg: rgba(79, 176, 182, 0.2);
+  --nav-current-text: #ffffff;
 }

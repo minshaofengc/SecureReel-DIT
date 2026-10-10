@@ -1,14 +1,17 @@
 /**
  * 主题应用。
  *
- * 用 `data-theme` / `data-mode` 两个属性挂在 <html> 上，
- * 具体色值由 tokens.css 决定 —— 组件里不出现任何硬编码颜色。
+ * 两件事彼此正交：**明暗**（`html[data-mode]`）由 `applyTheme` 写、
+ * **配色皮肤**（`html[data-skin]`）由 `applySkin` 写，两者都由 tokens.css 消费。
+ *
+ * `applyTheme` 的第一个参数（皮肤 id）已不再被它使用 —— 皮肤改由 `applySkin`
+ * 单独挂；保留该参数只是为了兼容调用方签名与老存档。
  */
 import { useEffect, useState } from 'react'
-import type { ThemeId, ThemeMode } from '@shared/types'
+import { THEMES, type ThemeId, type ThemeMode } from '@shared/types'
 import { isWindows } from './platform'
 
-/** 跟随系统时实时响应系统的外观切换（macOS 与 Windows 都支持）。 */
+/** 跟随显式的系统外观变化；首次运行时 `system` 以暗房模式为产品默认。 */
 function usePrefersDark(): boolean {
   const [dark, setDark] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -30,11 +33,39 @@ export function useResolvedMode(mode: ThemeMode): 'light' | 'dark' {
   return mode
 }
 
-export function applyTheme(themeId: ThemeId, resolved: 'light' | 'dark'): void {
+/*
+ * 第一个参数（皮肤 id）已不参与选色 —— 皮肤改由 `applySkin` 单独挂。
+ * 参数留着不删是为了兼容调用方签名与老存档；明确忽略而不是悄悄留着不管，
+ * 免得以后有人以为改它有用。
+ */
+export function applyTheme(_themeId: ThemeId, resolved: 'light' | 'dark'): void {
   const root = document.documentElement
-  root.dataset.theme = themeId
   root.dataset.mode = resolved
   root.style.colorScheme = resolved
+}
+
+/**
+ * 配色皮肤。
+ *
+ * 清单的**真源在 `@shared/types` 的 `THEMES`** —— 那边同时喂给设置 schema 与
+ * 设置页的下拉，这里只是转出一个更好读的名字，避免两处清单漂移。
+ * CSS 覆盖块在 `styles/tokens.css`。
+ */
+export const SKINS = THEMES
+export type Skin = ThemeId
+
+export function isSkin(value: unknown): value is Skin {
+  return typeof value === 'string' && (SKINS as readonly string[]).includes(value)
+}
+
+/**
+ * 挂上皮肤标记。
+ *
+ * 值直接写进 `data-skin`，不做 `steel` 的特判 —— 默认皮肤没有覆盖块，
+ * 写了也等于没写，反而少一个分支。
+ */
+export function applySkin(skin: Skin): void {
+  document.documentElement.dataset.skin = skin
 }
 
 /**
@@ -60,8 +91,15 @@ export function applyPlatform(platform: string | undefined | null): void {
 export function syncNativeTitleBar(platform: string | undefined | null): void {
   if (!isWindows(platform)) return
   const styles = getComputedStyle(document.documentElement)
-  const color = styles.getPropertyValue('--bg-elevated').trim()
-  const symbolColor = styles.getPropertyValue('--text').trim()
+  /*
+   * 2026-10-04：取 `--rail` 而不是 `--bg-elevated`。
+   *
+   * 侧栏反色成近黑之后，Windows 那个标题栏叠加层压在侧栏上方 ——
+   * 若还取白底，标题栏会是一条白带压在黑侧栏顶上，接缝非常明显。
+   * 符号色同理：深底上必须用浅色符号。
+   */
+  const color = styles.getPropertyValue('--rail').trim()
+  const symbolColor = styles.getPropertyValue('--rail-text').trim()
   if (color === '' || symbolColor === '') return
   // 失败只影响标题栏好不好看，绝不能把主题切换本身搞挂 —— 所以吞掉异常
   void window.securereel.window.setTitleBarOverlay({ color, symbolColor }).catch(() => undefined)

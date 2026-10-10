@@ -17,9 +17,11 @@ import {
   nextAutoShootDay,
   normalizeProjectDetails
 } from '@shared/project'
-import { Card, Field, Note, PathPicker, Progress, Toggle } from '../components/ui'
+import { BlockGrid, Card, Field, LeadBlock, Note, PageHead, PathPicker, Progress, Toggle } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
+import { PAGE_INDEX } from '../nav'
+import { useNav } from '../state/NavState'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 import { zeroByteNoteKey } from '../platform'
@@ -69,8 +71,13 @@ const KIND_LABEL: Record<VolumeKind, string> = {
   arriraw: 'copy.type.arriraw'
 }
 
-export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
+export function CopyView(): ReactNode {
   const { t } = useI18n()
+  /*
+   * 建完任务要跳到监控页。此前是 App 传下来的 `onCreated` 回调，
+   * 2026-10-05 改成从导航上下文取（见 state/NavState.tsx）。
+   */
+  const { navigate } = useNav()
   const {
     settings,
     updateSettings,
@@ -423,7 +430,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         // 未分组时下一次会自动沿用这次填的内容（由主进程挑最近一条）。
         setParentId(null)
         setProjectDraft(null)
-        onCreated()
+        navigate('queue')
       } catch (error) {
         pushToast('error', error instanceof Error ? error.message : String(error))
       } finally {
@@ -433,7 +440,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
     [
       draft,
       jobName,
-      onCreated,
+      navigate,
       parentId,
       pushToast,
       refreshJobs,
@@ -487,12 +494,98 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h2>{t('copy.title')}</h2>
-        <p>{t('copy.subtitle')}</p>
-      </header>
+      <PageHead
+        index={PAGE_INDEX.copy}
+        kicker={t('nav.copy')}
+        title={t('copy.title')}
+        subtitle={t('copy.subtitle')}
+      />
 
-      <Card title={t('copy.parentSection')} hint={t('copy.parentHintTitle')}>
+      {/*
+       * ① 来源 —— 这一页唯一的主区块。
+       *
+       * 推倒重做的核心改动：此前"母项目"排在第一个，但用户真正卡住的是
+       * "卡在哪儿、怎么选" —— 那是这一步之前就已经卡住的地方。
+       * 把来源提到最前面并给足视觉权重（近黑反色 + 电光绿编号），
+       * 页面一打开就知道从哪儿下手。
+       */}
+      <LeadBlock step={1} title={t('copy.source')} hint={t('copy.sourcePlaceholder')}>
+        <Field label={t('copy.jobName')}>
+          <input
+            className="input"
+            value={jobName}
+            placeholder={t('copy.jobNamePlaceholder')}
+            onChange={(event) => setJobName(event.target.value)}
+          />
+        </Field>
+        <PathPicker
+          value={sourcePath}
+          placeholder={t('copy.sourcePlaceholder')}
+          buttonLabel={t('copy.pickSource')}
+          onPick={() => void pickSource()}
+          onChange={setSourcePath}
+          disabled={scanning || busy}
+        />
+
+        {scanning && <Note>{t('copy.scanning')}</Note>}
+
+        {scan !== null && (
+          <>
+            <div className="grid-2" style={{ marginTop: 14 }}>
+              <div>
+                <div className="field-label">{t('copy.fileCount')}</div>
+                <div className="scanStat">{scan.fileCount}</div>
+              </div>
+              <div>
+                <div className="field-label">{t('copy.totalSize')}</div>
+                <div className="scanStat">{humanBytes(scan.totalBytes)}</div>
+              </div>
+              <div>
+                <div className="field-label">{t('copy.kind')}</div>
+                <div>
+                  <span className="badge accent">{t(KIND_LABEL[scan.kind] as never)}</span>
+                </div>
+              </div>
+            </div>
+
+            {scan.kind === 'hde-vfs' && <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>}
+
+            {scan.warnings.length > 0 && (
+              <Note tone="warn">
+                <strong>{t('copy.scanWarnings')}</strong>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                  {scan.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </Note>
+            )}
+
+            {scan.preview.length > 0 && (
+              <details style={{ marginTop: 10 }}>
+                <summary className="field-label" style={{ cursor: 'pointer' }}>
+                  {t('copy.biggestFiles')}
+                </summary>
+                <div className="table-wrap" style={{ marginTop: 8 }}>
+                  <table className="data">
+                    <tbody>
+                      {scan.preview.slice(0, 12).map((file) => (
+                        <tr key={file.relPath}>
+                          <td className="mono">{file.relPath}</td>
+                          <td className="num">{humanBytes(file.sizeBytes)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+          </>
+        )}
+      </LeadBlock>
+
+      <BlockGrid>
+      <Card title={`② ${t('copy.parentSection')}`} hint={t('copy.parentHintTitle')}>
         <div className="path-row">
           <SelectBox<string>
             value={parentId ?? ''}
@@ -553,7 +646,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         </div>
       </Card>
 
-      <Card title={t('copy.modeTitle')}>
+      <Card title={`③ ${t('copy.modeTitle')}`}>
         <label className="row-actions" style={{ cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -566,81 +659,7 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
           {t('copy.verifyOnlyHint')}
         </div>
       </Card>
-
-      <Card title={t('copy.source')}>
-        <Field label={t('copy.jobName')}>
-          <input
-            className="input"
-            value={jobName}
-            placeholder={t('copy.jobNamePlaceholder')}
-            onChange={(event) => setJobName(event.target.value)}
-          />
-        </Field>
-        <PathPicker
-          value={sourcePath}
-          placeholder={t('copy.sourcePlaceholder')}
-          buttonLabel={t('copy.pickSource')}
-          onPick={() => void pickSource()}
-          onChange={setSourcePath}
-          disabled={scanning || busy}
-        />
-
-        {scanning && <Note>{t('copy.scanning')}</Note>}
-
-        {scan !== null && (
-          <>
-            <div className="grid-2" style={{ marginTop: 14 }}>
-              <div>
-                <div className="field-label">{t('copy.fileCount')}</div>
-                <div style={{ fontSize: 17 }}>{scan.fileCount}</div>
-              </div>
-              <div>
-                <div className="field-label">{t('copy.totalSize')}</div>
-                <div style={{ fontSize: 17 }}>{humanBytes(scan.totalBytes)}</div>
-              </div>
-              <div>
-                <div className="field-label">{t('copy.kind')}</div>
-                <div>
-                  <span className="badge accent">{t(KIND_LABEL[scan.kind] as never)}</span>
-                </div>
-              </div>
-            </div>
-
-            {scan.kind === 'hde-vfs' && <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>}
-
-            {scan.warnings.length > 0 && (
-              <Note tone="warn">
-                <strong>{t('copy.scanWarnings')}</strong>
-                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-                  {scan.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </Note>
-            )}
-
-            {scan.preview.length > 0 && (
-              <details style={{ marginTop: 10 }}>
-                <summary className="field-label" style={{ cursor: 'pointer' }}>
-                  {t('copy.biggestFiles')}
-                </summary>
-                <div className="table-wrap" style={{ marginTop: 8 }}>
-                  <table className="data">
-                    <tbody>
-                      {scan.preview.slice(0, 12).map((file) => (
-                        <tr key={file.relPath}>
-                          <td className="mono">{file.relPath}</td>
-                          <td className="num">{humanBytes(file.sizeBytes)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            )}
-          </>
-        )}
-      </Card>
+      </BlockGrid>
 
       <Card
         title={t('copy.projectInfo')}
@@ -810,14 +829,15 @@ export function CopyView({ onCreated }: { onCreated: () => void }): ReactNode {
         {!verify && <Note tone="warn">{t('copy.verifyHint')}</Note>}
       </Card>
 
-      <div className="row-actions">
+      <div className="action-bar">
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn--xl"
           disabled={busy || scanning}
           onClick={() => void submit(true)}
         >
           {t('copy.createAndStart')}
+          <span className="kbd">空格</span>
         </button>
         <button
           type="button"

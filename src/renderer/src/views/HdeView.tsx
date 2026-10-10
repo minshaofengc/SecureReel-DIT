@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { HdeCameraModel, HdeCapabilityDecision, HdeToolStatus } from '@shared/types'
-import { Card, Note, PathPicker } from '../components/ui'
+import { Card, Note, PageHead, PathPicker } from '../components/ui'
 import { SelectBox } from '../components/ComboBox'
+import { PAGE_INDEX } from '../nav'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
@@ -82,10 +83,12 @@ export function HdeView(): ReactNode {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <h2>{t('hde.title')}</h2>
-        <p>{t('hde.subtitle')}</p>
-      </header>
+      <PageHead
+        index={PAGE_INDEX.hde}
+        kicker={t('nav.hde')}
+        title={t('hde.title')}
+        subtitle={t('hde.subtitle')}
+      />
 
       <Card
         title={t('hde.toolStatus')}

@@ -4,12 +4,28 @@ import { HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH, isJobLive } from '@shared
 import { describeLenses } from '@shared/project'
 import { humanBytes, humanDuration, humanRate, percent } from '@shared/format'
 import { frameUrl } from '@shared/frames'
-import { Card, Empty, FileStateBadge, JobStateBadge, Meter, Note, Progress } from '../components/ui'
+import { FileStateBadge, JobStateBadge, Note, Progress } from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
+import { useNav } from '../state/NavState'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
 
-type Tab = 'files' | 'log' | 'info'
+/**
+ * 右栏的两个标签。
+ *
+ * ⚠️ 2026-10-05 之前还有一个 `files` —— 文件明细是这一页**最常看**的东西，
+ * 藏在标签里等于每次都要多点一次。现在它常驻中栏，标签只剩"参数"与"日志"。
+ */
+type Tab = 'info' | 'log'
+
+/** 任务状态 → 左栏圆点的色调。用显式映射，别写三元链（漏一种就静默走 else）。 */
+function dotTone(state: string): string {
+  if (state === 'running' || state === 'queued') return 'run'
+  if (state === 'completed') return 'ok'
+  if (state === 'paused' || state === 'completed-with-errors') return 'warn'
+  if (state === 'failed') return 'danger'
+  return ''
+}
 
 /**
  * 文件表的单行。
@@ -32,9 +48,9 @@ const FileRow = memo(function FileRow({
 }): ReactNode {
   return (
     <tr>
-      <td>
+      <td className="w-thumb">
         {file.probe?.firstFrame == null ? (
-          <span className="faint">—</span>
+          <span className="thumb thumb--empty" aria-hidden="true" />
         ) : (
           <img
             className="thumb"
@@ -48,11 +64,7 @@ const FileRow = memo(function FileRow({
       <td className="mono">{file.relPath}</td>
       <td className="num">{humanBytes(file.sizeBytes)}</td>
       <td>
-        {file.probe?.format == null ? (
-          <span className="faint">—</span>
-        ) : (
-          <span className="badge">{file.probe.format}</span>
-        )}
+        {file.probe?.format == null ? null : <span className="badge">{file.probe.format}</span>}
       </td>
       <td>
         <FileStateBadge state={file.state} />
@@ -62,14 +74,30 @@ const FileRow = memo(function FileRow({
   )
 })
 
-export function QueueView({
-  onCreate,
-  onReports
-}: {
-  onCreate: () => void
-  onReports: () => void
-}): ReactNode {
+/**
+ * 监控 —— 原「任务队列」。
+ *
+ * 2026-10-05 第五次改（方案 E）**重排为三栏**。此前是"任务表 → 详情 → 文件表"
+ * 三块同权重的卡片往下堆，被 boss 评为"特别丑"。病根有两条：
+ *
+ *   ① **三种不同的信息被排成了同一种东西。** "有哪些任务"是导航、
+ *      "这一个在干什么"是内容、"它的参数是什么"是参考 —— 它们不该长得一样。
+ *      三栏之后，左窄中宽右窄，权重自己就分出来了。
+ *   ② **一半的格子是空值。** 原来的 Meter 固定摆七个数字，
+ *      任务没在跑时"速度 0 B/s""预计剩余 —"照样占位置。现在**有值才渲染**：
+ *      速度、预计剩余、失败数都是条件项，没有就整格不出现。
+ *
+ * 配色沿用近黑底（见 tokens.css 的默认皮肤）：面板比底亮一档、
+ * 蓝色是唯一强调色、分区靠细线不靠卡片。
+ */
+export function QueueView(): ReactNode {
   const { t } = useI18n()
+  /*
+   * 跳转此前是 App 传下来的 `onCreate` / `onReports` 回调，
+   * 2026-10-05 改成从导航上下文取（见 state/NavState.tsx）。
+   * `focusJobId` 是"从别处跳过来并选中某个任务"的落点。
+   */
+  const { navigate, focusJobId, clearFocus } = useNav()
   const {
     jobs,
     parents,
@@ -85,14 +113,25 @@ export function QueueView({
     pushToast
   } = useAppState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('files')
+  const [tab, setTab] = useState<Tab>('info')
   const [busy, setBusy] = useState(false)
 
+  /*
+   * 别处跳过来并要求"选中这个任务"（工作台点一条最近任务、
+   * 或者点一条待处理）。消费掉就清空 —— 否则用户手动切到别的任务后，
+   * 这个 id 还在，下一次任何重渲染都会把它抢回来。
+   */
   useEffect(() => {
-    if (selectedId === null && jobs.length > 0) {
+    if (focusJobId === null) return
+    setSelectedId(focusJobId)
+    clearFocus()
+  }, [focusJobId, clearFocus])
+
+  useEffect(() => {
+    if (selectedId === null && jobs.length > 0 && focusJobId === null) {
       setSelectedId(jobs[0]?.id ?? null)
     }
-  }, [jobs, selectedId])
+  }, [focusJobId, jobs, selectedId])
 
   const selected = useMemo(
     () => jobs.find((job) => job.id === selectedId) ?? null,
@@ -308,146 +347,169 @@ export function QueueView({
   }, [recovered, refreshJobs])
 
   return (
-    <div className="page">
-      <header className="page-head">
-        <h2>{t('queue.title')}</h2>
-        <p>{t('queue.subtitle')}</p>
-      </header>
-
-      {recovered.length > 0 && (
-        <Card
-          title={t('queue.recovered')}
-          hint={t('queue.recoveredHint')}
-          actions={
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => void resumeAll()}>
-              {t('queue.resumeAll')}
-            </button>
-          }
-        >
-          <div className="table-wrap">
-            <table className="data">
-              <tbody>
-                {recovered.map((job) => (
-                  <tr key={job.id}>
-                    <td>{job.name}</td>
-                    <td className="mono faint">{job.sourcePath}</td>
-                    <td className="num">{job.filesDone} / {job.totalFiles}</td>
-                    <td>
-                      <JobStateBadge state={job.state} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <div className="page page--monitor">
+      <div className="monitor">
+        {/* ==================== 左：有哪些任务 ==================== */}
+        <aside className="monitor__list">
+          <div className="pane-h">
+            {t('queue.title')}
+            <span className="pane-h__n">{jobs.length}</span>
           </div>
-        </Card>
-      )}
+          <div className="monitor__scroll">
+            {recovered.length > 0 && (
+              <div className="recov">
+                <div className="recov__h">
+                  <span>{t('queue.recovered')}</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => void resumeAll()}
+                  >
+                    {t('queue.resumeAll')}
+                  </button>
+                </div>
+                {recovered.map((job) => (
+                  <button
+                    key={job.id}
+                    type="button"
+                    className="qrow"
+                    onClick={() => setSelectedId(job.id)}
+                  >
+                    <span className="dot" data-tone="warn" aria-hidden="true" />
+                    <span className="qrow__id">
+                      <span className="qrow__name">{job.name}</span>
+                      <span className="qrow__sub">
+                        {job.filesDone} / {job.totalFiles}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-      {jobs.length === 0 ? (
-        <Empty>
-          <p>{t('queue.empty')}</p>
-          <button type="button" className="btn btn-primary" onClick={onCreate}>
-            {t('nav.copy')}
-          </button>
-        </Empty>
-      ) : (
-        <>
-          <Card>
-            <div className="table-wrap scroll-area">
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>{t('copy.jobName')}</th>
-                    <th>{t('common.status')}</th>
-                    <th className="num">{t('common.files')}</th>
-                    <th className="num">{t('common.bytes')}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((group) => (
-                    <Fragment key={group.key === '' ? '__ungrouped__' : group.key}>
-                      {showGroupHeaders && (
-                        <tr className="group-row">
-                          <td colSpan={5}>
-                            {group.label}
-                            <span className="faint">
-                              {' · '}
-                              {group.list.length} {t('parent.jobsSuffix')}
-                            </span>
-                          </td>
-                        </tr>
-                      )}
-                      {group.list.map((job) => (
-                        <tr
-                          key={job.id}
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => setSelectedId(job.id)}
-                          aria-selected={job.id === selectedId}
-                        >
-                          <td>
-                            <div>
-                              {job.name}
-                              {/* 仅校验任务单独标注 —— 否则隔天分不清哪个是复核哪个是拷贝 */}
-                              {job.mode === 'verify' && (
-                                <span className="badge accent" style={{ marginLeft: 8 }}>
-                                  {t('queue.mode.verify')}
-                                </span>
-                              )}
-                            </div>
-                            <div className="mono faint">{job.sourcePath}</div>
-                          </td>
-                          <td>
-                            <JobStateBadge state={job.state} />
-                          </td>
-                          <td className="num">
-                            {job.filesDone} / {job.totalFiles}
-                            {job.filesFailed > 0 && (
-                              <div className="danger" style={{ fontSize: 11 }}>
-                                {t('queue.failedCount')} {job.filesFailed}
-                              </div>
-                            )}
-                          </td>
-                          <td className="num">{humanBytes(job.bytesDone)}</td>
-                          <td className="num">
-                            {job.id === selectedId ? <span className="badge accent">●</span> : null}
-                          </td>
-                        </tr>
-                      ))}
-                    </Fragment>
+            {jobs.length === 0 ? (
+              <div className="monitor__empty">
+                <p className="faint">{t('queue.empty')}</p>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => navigate('copy')}
+                >
+                  {t('nav.copy')}
+                </button>
+              </div>
+            ) : (
+              groups.map((group) => (
+                <Fragment key={group.key === '' ? '__ungrouped__' : group.key}>
+                  {showGroupHeaders && (
+                    <div className="qgroup">
+                      {group.label}
+                      <span className="faint">
+                        {' · '}
+                        {group.list.length} {t('parent.jobsSuffix')}
+                      </span>
+                    </div>
+                  )}
+                  {group.list.map((job) => (
+                    <button
+                      key={job.id}
+                      type="button"
+                      className="qrow"
+                      aria-current={job.id === selectedId ? 'true' : undefined}
+                      onClick={() => setSelectedId(job.id)}
+                    >
+                      <span className="dot" data-tone={dotTone(job.state)} aria-hidden="true" />
+                      <span className="qrow__id">
+                        <span className="qrow__name">
+                          {job.name}
+                          {job.mode === 'verify' && (
+                            <span className="qrow__flag">{t('queue.mode.verify')}</span>
+                          )}
+                        </span>
+                        <span className="qrow__sub">
+                          {job.filesDone} / {job.totalFiles} · {humanBytes(job.bytesDone)}
+                        </span>
+                      </span>
+                      <span className="qrow__rt">
+                        {job.filesFailed > 0 ? (
+                          <span className="badge danger">
+                            {t('queue.failedCount')} {job.filesFailed}
+                          </span>
+                        ) : (
+                          <JobStateBadge state={job.state} />
+                        )}
+                      </span>
+                    </button>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                </Fragment>
+              ))
+            )}
+          </div>
+        </aside>
 
-          {selected !== null && (
-            <Card
-              title={selected.name}
-              hint={
-                selected.mode === 'verify'
-                  ? `${t('queue.mode.verify')} · ${HASH_ALGORITHM_LABELS[selected.hashAlgorithm]}`
-                  : `${HASH_ALGORITHM_LABELS[selected.hashAlgorithm]} · ${selected.manifestFormat}`
-              }
-              actions={
-                <>
-                  {(selected.state === 'draft' || selected.state === 'cancelled' || selected.state === 'failed') && (
-                    <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void act('start')}>
+        {/* ==================== 中：这一个在干什么 ==================== */}
+        <section className="monitor__main">
+          {selected === null ? (
+            <div className="monitor__empty">
+              <p className="faint">{t('queue.pickOne')}</p>
+            </div>
+          ) : (
+            <>
+              <header className="mhead">
+                <div className="mhead__id">
+                  <h2>{selected.name}</h2>
+                  <div className="mhead__tags">
+                    <span className="tag">
+                      {HASH_ALGORITHM_LABELS[selected.hashAlgorithm]}
+                    </span>
+                    <span className="tag">
+                      {selected.mode === 'verify'
+                        ? t('queue.mode.verify')
+                        : selected.manifestFormat}
+                    </span>
+                    <JobStateBadge state={selected.state} />
+                  </div>
+                </div>
+                <div className="mhead__acts">
+                  {(selected.state === 'draft' ||
+                    selected.state === 'cancelled' ||
+                    selected.state === 'failed') && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={busy}
+                      onClick={() => void act('start')}
+                    >
                       {t('queue.start')}
                     </button>
                   )}
                   {(selected.state === 'running' || selected.state === 'queued') && (
-                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void act('pause')}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => void act('pause')}
+                    >
                       {t('queue.pause')}
                     </button>
                   )}
                   {selected.state === 'paused' && (
-                    <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void act('resume')}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      disabled={busy}
+                      onClick={() => void act('resume')}
+                    >
                       {t('queue.resume')}
                     </button>
                   )}
                   {isJobLive(selected.state) && (
-                    <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => void act('cancel')}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      disabled={busy}
+                      onClick={() => void act('cancel')}
+                    >
                       {t('queue.cancel')}
                     </button>
                   )}
@@ -460,15 +522,24 @@ export function QueueView({
                   >
                     {t('queue.regenReport')}
                   </button>
-                  <button type="button" className="btn btn-sm btn-ghost" onClick={onReports}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => navigate('reports')}
+                  >
                     {t('nav.reports')}
                   </button>
-                  <button type="button" className="btn btn-sm btn-ghost btn-danger" disabled={busy} onClick={() => void remove()}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost btn-danger"
+                    disabled={busy}
+                    onClick={() => void remove()}
+                  >
                     {t('queue.delete')}
                   </button>
-                </>
-              }
-            >
+                </div>
+              </header>
+
               {(() => {
                 const done = jobProgress?.filesDone ?? selected.filesDone
                 const failed = jobProgress?.filesFailed ?? selected.filesFailed
@@ -491,39 +562,76 @@ export function QueueView({
                   selected.startedAt === null
                     ? null
                     : Math.max(0, (Date.now() - Date.parse(selected.startedAt)) / 1000)
+                const speed = jobProgress?.bytesPerSecond ?? 0
+                const eta = jobProgress?.etaSeconds ?? null
+
                 return (
                   <>
-                    {active && (
-                      <div className="row-actions" style={{ marginBottom: 8 }}>
-                        <span className="badge accent">{t(`queue.phase.${phase}` as never)}</span>
+                    {/*
+                     * 进度块。
+                     *
+                     * ⚠️ 统计列是**条件渲染**的 —— 没在跑就没有速度、没有预计剩余，
+                     * 那就整格不出现。旧版固定摆七格，任务跑完后
+                     * "0 B/s""—""84 小时 19 分"占了一整行，是这一页看起来
+                     * 又空又乱的主要来源。
+                     */}
+                    <div className="progwrap">
+                      <div className="progtop">
+                        <div>
+                          <div className="lb">
+                            {active ? t(`queue.phase.${phase}` as never) : t('queue.progress')}
+                          </div>
+                          <div className="bigrow">
+                            <span className="big">{pct.toFixed(1)}</span>
+                            <span className="unit">%</span>
+                          </div>
+                        </div>
+                        <div className="statline">
+                          <div className="st">
+                            <div className="st__k">{t('queue.done')}</div>
+                            <div className="st__v">
+                              {done} / {selected.totalFiles}
+                            </div>
+                          </div>
+                          {failed > 0 && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.failedCount')}</div>
+                              <div className="st__v danger">{failed}</div>
+                            </div>
+                          )}
+                          <div className="st">
+                            <div className="st__k">{t('common.bytes')}</div>
+                            <div className="st__v">{humanBytes(bytesDone)}</div>
+                          </div>
+                          {active && speed > 0 && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.speed')}</div>
+                              <div className="st__v">{humanRate(speed)}</div>
+                            </div>
+                          )}
+                          {elapsedSeconds !== null && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.elapsed')}</div>
+                              <div className="st__v">{humanDuration(elapsedSeconds)}</div>
+                            </div>
+                          )}
+                          {active && eta !== null && (
+                            <div className="st">
+                              <div className="st__k">{t('queue.eta')}</div>
+                              <div className="st__v">{humanDuration(eta)}</div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
-                    <Progress
-                      value={pct}
-                      tone={failed > 0 ? 'warn' : undefined}
-                    />
-                    <Meter
-                      items={[
-                        { label: t('queue.progress'), value: `${pct.toFixed(1)}%` },
-                        { label: t('queue.done'), value: `${done} / ${selected.totalFiles}` },
-                        {
-                          label: t('queue.failedCount'),
-                          value: failed > 0 ? <span className="danger">{failed}</span> : 0
-                        },
-                        { label: t('common.bytes'), value: `${humanBytes(bytesDone)} / ${humanBytes(total)}` },
-                        { label: t('queue.speed'), value: humanRate(jobProgress?.bytesPerSecond ?? null) },
-                        { label: t('queue.elapsed'), value: humanDuration(elapsedSeconds) },
-                        { label: t('queue.eta'), value: humanDuration(jobProgress?.etaSeconds ?? null) }
-                      ]}
-                    />
+                      <Progress value={pct} tone={failed > 0 ? 'warn' : undefined} />
+                    </div>
 
                     {/* 正在处理中的文件。
                         整条进度只回答"还剩多久"，回答不了"现在到底在动没有" ——
-                        大文件拷贝期间字节数会长时间不动，没有这一块用户会以为卡死了。
-                        串行时通常只有一条，并发时最多等于文件级并发数。 */}
+                        大文件拷贝期间字节数会长时间不动，没有这一块用户会以为卡死了。 */}
                     {activeFiles.length > 0 && (
                       <div className="active-files">
-                        <div className="field-label">{t('queue.activeFiles')}</div>
+                        <div className="sec-h">{t('queue.activeFiles')}</div>
                         <ul>
                           {activeFiles.map((item) => (
                             <li key={item.relPath}>
@@ -542,12 +650,18 @@ export function QueueView({
                     {/* 素材分析是拷贝之后一段不短的工作，单独给一条进度，
                         否则进度条停在 100% 不动会让人以为程序卡死了 */}
                     {(jobProgress?.analyzeTotal ?? 0) > 0 && (
-                      <div style={{ marginTop: 12 }}>
-                        <div className="field-label">
-                          {t('queue.analyze')} — {jobProgress?.analyzeDone ?? 0} / {jobProgress?.analyzeTotal ?? 0}
+                      <div className="progwrap progwrap--sub">
+                        <div className="progtop">
+                          <div className="lb">
+                            {t('queue.analyze')} — {jobProgress?.analyzeDone ?? 0} /{' '}
+                            {jobProgress?.analyzeTotal ?? 0}
+                          </div>
                         </div>
                         <Progress
-                          value={percent(jobProgress?.analyzeDone ?? 0, jobProgress?.analyzeTotal ?? 1)}
+                          value={percent(
+                            jobProgress?.analyzeDone ?? 0,
+                            jobProgress?.analyzeTotal ?? 1
+                          )}
                         />
                       </div>
                     )}
@@ -556,227 +670,215 @@ export function QueueView({
                       <Note tone="warn">{selected.degradationNotice}</Note>
                     )}
 
-                    <div style={{ marginTop: 16 }}>
-                      <div className="field-label">{t('queue.targets')}</div>
+                    {/* 各目标：行式 + 细进度条，不用表格。
+                        表格在这里是"用四列去装两列的信息" —— 目标数最多 8 个，
+                        但每行只有"写了多少 / 多快 / 什么状态"三件事。 */}
+                    <div className="sec-h">
+                      {t('queue.targets')} · {selected.targets.length}
+                    </div>
+                    {selected.targets.map((target) => {
+                      const live = jobProgress?.targets.find((item) => item.targetId === target.id)
+                      const state = live?.state ?? 'pending'
+                      return (
+                        <div className="tgt" key={target.id}>
+                          <div className="tgt__id">
+                            <div className="tgt__name">{target.label}</div>
+                            <div className="tgt__path mono">{target.path}</div>
+                          </div>
+                          <div className="tgt__bar">
+                            <Progress
+                              value={percent(live?.bytesCopied ?? 0, total)}
+                              tone={state === 'failed' ? 'danger' : undefined}
+                            />
+                          </div>
+                          <div className="tgt__v">
+                            {live?.filesDone ?? 0} / {selected.totalFiles}
+                          </div>
+                          <div className="tgt__v">{humanBytes(live?.bytesCopied ?? 0)}</div>
+                          <span className={`badge ${targetTone[state]}`}>{targetText[state]}</span>
+                          {live?.error != null && <div className="tgt__err danger">{live.error}</div>}
+                        </div>
+                      )
+                    })}
+
+                    <div className="sec-h">
+                      {t('queue.filesTab')} · {jobFiles.length}
+                    </div>
+                    {jobFiles.length === 0 ? (
+                      <div className="faint">{t('queue.noFiles')}</div>
+                    ) : (
                       <div className="table-wrap">
                         <table className="data">
                           <thead>
                             <tr>
+                              <th className="w-thumb" />
                               <th>{t('common.path')}</th>
-                              <th>{t('common.status')}</th>
-                              <th className="num">{t('queue.done')}</th>
-                              <th className="num">{t('queue.failedCount')}</th>
                               <th className="num">{t('common.bytes')}</th>
+                              <th>{t('queue.format')}</th>
+                              <th>{t('common.status')}</th>
+                              <th>{t('copy.hashAlgorithm')}</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {selected.targets.map((target) => {
-                              const live = jobProgress?.targets.find((item) => item.targetId === target.id)
-                              return (
-                                <tr key={target.id}>
-                                  <td>
-                                    <div>{target.label}</div>
-                                    <div className="mono faint">{target.path}</div>
-                                  </td>
-                                  <td>
-                                    <span className={`badge ${targetTone[live?.state ?? 'pending']}`}>
-                                      {targetText[live?.state ?? 'pending']}
-                                    </span>
-                                    {live?.error != null && (
-                                      <div className="danger" style={{ fontSize: 11 }}>
-                                        {live.error}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="num">{live?.filesDone ?? 0}</td>
-                                  <td className="num">{live?.filesFailed ?? 0}</td>
-                                  <td className="num">{humanBytes(live?.bytesCopied ?? 0)}</td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </>
-                )
-              })()}
-            </Card>
-          )}
-
-          {selected !== null && (
-            <Card
-              actions={
-                <div className="segmented">
-                  <button
-                      type="button"
-                      data-action="tab-files"
-                      aria-pressed={tab === 'files'}
-                      onClick={() => setTab('files')}
-                    >
-                    {t('queue.filesTab')}
-                  </button>
-                  <button
-                      type="button"
-                      data-action="tab-log"
-                      aria-pressed={tab === 'log'}
-                      onClick={() => setTab('log')}
-                    >
-                    {t('queue.logTab')}
-                  </button>
-                  <button
-                      type="button"
-                      data-action="tab-info"
-                      aria-pressed={tab === 'info'}
-                      onClick={() => setTab('info')}
-                    >
-                    {t('queue.infoTab')}
-                  </button>
-                </div>
-              }
-            >
-              {tab === 'files' ? (
-                jobFiles.length === 0 ? (
-                  <div className="faint">{t('queue.noFiles')}</div>
-                ) : (
-                  <div className="table-wrap scroll-area">
-                    <table className="data">
-                      <thead>
-                        <tr>
-                          <th style={{ width: 96 }}>{t('queue.frames')}</th>
-                          <th>{t('common.path')}</th>
-                          <th className="num">{t('common.bytes')}</th>
-                          <th>{t('queue.format')}</th>
-                          <th>{t('common.status')}</th>
-                          <th>{t('copy.hashAlgorithm')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {jobFiles.map((file) => (
-                          <FileRow key={file.id} file={file} jobId={selected.id} dash={t('common.dash')} />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              ) : tab === 'info' ? (
-                <div className="info-pane">
-                  {/*
-                   * 外层不能用 <label>：自研下拉的触发器是个 <button>，
-                   * label 会把点击再转发一次给它，等于一点开一关。
-                   */}
-                  <div className="field">
-                    <span className="field-label">{t('queue.assignedParent')}</span>
-                    <SelectBox<string>
-                      value={selected.parentProjectId ?? ''}
-                      ariaLabel={t('queue.assignedParent')}
-                      options={parentOptions}
-                      onChange={(next) => void changeParent(next)}
-                    />
-                  </div>
-
-                  {info === null ? (
-                    <div className="faint">{t('queue.noProjectInfo')}</div>
-                  ) : (
-                    <>
-                      <div className="grid-2">
-                        <label className="field">
-                          <span className="field-label">{t('copy.cardLabel')}</span>
-                          <input
-                            className="input"
-                            value={info.cardLabel}
-                            onChange={(event) => saveInfo({ cardLabel: event.target.value })}
-                          />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">{t('project.projectName')}</span>
-                          <input
-                            className="input"
-                            value={info.projectName}
-                            onChange={(event) => saveInfo({ projectName: event.target.value })}
-                          />
-                        </label>
-                      </div>
-
-                      <label className="field">
-                        <span className="field-label">{t('copy.copyNotes')}</span>
-                        <textarea
-                          className="textarea"
-                          maxLength={MAX_COPY_NOTES_LENGTH}
-                          value={info.copyNotes}
-                          onChange={(event) => saveInfo({ copyNotes: event.target.value })}
-                        />
-                        <span className="hint faint" style={{ fontSize: 11 }}>
-                          {t('copy.copyNotesHint')}
-                        </span>
-                        <div className="counter">
-                          {info.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
-                        </div>
-                      </label>
-
-                      <Note>{t('queue.snapshotHint')}</Note>
-
-                      <h4 className="sub-title">{t('queue.inherited')}</h4>
-                      <table>
-                        <tbody>
-                          <tr>
-                            <th style={{ width: 150 }}>{t('queue.assignedParent')}</th>
-                            <td>{info.parentProjectName ?? '—'}</td>
-                          </tr>
-                          <tr>
-                            <th>{t('project.shootDay')}</th>
-                            <td>{info.shootDay === '' ? '—' : info.shootDay}</td>
-                          </tr>
-                          <tr>
-                            <th>{t('project.camera')}</th>
-                            <td>{info.camera === '' ? '—' : info.camera}</td>
-                          </tr>
-                          <tr>
-                            <th>{t('project.lenses')}</th>
-                            <td>{describeLenses(info) === '' ? '—' : describeLenses(info)}</td>
-                          </tr>
-                          <tr>
-                            <th>{t('project.notes')}</th>
-                            <td>{info.notes === '' ? '—' : info.notes}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-
-                      <h4 className="sub-title">{t('project.crew')}</h4>
-                      {info.crew.length === 0 ? (
-                        <div className="faint">{t('common.none')}</div>
-                      ) : (
-                        <table className="data">
-                          <tbody>
-                            {info.crew.map((member, index) => (
-                              <tr key={`${member.role}-${member.name}-${index}`}>
-                                <td>{member.role === '' ? '—' : member.role}</td>
-                                <td>{member.name === '' ? '—' : member.name}</td>
-                              </tr>
+                            {jobFiles.map((file) => (
+                              <FileRow
+                                key={file.id}
+                                file={file}
+                                jobId={selected.id}
+                                dash={t('common.dash')}
+                              />
                             ))}
                           </tbody>
                         </table>
-                      )}
-                    </>
-                  )}
-                </div>
-              ) : jobLogs.length === 0 ? (
-                <div className="faint">{t('common.none')}</div>
-              ) : (
-                <div className="log">
-                  {jobLogs
-                    .slice(-200)
-                    .map((entry, index) => (
-                      <div key={`${entry.at}-${index}`}>
-                        {entry.at.slice(11, 19)} [{entry.level.toUpperCase()}] {entry.message}
                       </div>
-                    ))}
-                </div>
-              )}
-            </Card>
+                    )}
+                  </>
+                )
+              })()}
+            </>
           )}
-        </>
-      )}
+        </section>
+
+        {/* ==================== 右：它的参数是什么 ==================== */}
+        <aside className="monitor__meta">
+          <div className="pane-h">
+            <span className="segmented seg-tight">
+              <button
+                type="button"
+                data-action="tab-info"
+                aria-pressed={tab === 'info'}
+                onClick={() => setTab('info')}
+              >
+                {t('queue.infoTab')}
+              </button>
+              <button
+                type="button"
+                data-action="tab-log"
+                aria-pressed={tab === 'log'}
+                onClick={() => setTab('log')}
+              >
+                {t('queue.logTab')}
+              </button>
+            </span>
+          </div>
+          <div className="monitor__scroll">
+            {selected === null ? (
+              <div className="faint">{t('queue.pickOne')}</div>
+            ) : tab === 'info' ? (
+              <div className="info-pane">
+                {/*
+                 * 外层不能用 <label>：自研下拉的触发器是个 <button>，
+                 * label 会把点击再转发一次给它，等于一点开一关。
+                 */}
+                <div className="field">
+                  <span className="field-label">{t('queue.assignedParent')}</span>
+                  <SelectBox<string>
+                    value={selected.parentProjectId ?? ''}
+                    ariaLabel={t('queue.assignedParent')}
+                    options={parentOptions}
+                    onChange={(next) => void changeParent(next)}
+                  />
+                </div>
+
+                {info === null ? (
+                  <div className="faint">{t('queue.noProjectInfo')}</div>
+                ) : (
+                  <>
+                    <div className="grid-2">
+                      <label className="field">
+                        <span className="field-label">{t('copy.cardLabel')}</span>
+                        <input
+                          className="input"
+                          value={info.cardLabel}
+                          onChange={(event) => saveInfo({ cardLabel: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">{t('project.projectName')}</span>
+                        <input
+                          className="input"
+                          value={info.projectName}
+                          onChange={(event) => saveInfo({ projectName: event.target.value })}
+                        />
+                      </label>
+                    </div>
+
+                    <label className="field">
+                      <span className="field-label">{t('copy.copyNotes')}</span>
+                      <textarea
+                        className="textarea"
+                        maxLength={MAX_COPY_NOTES_LENGTH}
+                        value={info.copyNotes}
+                        onChange={(event) => saveInfo({ copyNotes: event.target.value })}
+                      />
+                      <span className="hint faint" style={{ fontSize: 11 }}>
+                        {t('copy.copyNotesHint')}
+                      </span>
+                      <div className="counter">
+                        {info.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
+                      </div>
+                    </label>
+
+                    <Note>{t('queue.snapshotHint')}</Note>
+
+                    <div className="sec-h">{t('queue.inherited')}</div>
+                    <table className="kv">
+                      <tbody>
+                        <tr>
+                          <th>{t('queue.assignedParent')}</th>
+                          <td>{info.parentProjectName ?? '—'}</td>
+                        </tr>
+                        <tr>
+                          <th>{t('project.shootDay')}</th>
+                          <td>{info.shootDay === '' ? '—' : info.shootDay}</td>
+                        </tr>
+                        <tr>
+                          <th>{t('project.camera')}</th>
+                          <td>{info.camera === '' ? '—' : info.camera}</td>
+                        </tr>
+                        <tr>
+                          <th>{t('project.lenses')}</th>
+                          <td>{describeLenses(info) === '' ? '—' : describeLenses(info)}</td>
+                        </tr>
+                        <tr>
+                          <th>{t('project.notes')}</th>
+                          <td>{info.notes === '' ? '—' : info.notes}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    <div className="sec-h">{t('project.crew')}</div>
+                    {info.crew.length === 0 ? (
+                      <div className="faint">{t('common.none')}</div>
+                    ) : (
+                      <table className="kv">
+                        <tbody>
+                          {info.crew.map((member, index) => (
+                            <tr key={`${member.role}-${member.name}-${index}`}>
+                              <th>{member.role === '' ? '—' : member.role}</th>
+                              <td>{member.name === '' ? '—' : member.name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : jobLogs.length === 0 ? (
+              <div className="faint">{t('common.none')}</div>
+            ) : (
+              <div className="log">
+                {jobLogs.slice(-200).map((entry, index) => (
+                  <div key={`${entry.at}-${index}`}>
+                    {entry.at.slice(11, 19)} [{entry.level.toUpperCase()}] {entry.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
     </div>
   )
 }

@@ -11,9 +11,18 @@ vendor/
 *.tsbuildinfo
 .verify-output/
 
+# —— electron-vite 构建时写在项目根的临时配置 ——
+#     名字里带毫秒时间戳，正常会自己删掉；本机上删除偶尔被拦下，
+#     于是每构建一次就多留一个。它不是源码，也不该被提交。
+electron.vite.config.*.mjs
+
 # —— 系统垃圾 ——
 .DS_Store
 Thumbs.db
+
+# —— macOS 在外置盘（exFAT）上生成的 AppleDouble 伴随文件 ——
+#     注意：`._.DS_Store` 不匹配上面的 `.DS_Store`，必须单独排。
+._*
 
 # —— 本地环境变量，不要提交 ——
 .env

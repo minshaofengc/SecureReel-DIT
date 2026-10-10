@@ -164,14 +164,14 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 ### Licence
 
 Application code is [GPL-3.0-only](LICENSE). No fonts are redistributed. The bundled
-FFmpeg/ffprobe are licensed under GPL-3.0; see
+FFmpeg/ffprobe are licensed under LGPL (LGPL-2.1 on macOS, LGPL-3.0 on Windows); see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ---
 
 ## 简体中文
 
-SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的免费开源摄影机素材拷贝与校验工具。它将多目标拷贝、xxHash64 复核、ASC MHL、PDF/JSON 报告和 HDE 官方工作流放在一个清晰的桌面界面中。
+SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的**免费开源**摄影机素材拷贝与校验工具。它将多目标拷贝、xxHash64 复核、ASC MHL、PDF/JSON 报告和 HDE 官方工作流放在一个清晰的桌面界面中。
 
 ### 核心能力
 
@@ -285,4 +285,4 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 
 ### 许可
 
-应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 GPL-3.0 授权，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 LGPL 授权（macOS 为 LGPL-2.1，Windows 为 LGPL-3.0），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
