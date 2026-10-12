@@ -32,8 +32,22 @@ function makeJob(id = 'job_abcdef1234'): CopyJob {
     isCodExVfs: false,
     parentProjectId: null,
     targets: [
-      { id: 'tgt_1', path: '/Volumes/BackupA', label: 'BackupA', enabled: true, freeBytes: 1000, writable: true },
-      { id: 'tgt_2', path: '/Volumes/BackupB', label: 'BackupB', enabled: true, freeBytes: 2000, writable: true }
+      {
+        id: 'tgt_1',
+        path: '/Volumes/BackupA',
+        label: 'BackupA',
+        enabled: true,
+        freeBytes: 1000,
+        writable: true
+      },
+      {
+        id: 'tgt_2',
+        path: '/Volumes/BackupB',
+        label: 'BackupB',
+        enabled: true,
+        freeBytes: 2000,
+        writable: true
+      }
     ],
     hashAlgorithm: 'xxhash64',
     manifestFormat: 'asc-mhl-2.0',
@@ -105,7 +119,10 @@ describe('任务存取', () => {
     store.insertJob({ ...makeJob('job_done12345'), state: 'completed' })
     store.insertJob({ ...makeJob('job_paused12'), state: 'paused' })
 
-    const ids = store.listResumableJobs().map((job) => job.id).sort()
+    const ids = store
+      .listResumableJobs()
+      .map((job) => job.id)
+      .sort()
     expect(ids).toEqual(['job_paused12', 'job_running1'])
   })
 })
@@ -207,8 +224,22 @@ describe('文件 × 目标结果', () => {
     const fileId = Number(store.getFileRow(job.id, 'a.mov')?.id)
 
     const results: FileTargetResult[] = [
-      { targetId: 'tgt_1', state: 'verified', hash: 'aa', hashMatch: true, bytesCopied: 10, error: null },
-      { targetId: 'tgt_2', state: 'failed', hash: 'bb', hashMatch: false, bytesCopied: 10, error: '不一致' }
+      {
+        targetId: 'tgt_1',
+        state: 'verified',
+        hash: 'aa',
+        hashMatch: true,
+        bytesCopied: 10,
+        error: null
+      },
+      {
+        targetId: 'tgt_2',
+        state: 'failed',
+        hash: 'bb',
+        hashMatch: false,
+        bytesCopied: 10,
+        error: '不一致'
+      }
     ]
     for (const result of results) store.saveFileResult(fileId, job.id, result)
 
@@ -233,7 +264,11 @@ describe('重试失败项', () => {
       { relPath: 'todo.mov', sizeBytes: 400 }
     ])
     store.updateFile(job.id, 'ok.mov', { state: 'verified', bytesCopied: 100 })
-    store.updateFile(job.id, 'bad-a.mov', { state: 'failed', bytesCopied: 200, error: '校验不一致' })
+    store.updateFile(job.id, 'bad-a.mov', {
+      state: 'failed',
+      bytesCopied: 200,
+      error: '校验不一致'
+    })
     store.updateFile(job.id, 'bad-b.mov', { state: 'failed', error: '目标不可用' })
 
     const idOf = (relPath: string): number => Number(store.getFileRow(job.id, relPath)?.id)
@@ -432,7 +467,10 @@ describe('报告修订编号', () => {
       }
     })
 
-    store.updateReportFiles(job.id, 'R001', { html: '/tmp/r/report.html', pdf: '/tmp/r/report.pdf' })
+    store.updateReportFiles(job.id, 'R001', {
+      html: '/tmp/r/report.html',
+      pdf: '/tmp/r/report.pdf'
+    })
     expect(store.listReports(job.id)[0]?.files.pdf).toBe('/tmp/r/report.pdf')
   })
 })
@@ -513,7 +551,10 @@ describe('清单代次', () => {
     store.setManifestIds(job.id, 'c4aaa', null)
     store.setManifestIds(job.id, 'c4bbb', 'c4aaa')
 
-    expect(store.getManifestIds(job.id)).toEqual({ manifestId: 'c4bbb', previousManifestId: 'c4aaa' })
+    expect(store.getManifestIds(job.id)).toEqual({
+      manifestId: 'c4bbb',
+      previousManifestId: 'c4aaa'
+    })
   })
 })
 
@@ -571,8 +612,16 @@ describe('母项目', () => {
     const parent = makeParent()
     store.createParentProject(parent)
 
-    const early = { ...makeJob('job_early00001'), parentProjectId: parent.id, createdAt: '2026-09-15T01:00:00.000Z' }
-    const late = { ...makeJob('job_late000001'), parentProjectId: parent.id, createdAt: '2026-09-15T05:00:00.000Z' }
+    const early = {
+      ...makeJob('job_early00001'),
+      parentProjectId: parent.id,
+      createdAt: '2026-09-15T01:00:00.000Z'
+    }
+    const late = {
+      ...makeJob('job_late000001'),
+      parentProjectId: parent.id,
+      createdAt: '2026-09-15T05:00:00.000Z'
+    }
     const other = { ...makeJob('job_other00001'), parentProjectId: null }
     store.insertJob(early)
     store.insertJob(late)
@@ -741,3 +790,25 @@ describe('任务排序稳定性', () => {
 function emptyProject(): ProjectInfo {
   return emptyProjectInfo()
 }
+
+describe('文件筛选分页', () => {
+  it('路径搜索不解释 SQL 通配符，状态筛选与分页计数一致', () => {
+    const job = makeJob()
+    store.insertJob(job)
+    store.upsertFiles(job.id, [
+      { relPath: 'CARD/Clip_01.MOV', sizeBytes: 1 },
+      { relPath: 'CARD/clip_02.mov', sizeBytes: 1 },
+      { relPath: 'CARD/other.mov', sizeBytes: 1 },
+      { relPath: 'CARD/100%.mov', sizeBytes: 1 }
+    ])
+    store.updateFile(job.id, 'CARD/clip_02.mov', { state: 'failed' })
+    expect(store.countFiles(job.id, { search: 'CLIP_', state: 'pending' })).toBe(1)
+    expect(store.listFiles(job.id, 1, 1, { search: 'clip_' }).map((file) => file.relPath)).toEqual([
+      'CARD/clip_02.mov'
+    ])
+    expect(store.listFiles(job.id, 10, 0, { search: '%' }).map((file) => file.relPath)).toEqual([
+      'CARD/100%.mov'
+    ])
+    expect(store.countFiles(job.id, 'failed')).toBe(1)
+  })
+})

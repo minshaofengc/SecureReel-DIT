@@ -1,3 +1,4 @@
+import { processProxy } from './media/proxy-pipeline'
 /**
  * 端到端验证入口（只在 SECUREREEL_VERIFY=1 时参与构建）。
  *
@@ -15,13 +16,9 @@ import { app, nativeImage } from 'electron'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import type { CopyJob, MediaProbe, ProjectInfo } from '@shared/types'
-import {
-  DEFAULT_SETTINGS,
-  HASH_ALGORITHMS,
-  HASH_ALGORITHM_LABELS
-} from '@shared/types'
+import { DEFAULT_SETTINGS, HASH_ALGORITHMS, HASH_ALGORITHM_LABELS } from '@shared/types'
 import { todayLocalDate } from '@shared/format'
 import { buildAppPaths } from './paths'
 import { Logger } from './logger'
@@ -75,7 +72,9 @@ async function resolveVerifyFfmpeg(): Promise<string | null> {
 
 function check(name: string, ok: boolean, detail: string): void {
   results.push({ name, ok, detail })
-  process.stdout.write(`${ok ? '  PASS' : '  FAIL'}  ${name}${detail === '' ? '' : ` — ${detail}`}\n`)
+  process.stdout.write(
+    `${ok ? '  PASS' : '  FAIL'}  ${name}${detail === '' ? '' : ` — ${detail}`}\n`
+  )
 }
 
 async function hashOf(path: string): Promise<string> {
@@ -247,12 +246,16 @@ async function main(): Promise<number> {
     )
     await writeFile(
       join(source, 'Clips/A004C001.braw'),
-      buildPreviewEmbeddedFile(Buffer.from('\u0000\u0000\u0000\u0008', 'latin1'), previewJpeg, 256 * 1024)
+      buildPreviewEmbeddedFile(
+        Buffer.from('\u0000\u0000\u0000\u0008', 'latin1'),
+        previewJpeg,
+        256 * 1024
+      )
     )
 
     const walk = await walkFiles(source)
-    const videoCount = walk.files.filter((file) =>
-      /\.(mov|r3d|braw)$/i.test(file.relPath) && !/big_generic/.test(file.relPath)
+    const videoCount = walk.files.filter(
+      (file) => /\.(mov|r3d|braw)$/i.test(file.relPath) && !/big_generic/.test(file.relPath)
     ).length
 
     // 期望：上面写进去的文件一个不少，唯独 .DS_Store 被跳过
@@ -270,7 +273,11 @@ async function main(): Promise<number> {
       JSON.stringify(scanned) === JSON.stringify(expectedFiles),
       `${scanned.length} 个文件`
     )
-    check('识别出需要提取首帧的视频素材', videoCount === (proresCreated ? 3 : 2), `${videoCount} 条`)
+    check(
+      '识别出需要提取首帧的视频素材',
+      videoCount === (proresCreated ? 3 : 2),
+      `${videoCount} 条`
+    )
 
     /* ---------- 2. 数据库与探测工具 ---------- */
     process.stdout.write('\n[2] 数据库与媒体工具\n')
@@ -305,7 +312,11 @@ async function main(): Promise<number> {
     )
 
     const reportStore = new ReportStore(paths, logger)
-    const probeRunner = new FfprobeRunner({ logger, userDir: null, bundledDir: null })
+    const probeRunner = new FfprobeRunner({
+      logger,
+      userDir: null,
+      bundledDir: ffmpegPath === null ? null : dirname(ffmpegPath)
+    })
     await probeRunner.refresh()
     check(
       'ffprobe / ffmpeg 就绪',
@@ -324,8 +335,22 @@ async function main(): Promise<number> {
       isCodExVfs: false,
       parentProjectId: null,
       targets: [
-        { id: targetIds[0] as string, path: targetA, label: 'BackupA', enabled: true, freeBytes: null, writable: true },
-        { id: targetIds[1] as string, path: targetB, label: 'BackupB', enabled: true, freeBytes: null, writable: true }
+        {
+          id: targetIds[0] as string,
+          path: targetA,
+          label: 'BackupA',
+          enabled: true,
+          freeBytes: null,
+          writable: true
+        },
+        {
+          id: targetIds[1] as string,
+          path: targetB,
+          label: 'BackupB',
+          enabled: true,
+          freeBytes: null,
+          writable: true
+        }
       ],
       hashAlgorithm: 'xxhash64',
       manifestFormat: 'asc-mhl-2.0',
@@ -347,8 +372,15 @@ async function main(): Promise<number> {
       degradationNotice: null
     }
     store.insertJob(job)
-    store.upsertFiles(job.id, walk.files.map((file) => ({ relPath: file.relPath, sizeBytes: file.sizeBytes })))
-    check('任务与文件清单落库', store.countFiles(job.id) === walk.files.length, `${store.countFiles(job.id)} 行`)
+    store.upsertFiles(
+      job.id,
+      walk.files.map((file) => ({ relPath: file.relPath, sizeBytes: file.sizeBytes }))
+    )
+    check(
+      '任务与文件清单落库',
+      store.countFiles(job.id) === walk.files.length,
+      `${store.countFiles(job.id)} 行`
+    )
 
     /* ---------- 3. 跑真实拷贝引擎（含媒体分析阶段） ---------- */
     process.stdout.write('\n[3] 拷贝引擎（读出即算哈希 + 扇出写 + 重读校验 + 媒体分析）\n')
@@ -359,7 +391,12 @@ async function main(): Promise<number> {
       job,
       store,
       logger,
-      settings: { ...DEFAULT_SETTINGS, maxParallelTargets: 4, extractFrames: true, maxFrameExtractions: 0 },
+      settings: {
+        ...DEFAULT_SETTINGS,
+        maxParallelTargets: 4,
+        extractFrames: true,
+        maxFrameExtractions: 0
+      },
       signal: new AbortController().signal,
       gate: new PauseGate(),
       probeRunner,
@@ -385,6 +422,60 @@ async function main(): Promise<number> {
       [...progressPhases].join(' → ')
     )
 
+    if (proresCreated && ffmpegPath !== null) {
+      process.stdout.write('\n[代理] 验证一次编码、多目标分发与缓存恢复\n')
+      const file = store
+        .listFiles(job.id, 1000)
+        .find((file) => file.relPath.endsWith('A002C001_prores422hq.mov'))!
+      const proxyJob = { ...job, proxyEnabled: true }
+      let proxySnapshot = file.probe?.proxy ?? null
+      const proxy = await processProxy({
+        job: proxyJob,
+        file,
+        ffmpegPath,
+        settings: DEFAULT_SETTINGS,
+        gate: new PauseGate(),
+        signal: new AbortController().signal,
+        onUpdate: (result) => {
+          proxySnapshot = result
+          store!.updateFile(job.id, file.relPath, { probe: { ...file.probe!, proxy: result } })
+        }
+      })
+      check(
+        '真实代理经过解码与各目标重读校验',
+        proxy.ok &&
+          proxy.targets?.length === 2 &&
+          proxy.targets.every((result) => result.state === 'verified'),
+        proxy.reason ?? '两个目标均验证通过'
+      )
+      check(
+        '代理实际尺寸正确',
+        proxy.width === 640 && proxy.height === 360,
+        `${proxy.width}×${proxy.height}`
+      )
+      const recovered = await processProxy({
+        job: proxyJob,
+        file,
+        ffmpegPath,
+        settings: DEFAULT_SETTINGS,
+        gate: new PauseGate(),
+        signal: new AbortController().signal,
+        previous: proxySnapshot,
+        onUpdate: () => undefined
+      })
+      check('已验证缓存及代理可恢复复用', recovered.ok, recovered.reason ?? '恢复成功')
+      const verifyProxy = await processProxy({
+        job: { ...proxyJob, mode: 'verify' },
+        file,
+        ffmpegPath,
+        settings: DEFAULT_SETTINGS,
+        gate: new PauseGate(),
+        signal: new AbortController().signal,
+        onUpdate: () => undefined
+      })
+      check('仅校验模式不会生成代理', verifyProxy.status === 'skipped', verifyProxy.reason ?? '')
+    }
+
     /* ---------- 4. 逐字节比对目标盘内容 ---------- */
     process.stdout.write('\n[4] 目标盘内容逐字节比对\n')
     let byteIdentical = true
@@ -396,7 +487,11 @@ async function main(): Promise<number> {
         }
       }
     }
-    check('两个目标盘的内容都与源盘逐字节一致', byteIdentical, `${walk.files.length} 个文件 × 2 个目标`)
+    check(
+      '两个目标盘的内容都与源盘逐字节一致',
+      byteIdentical,
+      `${walk.files.length} 个文件 × 2 个目标`
+    )
 
     let partialLeft = 0
     for (const target of [targetA, targetB]) {
@@ -526,11 +621,7 @@ async function main(): Promise<number> {
 
     const html = await readFile(htmlPath, 'utf8')
     const imgTags = (html.match(/<img src="frames\//g) ?? []).length
-    check(
-      'report.html 里嵌入了首帧画面',
-      imgTags >= 2,
-      `${imgTags} 张图，HTML ${html.length} 字节`
-    )
+    check('report.html 里嵌入了首帧画面', imgTags >= 2, `${imgTags} 张图，HTML ${html.length} 字节`)
     check(
       'report.html 自包含且包含项目信息',
       html.includes('端到端验证') && html.includes('张三') && !/src=["']https?:/i.test(html),
@@ -678,7 +769,11 @@ async function main(): Promise<number> {
       now: new Date(),
       writeManifestToTargets: true
     })
-    check('第二次生成得到新修订而非覆盖', second.revision.revision === 'R002', second.revision.revision)
+    check(
+      '第二次生成得到新修订而非覆盖',
+      second.revision.revision === 'R002',
+      second.revision.revision
+    )
     check(
       'R001 的报告逐字节未被改动',
       r1HtmlHashBefore === (await hashOf(htmlPath)),
@@ -731,7 +826,11 @@ async function main(): Promise<number> {
     store.saveProjectInfo(job.id, snapshot)
 
     const children = store.listJobsByParent(parentId)
-    check('按母项目能查到名下任务', children.length === 1 && children[0]?.id === job.id, `${children.length} 个`)
+    check(
+      '按母项目能查到名下任务',
+      children.length === 1 && children[0]?.id === job.id,
+      `${children.length} 个`
+    )
     check(
       '项目信息里存了母项目名的快照',
       store.getProjectInfo(job.id)?.parentProjectName === '母亲',
@@ -818,13 +917,17 @@ async function main(): Promise<number> {
     store.createParentProject({
       id: parentId,
       name: '母亲',
-      details: (parent?.details ?? project),
+      details: parent?.details ?? project,
       createdAt: new Date().toISOString(),
       updatedAt: null
     })
     store.updateJob(job.id, { parentProjectId: parentId })
     store.saveProjectInfo(job.id, { ...snapshot, parentProjectName: '母亲' })
-    check('演示数据已恢复（便于人工检查分组与归属）', store.countJobsByParent(parentId) === 1, '1 个任务')
+    check(
+      '演示数据已恢复（便于人工检查分组与归属）',
+      store.countJobsByParent(parentId) === 1,
+      '1 个任务'
+    )
     /* ---------- 汇总 ---------- */
 
     const failed = results.filter((item) => !item.ok)

@@ -11,6 +11,8 @@
 import { constants, type Dirent } from 'node:fs'
 import {
   access,
+  link,
+  lstat,
   mkdir,
   open,
   readdir,
@@ -23,6 +25,7 @@ import {
 import { basename, dirname, join, posix, relative, sep, win32 } from 'node:path'
 import {
   executableExtensions,
+  proxyPublicationCommand,
   HOST,
   type HostPlatform,
   pathListSeparator,
@@ -194,7 +197,11 @@ export function normalizeRelPath(relPath: string): string {
 }
 
 /** 把规范化后的相对路径还原成绝对路径，并再次确认没有逃逸。 */
-export function resolveInside(root: string, relPath: string, platform: HostPlatform = HOST): string {
+export function resolveInside(
+  root: string,
+  relPath: string,
+  platform: HostPlatform = HOST
+): string {
   const normalized = normalizeRelPath(relPath)
   const pathModule = pathModuleOf(platform)
   const base = stripTrailingSeparators(root, platform)
@@ -240,7 +247,13 @@ export interface WalkOptions {
 
 /** macOS 上应当忽略的文件名（先按大小写不敏感匹配）。 */
 const SYSTEM_FILE_NAMES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized'])
-const SYSTEM_DIR_NAMES = new Set(['.spotlight-v100', '.trashes', '.fseventsd', '.documentrevisions-v100', '.temporaryitems'])
+const SYSTEM_DIR_NAMES = new Set([
+  '.spotlight-v100',
+  '.trashes',
+  '.fseventsd',
+  '.documentrevisions-v100',
+  '.temporaryitems'
+])
 
 function isSkippable(name: string, isDirectory: boolean): boolean {
   const lower = name.toLowerCase()
@@ -320,7 +333,9 @@ export async function walkFiles(root: string, options: WalkOptions = {}): Promis
   }
 
   if (truncated) {
-    warnings.push(`文件数量超过 ${maxFiles} 上限，已提前停止遍历。请确认选择的是素材盘而不是整个系统盘。`)
+    warnings.push(
+      `文件数量超过 ${maxFiles} 上限，已提前停止遍历。请确认选择的是素材盘而不是整个系统盘。`
+    )
   }
 
   return { files, totalBytes, warnings }
@@ -425,7 +440,43 @@ export async function allocateFile(path: string, size: number): Promise<void> {
  * 中途断电 / 拔盘时留下的都是 `.securereel-partial`，一眼可辨。
  */
 export async function commitPartial(partial: string, finalPath: string): Promise<void> {
-  await rename(partial, finalPath)
+  const conflict = (): Error => Object.assign(new Error('已有同名文件，未覆盖'), { code: 'EEXIST' })
+  try {
+    await lstat(finalPath)
+    throw conflict()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  try {
+    await link(partial, finalPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw conflict()
+    if (
+      !['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV'].includes(
+        (error as NodeJS.ErrnoException).code ?? ''
+      )
+    )
+      throw error
+    const { runCommand, resolveExecutable } = await import('./exec')
+    const command = proxyPublicationCommand(partial, finalPath)
+    const executable = await resolveExecutable(command.executable)
+    if (executable === null) throw new Error('安全发布工具不可用')
+    const result = await runCommand(executable, command.args, {
+      ...(command.env ? { env: { ...process.env, ...command.env } } : {})
+    })
+    if (
+      result.code !== 0 ||
+      result.spawnError !== null ||
+      result.timedOut ||
+      (await pathExists(partial))
+    ) {
+      if (await pathExists(finalPath)) throw conflict()
+      throw new Error('正式文件安全发布失败')
+    }
+    if (!(await lstat(finalPath)).isFile()) throw conflict()
+    return
+  }
+  await unlink(partial)
 }
 
 /** 写入完成后把目录元数据刷到磁盘，拔盘前这一步很重要。 */
@@ -468,7 +519,11 @@ export async function volumeUsage(path: string): Promise<VolumeUsage | null> {
 }
 
 /** 两个路径是否在同一个卷上（用设备号判断）。 */
-export async function isSameVolume(a: string, b: string, platform: HostPlatform = HOST): Promise<boolean> {
+export async function isSameVolume(
+  a: string,
+  b: string,
+  platform: HostPlatform = HOST
+): Promise<boolean> {
   if (platform === 'win32') {
     // 盘符不同 ⇒ 一定是不同卷，不必去 stat（对刚拔掉/刚插入的盘也更稳）。
     // 盘符相同的情况仍交给下面的 dev 比较，好让「同一盘符下的不同装载点」
@@ -653,7 +708,9 @@ export async function whichInPath(
   const pathModule = pathModuleOf(platform)
   const separator = pathListSeparator(platform)
   // 调用方已经写了后缀（例如 `ffprobe.exe`）就不要再追加一次
-  const candidates = name.includes('.') ? [name] : executableExtensions(platform, env).map((ext) => `${name}${ext}`)
+  const candidates = name.includes('.')
+    ? [name]
+    : executableExtensions(platform, env).map((ext) => `${name}${ext}`)
 
   for (const dir of rawPath.split(separator)) {
     if (dir === '') continue
@@ -671,7 +728,10 @@ export async function whichInPath(
  * POSIX 看文件模式位（X_OK）；Windows 没有执行位，X_OK 在那里近似 F_OK、
  * 等于没检查 —— 只能按 `PATHEXT` 的扩展名约定判断。
  */
-export async function isExecutableFile(path: string, platform: HostPlatform = HOST): Promise<boolean> {
+export async function isExecutableFile(
+  path: string,
+  platform: HostPlatform = HOST
+): Promise<boolean> {
   try {
     const info = await stat(path)
     if (!info.isFile()) return false

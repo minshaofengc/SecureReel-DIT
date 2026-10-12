@@ -28,7 +28,6 @@ import { dirname, join, posix } from 'node:path'
 import type { ProxyCodec, ProxyProfile, ProxyResolution } from '@shared/types'
 import { PROXY_RESOLUTION_HEIGHT } from '@shared/types'
 import { runCommand } from '@main/exec'
-import { extensionOf } from './formats'
 
 /** ProRes 规格 → `-profile:v` 数值。 */
 const PROFILE_NUMBER: Record<ProxyProfile, string> = {
@@ -76,9 +75,7 @@ export const PROXY_FOLDER = 'Proxies'
 export function proxyRelPathFor(sourceRelPath: string, codec: ProxyCodec = 'prores'): string {
   const dir = posix.dirname(sourceRelPath)
   const base = posix.basename(sourceRelPath)
-  const ext = extensionOf(base)
-  const stem = ext === '' ? base : base.slice(0, -(ext.length + 1))
-  const fileName = `${stem}.${proxyExtensionFor(codec)}`
+  const fileName = `${base}.${proxyExtensionFor(codec)}`
   const parent = dir === '.' || dir === '' ? '' : dir
   return posix.join(PROXY_FOLDER, parent, fileName)
 }
@@ -152,7 +149,7 @@ export function buildProxyArgs(
   const { profile, resolution, codec } = options
   const vf = buildVideoFilter(resolution, options.lutPath)
 
-  const shared = ['-nostdin', '-y', '-i', input, '-vf', vf, '-nostats']
+  const shared = ['-nostdin', '-n', '-i', input, '-vf', vf, '-nostats']
 
   if (codec === 'prores') {
     return [

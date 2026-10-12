@@ -11,12 +11,21 @@ import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type { AppInfo, EncodersInfo } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
-import type { AppSettings, MainEvent, ProjectDetails, SourceDrive } from '@shared/types'
+import type {
+  AppSettings,
+  FileQueryFilter,
+  ReportTheme,
+  MainEvent,
+  ProjectDetails,
+  SourceDrive
+} from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { msg, type MsgKey } from '@shared/messages'
 import { APP_VERSION } from '@shared/version'
 import {
   absolutePathSchema,
+  fileQuerySchema,
+  reportRequestSchema,
   createJobSchema,
   createParentProjectSchema,
   jobIdSchema,
@@ -75,7 +84,10 @@ function register<T>(channel: string, handler: Handler<T>): void {
   })
 }
 
-function parseOrThrow<T>(schema: { safeParse: (value: unknown) => { success: boolean; data?: T; error?: unknown } }, value: unknown): T {
+function parseOrThrow<T>(
+  schema: { safeParse: (value: unknown) => { success: boolean; data?: T; error?: unknown } },
+  value: unknown
+): T {
   const result = schema.safeParse(value)
   if (!result.success || result.data === undefined) {
     // 只把第一条校验信息交出去，不泄露架构细节
@@ -159,7 +171,7 @@ export function registerIpcHandlers(services: Services): void {
     const saved = services.saveSettings(merged)
     // 用户改了 ffmpeg 目录就重新探测一次
     if ('ffmpegDir' in patch) {
-      void probeRunner.refresh()
+      void probeRunner.refresh(patch.ffmpegDir)
     }
     if ('arrirawHdePath' in patch) {
       void hde.status(true)
@@ -204,8 +216,7 @@ export function registerIpcHandlers(services: Services): void {
             success: true,
             data: {
               paths: record.paths as string[],
-              requiredBytes:
-                typeof record.requiredBytes === 'number' ? record.requiredBytes : null
+              requiredBytes: typeof record.requiredBytes === 'number' ? record.requiredBytes : null
             }
           }
         }
@@ -220,11 +231,13 @@ export function registerIpcHandlers(services: Services): void {
 
   register(IPC.volumesEject, async (payload) => {
     const { path } = parseOrThrow<{ path: string }>(reportPathSchema, payload)
-    const description = await describeVolume(path)
-    if (description === null) throw new Error(m('ipc.pathNotVolume'))
-    const result = await ejectVolume(description.mountPoint, services.getSettings().language)
-    if (!result.ok) throw new Error(result.message)
-    return true
+    return jobManager.withIdleEjection(async () => {
+      const description = await describeVolume(path)
+      if (description === null) throw new Error(m('ipc.pathNotVolume'))
+      const result = await ejectVolume(description.mountPoint, services.getSettings().language)
+      if (!result.ok) throw new Error(result.message)
+      return true
+    })
   })
 
   /* ---------------- 窗口外观 ---------------- */
@@ -263,7 +276,10 @@ export function registerIpcHandlers(services: Services): void {
     const window = services.getMainWindow()
     const options = {
       title: title ?? (kind === 'directory' ? '选择目录' : '选择文件'),
-      properties: kind === 'directory' ? (['openDirectory', 'createDirectory'] as const) : (['openFile'] as const)
+      properties:
+        kind === 'directory'
+          ? (['openDirectory', 'createDirectory'] as const)
+          : (['openFile'] as const)
     }
     const result =
       window === null
@@ -290,11 +306,24 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   register(IPC.jobFiles, (payload) => {
-    const { jobId, limit, offset } = parseOrThrow<{ jobId: string; limit: number; offset: number }>(
-      { safeParse: filesQuery },
+    const { jobId, limit, offset, filter } = parseOrThrow<{
+      jobId: string
+      limit: number
+      offset: number
+      filter: FileQueryFilter
+    }>(fileQuerySchema, payload)
+    return store.listFiles(jobId, limit, offset, filter)
+  })
+  register(IPC.jobFileCount, (payload) => {
+    const { jobId, filter } = parseOrThrow<{ jobId: string; filter: FileQueryFilter }>(
+      fileQuerySchema,
       payload
     )
-    return store.listFiles(jobId, limit, offset)
+    return store.countFiles(jobId, filter)
+  })
+  register(IPC.jobRetryProxies, (payload) => {
+    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
+    return jobManager.retryProxies(jobId)
   })
 
   register(IPC.jobStart, async (payload) => {
@@ -380,15 +409,16 @@ export function registerIpcHandlers(services: Services): void {
       etaFinishAt: null,
       speedHistory: [],
       analyzeDone: 0,
-      analyzeTotal: 0
+      analyzeTotal: 0,
+      proxy: store.proxyProgress(jobId)
     }
   })
 
   register(IPC.jobSetParent, (payload) => {
-    const { jobId, parentProjectId } = parseOrThrow<{ jobId: string; parentProjectId: string | null }>(
-      setJobParentSchema,
-      payload
-    )
+    const { jobId, parentProjectId } = parseOrThrow<{
+      jobId: string
+      parentProjectId: string | null
+    }>(setJobParentSchema, payload)
     if (parentProjectId !== null && store.getParentProject(parentProjectId) === null) {
       throw new Error(m('ipc.parentMissing'))
     }
@@ -398,7 +428,8 @@ export function registerIpcHandlers(services: Services): void {
     // 所以把快照一并更新；已经生成过的旧报告不受影响（那是当时的实况）。
     const info = store.getProjectInfo(jobId)
     if (info !== null) {
-      const name = parentProjectId === null ? null : store.getParentProject(parentProjectId)?.name ?? null
+      const name =
+        parentProjectId === null ? null : (store.getParentProject(parentProjectId)?.name ?? null)
       store.saveProjectInfo(jobId, { ...info, parentProjectName: name })
     }
 
@@ -417,7 +448,10 @@ export function registerIpcHandlers(services: Services): void {
   register(IPC.projectSave, (payload) => {
     const body = payload as { jobId?: unknown; info?: unknown }
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, { jobId: body?.jobId })
-    const info = parseOrThrow<Parameters<Store['saveProjectInfo']>[1]>(projectInfoSchema, body?.info)
+    const info = parseOrThrow<Parameters<Store['saveProjectInfo']>[1]>(
+      projectInfoSchema,
+      body?.info
+    )
     const saved = { ...info, updatedAt: new Date().toISOString() }
     store.saveProjectInfo(jobId, saved)
     return saved
@@ -450,10 +484,10 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   register(IPC.parentCreate, (payload) => {
-    const request = parseOrThrow<{ name: string; details: Parameters<Store['createParentProject']>[0]['details'] }>(
-      createParentProjectSchema,
-      payload
-    )
+    const request = parseOrThrow<{
+      name: string
+      details: Parameters<Store['createParentProject']>[0]['details']
+    }>(createParentProjectSchema, payload)
     const now = new Date().toISOString()
     const project = {
       id: newParentProjectId(),
@@ -468,10 +502,11 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   register(IPC.parentUpdate, (payload) => {
-    const request = parseOrThrow<{ parentProjectId: string; name?: string; details?: ProjectDetails }>(
-      updateParentProjectSchema,
-      payload
-    )
+    const request = parseOrThrow<{
+      parentProjectId: string
+      name?: string
+      details?: ProjectDetails
+    }>(updateParentProjectSchema, payload)
     const updated = store.updateParentProject(request.parentProjectId, {
       ...(request.name === undefined ? {} : { name: request.name }),
       ...(request.details === undefined ? {} : { details: request.details }),
@@ -505,8 +540,19 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   register(IPC.reportsRegenerate, async (payload) => {
-    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
-    return jobManager.generateReports(jobId)
+    const { jobId, theme } = parseOrThrow<{ jobId: string; theme?: ReportTheme }>(
+      reportRequestSchema,
+      payload
+    )
+    return jobManager.generateReports(jobId, undefined, theme)
+  })
+
+  register(IPC.reportsPreview, (payload) => {
+    const { jobId, theme } = parseOrThrow<{ jobId: string; theme?: ReportTheme }>(
+      reportRequestSchema,
+      payload
+    )
+    return jobManager.previewReport(jobId, theme ?? store.getSettings().reportTheme)
   })
 
   register(IPC.reportsReveal, (payload) => {
@@ -570,14 +616,14 @@ export function registerIpcHandlers(services: Services): void {
 
   register<string | null>(IPC.logsExportDiagnostics, async () => {
     const now = new Date()
-    const stamp = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0')
-    ].join('') + '-' + [
-      String(now.getHours()).padStart(2, '0'),
-      String(now.getMinutes()).padStart(2, '0')
-    ].join('')
+    const stamp =
+      [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0')
+      ].join('') +
+      '-' +
+      [String(now.getHours()).padStart(2, '0'), String(now.getMinutes()).padStart(2, '0')].join('')
     const { canceled, filePath } = await dialog.showSaveDialog({
       title: '导出诊断包',
       defaultPath: join(app.getPath('documents'), `SecureReel-DIT-诊断-${stamp}.zip`),
@@ -596,26 +642,15 @@ export function registerIpcHandlers(services: Services): void {
 
 /* ---------------- 轻量内联校验 ---------------- */
 
-const idOnly = (value: unknown): { success: boolean; data?: { jobId: string }; error?: unknown } => {
+const idOnly = (
+  value: unknown
+): { success: boolean; data?: { jobId: string }; error?: unknown } => {
   const candidate = (value as { jobId?: unknown })?.jobId
   const parsed = jobIdSchema.safeParse(candidate)
   if (!parsed.success) {
     return { success: false, error: { issues: [{ message: '任务 ID 不合法' }] } }
   }
   return { success: true, data: { jobId: parsed.data } }
-}
-
-const filesQuery = (
-  value: unknown
-): { success: boolean; data?: { jobId: string; limit: number; offset: number }; error?: unknown } => {
-  const record = value as { jobId?: unknown; limit?: unknown; offset?: unknown }
-  const parsed = jobIdSchema.safeParse(record?.jobId)
-  if (!parsed.success) {
-    return { success: false, error: { issues: [{ message: '任务 ID 不合法' }] } }
-  }
-  const limit = typeof record.limit === 'number' ? Math.min(Math.max(1, record.limit), 5000) : 500
-  const offset = typeof record.offset === 'number' ? Math.max(0, record.offset) : 0
-  return { success: true, data: { jobId: parsed.data, limit, offset } }
 }
 
 /** 广播事件到所有窗口。 */
@@ -638,9 +673,7 @@ export function shortLabel(path: string): string {
  * 而且拼接点散落两处时很容易出现"同一句话说了两遍"。
  * 文案一律归渲染层，主进程只负责给事实。
  */
-export function describeDatabaseQuarantine(
-  store: Store
-): { backupPath: string | null } | null {
+export function describeDatabaseQuarantine(store: Store): { backupPath: string | null } | null {
   const record = store.quarantined
   if (record === null) return null
   return { backupPath: record.backupPath }

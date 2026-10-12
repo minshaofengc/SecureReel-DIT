@@ -5,6 +5,8 @@
  */
 import type {
   AppSettings,
+  FileQueryFilter,
+  ReportTheme,
   CopyJob,
   CopyJobFile,
   CopyTarget,
@@ -44,6 +46,8 @@ export const IPC = {
   jobList: 'job:list',
   jobGet: 'job:get',
   jobFiles: 'job:files',
+  jobFileCount: 'job:file-count',
+  jobRetryProxies: 'job:retry-proxies',
   jobStart: 'job:start',
   jobPause: 'job:pause',
   jobResume: 'job:resume',
@@ -69,6 +73,7 @@ export const IPC = {
 
   reportsList: 'reports:list',
   reportsRegenerate: 'reports:regenerate',
+  reportsPreview: 'reports:preview',
   reportsReveal: 'reports:reveal',
   reportsOpen: 'reports:open',
 
@@ -184,8 +189,15 @@ export interface SecureReelApi {
     create(req: CreateJobRequest): Promise<IpcResult<CreateJobResponse>>
     list(): Promise<IpcResult<CopyJob[]>>
     get(jobId: string): Promise<IpcResult<CopyJob>>
-    files(jobId: string, limit?: number, offset?: number): Promise<IpcResult<CopyJobFile[]>>
+    files(
+      jobId: string,
+      limit?: number,
+      offset?: number,
+      filter?: FileQueryFilter
+    ): Promise<IpcResult<CopyJobFile[]>>
     /** 读取任务当前已落库的进度（任务结束后进度事件不再推送，界面需要主动拉） */
+    fileCount(jobId: string, filter?: FileQueryFilter): Promise<IpcResult<number>>
+    retryProxies(jobId: string): Promise<IpcResult<CopyJob>>
     progress(jobId: string): Promise<IpcResult<JobProgress>>
     start(jobId: string): Promise<IpcResult<CopyJob>>
     pause(jobId: string): Promise<IpcResult<CopyJob>>
@@ -237,7 +249,8 @@ export interface SecureReelApi {
   }
   reports: {
     list(jobId: string): Promise<IpcResult<ReportRevision[]>>
-    regenerate(jobId: string): Promise<IpcResult<ReportSummary>>
+    regenerate(jobId: string, theme?: ReportTheme): Promise<IpcResult<ReportSummary>>
+    preview(jobId: string, theme: ReportTheme): Promise<IpcResult<string>>
     reveal(path: string): Promise<IpcResult<boolean>>
     open(path: string): Promise<IpcResult<boolean>>
   }

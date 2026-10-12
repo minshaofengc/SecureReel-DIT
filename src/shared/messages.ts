@@ -55,6 +55,7 @@ export type MsgKey =
   // ---- CopyEngine：命名冲突 ----
   | 'engine.conflictSizeDiff'
   | 'engine.conflictSizeDiffLog'
+  | 'engine.conflictUnsafeEntry'
   | 'engine.conflictSameSize'
   | 'engine.conflictSameSizeLog'
   // ---- CopyEngine：校验 ----
@@ -265,6 +266,10 @@ const MESSAGES: Record<MsgKey, Record<Language, string>> = {
   'engine.conflictSizeDiffLog': {
     'zh-CN': '「{label}」上已存在同名不同大小的文件，已跳过该文件（目标盘继续使用）：{relPath}',
     en: '"{label}" already has a same-name file of a different size; this file was skipped (the target stays in use): {relPath}'
+  },
+  'engine.conflictUnsafeEntry': {
+    'zh-CN':'{prefix}（目标位置已被占用，或不是普通文件）。已保留原内容；该文件在此目标上未拷贝，其他文件继续。',
+    en:'{prefix} (the destination is occupied or is not a regular file). The existing entry was kept; this file was not copied to this target while other files continue.'
   },
   'engine.conflictSameSize': {
     'zh-CN':

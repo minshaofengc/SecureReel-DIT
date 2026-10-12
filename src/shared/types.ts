@@ -373,6 +373,11 @@ export interface MediaProbe {
 
 /** 一条素材的代理生成结果。 */
 export interface MediaProxyResult {
+  status?: 'pending' | 'running' | 'verified' | 'failed' | 'skipped'
+  targets?: ProxyTargetResult[]
+  cachePath?: string | null
+  cacheHash?: string | null
+  fingerprint?: string | null
   /** 相对目标盘的代理文件路径；失败时为 null */
   relPath: string | null
   ok: boolean
@@ -389,6 +394,14 @@ export interface MediaProxyResult {
   height: number | null
   /** 实际套用的 LUT（未套为 null）——报告如实标注"这条代理套了哪个 LUT" */
   lutPath: string | null
+}
+
+export interface ProxyTargetResult {
+  targetId: string
+  relPath: string | null
+  state: 'pending' | 'running' | 'verified' | 'failed' | 'skipped'
+  error: string | null
+  hash?: string | null
 }
 
 export interface CopyJobFile {
@@ -553,9 +566,18 @@ export interface JobProgress {
   /** 素材分析进度（phase 为 analyzing 时有效） */
   analyzeDone: number
   analyzeTotal: number
+  proxy?: { total: number; done: number; failed: number; active: string | null }
 }
 
-export const JOB_PHASES = ['copying', 'analyzing', 'finalizing', 'done'] as const
+export const JOB_PHASES = [
+  'copying',
+  'verifying',
+  'analyzing',
+  'proxying',
+  'reporting',
+  'finalizing',
+  'done'
+] as const
 export type JobPhase = (typeof JOB_PHASES)[number]
 
 /* ------------------------------------------------------------------ *
@@ -648,7 +670,25 @@ export interface ReportTargetSummary {
   bytesCopied: number
 }
 
+export const REPORT_THEMES = ['delivery', 'technical', 'print'] as const
+export type ReportTheme = (typeof REPORT_THEMES)[number]
+
+export interface ReportDelivery {
+  targetId: string
+  label: string
+  state: 'published' | 'failed'
+  path?: string
+  reason?: string
+}
+
+export interface FileQueryFilter {
+  search?: string
+  state?: FileState
+}
+
 export interface ReportSummary {
+  delivery?: ReportDelivery[]
+  theme?: ReportTheme
   jobId: string
   jobName: string
   revision: string
@@ -674,6 +714,8 @@ export interface ReportSummary {
 }
 
 export interface ReportRevision {
+  delivery?: ReportDelivery[]
+  theme?: ReportTheme
   id: number
   jobId: string
   /** R001、R002 …… 单调递增，旧修订永不被覆盖 */
@@ -770,6 +812,7 @@ export const LANGUAGES = ['zh-CN', 'en'] as const
 export type Language = (typeof LANGUAGES)[number]
 
 export interface AppSettings {
+  reportTheme: ReportTheme
   language: Language
   themeId: ThemeId
   themeMode: ThemeMode
@@ -917,17 +960,36 @@ export type PerformanceMode = (typeof PERFORMANCE_MODES)[number]
 /** 档位 → 各细项的取值。`AppSettings` 里对应的字段与之同名。 */
 export const PERFORMANCE_MODE_PRESETS: Record<
   PerformanceMode,
-  Pick<AppSettings, 'maxParallelTargets' | 'resumePartialFiles' | 'ejectAfterCopy' | 'shutdownAfterCopy'>
+  Pick<
+    AppSettings,
+    'maxParallelTargets' | 'resumePartialFiles' | 'ejectAfterCopy' | 'shutdownAfterCopy'
+  >
 > = {
   /** 静默/省心：少占资源、拷完自动弹出。适合后台跑，不打断别的活。 */
-  quiet: { maxParallelTargets: 2, resumePartialFiles: true, ejectAfterCopy: true, shutdownAfterCopy: false },
+  quiet: {
+    maxParallelTargets: 2,
+    resumePartialFiles: true,
+    ejectAfterCopy: true,
+    shutdownAfterCopy: false
+  },
   /** 标准：均衡，默认值。 */
-  standard: { maxParallelTargets: 4, resumePartialFiles: true, ejectAfterCopy: false, shutdownAfterCopy: false },
+  standard: {
+    maxParallelTargets: 4,
+    resumePartialFiles: true,
+    ejectAfterCopy: false,
+    shutdownAfterCopy: false
+  },
   /** 极速：所有目标盘并行拉满，适合急着交片。 */
-  turbo: { maxParallelTargets: 8, resumePartialFiles: true, ejectAfterCopy: false, shutdownAfterCopy: false }
+  turbo: {
+    maxParallelTargets: 8,
+    resumePartialFiles: true,
+    ejectAfterCopy: false,
+    shutdownAfterCopy: false
+  }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  reportTheme: 'delivery',
   language: 'zh-CN',
   themeId: 'mono',
   themeMode: 'dark',
@@ -977,7 +1039,8 @@ export interface HdeToolStatus {
   requiresUserConfirmation: boolean
 }
 
-export type HdeCameraModel = 'alexa-mini' | 'alexa-mini-lf' | 'alexa-35' | 'alexa-35-xtreme' | 'alexa-265' | 'unknown'
+export type HdeCameraModel =
+  'alexa-mini' | 'alexa-mini-lf' | 'alexa-35' | 'alexa-35-xtreme' | 'alexa-265' | 'unknown'
 
 export interface HdeCapabilityDecision {
   model: HdeCameraModel

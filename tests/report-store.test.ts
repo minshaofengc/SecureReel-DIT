@@ -48,7 +48,9 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: CopyJob; targetPath: string }> {
+async function seedJob(
+  state: CopyJob['state'] = 'completed'
+): Promise<{ job: CopyJob; targetPath: string }> {
   const targetPath = join(root, 'BackupA')
   await mkdir(targetPath, { recursive: true })
 
@@ -62,7 +64,14 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
     isCodExVfs: false,
     parentProjectId: null,
     targets: [
-      { id: 'tgt_1', path: targetPath, label: 'BackupA', enabled: true, freeBytes: null, writable: true }
+      {
+        id: 'tgt_1',
+        path: targetPath,
+        label: 'BackupA',
+        enabled: true,
+        freeBytes: null,
+        writable: true
+      }
     ],
     hashAlgorithm: 'xxhash64',
     manifestFormat: 'asc-mhl-2.0',
@@ -111,7 +120,12 @@ async function seedJob(state: CopyJob['state'] = 'completed'): Promise<{ job: Co
     }
     store.saveFileResult(fileId, job.id, result)
   }
-  store.updateTargetProgress(job.id, 'tgt_1', { state: 'completed', filesDone: 2, filesFailed: 1, bytesCopied: 300 })
+  store.updateTargetProgress(job.id, 'tgt_1', {
+    state: 'completed',
+    filesDone: 2,
+    filesFailed: 1,
+    bytesCopied: 300
+  })
 
   return { job, targetPath }
 }
@@ -396,7 +410,10 @@ describe('report.html 自包含性', () => {
   })
 
   it('只有一颗镜头时不带序号', async () => {
-    const { revision } = await reviseWith({ ...PROJECT, lenses: [{ model: 'Cooke S7/i', detail: '40mm' }] })
+    const { revision } = await reviseWith({
+      ...PROJECT,
+      lenses: [{ model: 'Cooke S7/i', detail: '40mm' }]
+    })
     const html = await readFile(revision.files.html as string, 'utf8')
 
     expect(html).toContain('<th>镜头</th>')
@@ -616,4 +633,255 @@ describe('报告复制到目标盘', () => {
     expect(result.published).toEqual([])
     expect(await readdir(targetPath)).not.toContain('SecureReel')
   })
+})
+
+describe('2.0.7 报告配置', () => {
+  it('空白项目字段与空白人员不出现在报告里', async () => {
+    const { revision } = await reviseWith({
+      ...PROJECT,
+      projectName: ' ',
+      shootDay: ' ',
+      camera: ' ',
+      cardLabel: ' ',
+      parentProjectName: ' ',
+      lenses: [],
+      crew: [{ role: ' ', name: ' ' }],
+      notes: '',
+      copyNotes: ''
+    })
+    const html = await readFile(revision.files.html as string, 'utf8')
+    expect(html).not.toContain('<h2>项目信息</h2>')
+    expect(html).not.toContain('<h2>职务与所属人</h2>')
+    expect(html).not.toContain('<th>摄影机</th>')
+  })
+
+  it('保存所选主题并在不同主题修订间保留旧文件', async () => {
+    const { job } = await seedJob()
+    const input = {
+      job,
+      project: PROJECT,
+      store,
+      sourceLabel: 'A002',
+      targets: job.targets,
+      hostname: 'host',
+      toolName: 'SecureReel',
+      toolVersion: '2.0.7',
+      now: NOW,
+      writeManifestToTargets: false
+    }
+    const first = await reportStore.writeRevision({ ...input, theme: 'technical' })
+    const before = await hashOfFile(first.revision.files.html as string)
+    const second = await reportStore.writeRevision({ ...input, theme: 'print' })
+    expect(store.listReports(job.id).map((item) => item.theme)).toEqual(['print', 'technical'])
+    expect(await readFile(second.revision.files.html as string, 'utf8')).toContain(
+      'data-report-theme="print"'
+    )
+    expect(await hashOfFile(first.revision.files.html as string)).toBe(before)
+  })
+
+  it('交付说明不列出未生成 PDF，也不把 CSV 描述成 ASC MHL', async () => {
+    const { job, targetPath } = await seedJob()
+    const csvJob = { ...job, manifestFormat: 'csv' as const }
+    const { revision } = await writeRevision(csvJob)
+    await reportStore.publishToTargets({
+      job: csvJob,
+      revision,
+      targets: job.targets,
+      hostname: 'host',
+      toolName: 'SecureReel',
+      toolVersion: '2.0.7',
+      now: NOW
+    })
+    const note = await readFile(
+      join(targetPath, 'SecureReel', `${job.name}_R001`, '交付说明.txt'),
+      'utf8'
+    )
+    expect(note).not.toContain('report.pdf')
+    expect(note).not.toContain('ascmhl/')
+    expect(note).toContain('CSV')
+    expect(note).toContain('原始素材')
+  })
+})
+
+it('代理在 HTML 与交付说明分别列出每个目标的成功和失败', async () => {
+  const { job, targetPath } = await seedJob()
+  store.updateFile(job.id, 'Clips/a.mov', {
+    probe: {
+      available: true,
+      reason: null,
+      capturedAt: null,
+      durationSeconds: 1,
+      timecode: null,
+      codec: 'prores',
+      width: 1920,
+      height: 1080,
+      frameRate: '25',
+      firstFrame: null,
+      lastFrame: null,
+      stillFrames: [],
+      format: 'ProRes',
+      formatFamily: 'prores',
+      frameSource: 'none',
+      vendorTool: null,
+      note: null,
+      proxy: {
+        status: 'failed',
+        ok: false,
+        reason: '部分目标代理分发失败',
+        relPath: 'Proxies/CardA/Clips/a.mov.proxy.mov',
+        profile: '422-proxy',
+        codec: 'prores',
+        resolution: '1080p',
+        width: 1920,
+        height: 1080,
+        lutPath: null,
+        targets: [
+          {
+            targetId: 'tgt_1',
+            state: 'verified',
+            relPath: 'Proxies/CardA/Clips/a.mov.proxy.mov',
+            error: null,
+            hash: 'proxyhash'
+          },
+          { targetId: 'tgt_2', state: 'failed', relPath: null, error: '目标空间不足', hash: null }
+        ]
+      }
+    }
+  })
+  const { revision } = await writeRevision(job)
+  const html = await readFile(revision.files.html as string, 'utf8')
+  expect(html).toContain('<h2>代理素材</h2>')
+  expect(html).toContain('Proxies/CardA/Clips/a.mov.proxy.mov')
+  expect(html).toContain('目标空间不足')
+  await reportStore.publishToTargets({
+    job,
+    revision,
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW
+  })
+  const note = await readFile(
+    join(targetPath, 'SecureReel', `${job.name}_R001`, '交付说明.txt'),
+    'utf8'
+  )
+  expect(note).toContain('Clips/a.mov：已校验交付')
+  expect(note).not.toContain('Clips/a.mov：失败')
+})
+
+it('报告交付使用修订的实际目录，可交付自定义报告输出位置', async () => {
+  const { job, targetPath } = await seedJob()
+  const { revision } = await reportStore.writeRevision({
+    job,
+    project: PROJECT,
+    store,
+    sourceLabel: 'A002',
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW,
+    writeManifestToTargets: false,
+    outputBaseDir: join(root, 'CustomReports')
+  })
+  const result = await reportStore.publishToTargets({
+    job,
+    revision,
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW
+  })
+  expect(result.failed).toEqual([])
+  expect(
+    await readFile(join(targetPath, 'SecureReel', `${job.name}_R001`, 'report.html'), 'utf8')
+  ).toContain('现场备份测试')
+})
+
+it('并发发布同一修订时仅一份成功，失败方不能删除成功方目录', async () => {
+  const { job, targetPath } = await seedJob()
+  const { revision } = await writeRevision(job)
+  const input = {
+    job,
+    revision,
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW
+  }
+  const results = await Promise.all([
+    reportStore.publishToTargets(input),
+    reportStore.publishToTargets(input)
+  ])
+  expect(results.reduce((sum, result) => sum + result.published.length, 0)).toBe(1)
+  expect(
+    await readFile(join(targetPath, 'SecureReel', `${job.name}_R001`, 'report.html'), 'utf8')
+  ).toContain('现场备份测试')
+})
+
+it('只填职务或姓名也保留人员，HTML 依赖图片时交付说明明确要求 frames 目录', async () => {
+  const { job, targetPath } = await seedJob()
+  store.updateFile(job.id, 'Clips/a.mov', {
+    probe: {
+      available: true,
+      reason: null,
+      capturedAt: null,
+      durationSeconds: 1,
+      timecode: null,
+      codec: 'prores',
+      width: 1920,
+      height: 1080,
+      frameRate: '25',
+      firstFrame: 'unavailable.jpg',
+      lastFrame: null,
+      stillFrames: [],
+      format: 'ProRes',
+      formatFamily: 'prores',
+      frameSource: 'decoded',
+      vendorTool: null,
+      note: null,
+      proxy: null
+    }
+  })
+  const { revision } = await reportStore.writeRevision({
+    job,
+    project: {
+      ...PROJECT,
+      crew: [
+        { role: 'DIT', name: ' ' },
+        { role: ' ', name: '张四' },
+        { role: ' ', name: ' ' }
+      ]
+    },
+    store,
+    sourceLabel: 'A002',
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW,
+    writeManifestToTargets: false
+  })
+  const html = await readFile(revision.files.html as string, 'utf8')
+  expect(html).toContain('<td>DIT</td><td></td>')
+  expect(html).toContain('<td></td><td>张四</td>')
+  expect(html).not.toContain('未填写')
+  await reportStore.publishToTargets({
+    job,
+    revision,
+    targets: job.targets,
+    hostname: 'host',
+    toolName: 'SecureReel',
+    toolVersion: '2.0.7',
+    now: NOW
+  })
+  const note = await readFile(
+    join(targetPath, 'SecureReel', `${job.name}_R001`, '交付说明.txt'),
+    'utf8'
+  )
+  expect(note).toContain('依赖 frames/ 图片目录')
+  expect(note).not.toContain('单文件自包含')
 })

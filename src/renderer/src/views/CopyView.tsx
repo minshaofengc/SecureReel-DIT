@@ -28,7 +28,16 @@ import {
   nextAutoShootDay,
   normalizeProjectDetails
 } from '@shared/project'
-import { Card, Field, LeadBlock, Note, PageHead, PathPicker, Progress, Toggle } from '../components/ui'
+import {
+  Card,
+  Field,
+  LeadBlock,
+  Note,
+  PageHead,
+  PathPicker,
+  Progress,
+  Toggle
+} from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
 import { PAGE_INDEX } from '../nav'
@@ -52,7 +61,12 @@ const NEW_PARENT_VALUE = '__new_parent__'
  * 把整条路径当成任务名（含盘符与反斜杠），既难看又会让落盘目录名走样。
  */
 function lastPathSegment(path: string): string | null {
-  return path.split(/[/\\]/).filter((part) => part !== '').slice(-1)[0] ?? null
+  return (
+    path
+      .split(/[/\\]/)
+      .filter((part) => part !== '')
+      .slice(-1)[0] ?? null
+  )
 }
 
 /**
@@ -108,7 +122,6 @@ export function CopyView(): ReactNode {
   const [scanning, setScanning] = useState(false)
   const [usage, setUsage] = useState<DriveUsage[]>([])
   const [busy, setBusy] = useState(false)
-  const [verify, setVerify] = useState(settings.verifyAfterWrite)
   /** 仅校验模式：选好源和已有拷贝目录后，只比对校验值，不写任何数据 */
   const [verifyOnlyMode, setVerifyOnlyMode] = useState(false)
   /** 用户对"空间可能不足仍要继续"的明确确认（P1 #11：只提醒不拦 → 需明确勾选） */
@@ -143,7 +156,8 @@ export function CopyView(): ReactNode {
         if (alive) setEncoders(info)
       } catch {
         // 探测失败就当作"只有 ProRes 可用"，不挡用户出 ProRes
-        if (alive) setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
+        if (alive)
+          setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
       }
     })()
     return () => {
@@ -272,7 +286,9 @@ export function CopyView(): ReactNode {
       } catch (error) {
         // 回捞失败退回档案本身：取不到历史不该挡住选母项目这件正事
         const fallback = parents.find((project) => project.id === next)
-        applyParentDetails(fallback === undefined ? null : normalizeProjectDetails(fallback.details))
+        applyParentDetails(
+          fallback === undefined ? null : normalizeProjectDetails(fallback.details)
+        )
         pushToast('warn', error instanceof Error ? error.message : String(error))
       }
     },
@@ -347,25 +363,26 @@ export function CopyView(): ReactNode {
     }
   }, [setProjectDraft])
 
-  const refreshUsage = useCallback(
-    async (paths: string[], required: number | null) => {
-      if (paths.length === 0) {
-        setUsage([])
-        return
+  const refreshUsage = useCallback(async (paths: string[], required: number | null) => {
+    if (paths.length === 0) {
+      setUsage([])
+      return
+    }
+    try {
+      const result = await window.securereel.volumes.usage(paths)
+      if (result.ok) {
+        setUsage(
+          result.data.map((item) => ({
+            ...item,
+            requiredBytes: required,
+            sufficient: required === null ? null : item.freeBytes >= required
+          }))
+        )
       }
-      try {
-        const result = await window.securereel.volumes.usage(paths)
-        if (result.ok) {
-          setUsage(
-            result.data.map((item) => ({ ...item, requiredBytes: required, sufficient: required === null ? null : item.freeBytes >= required }))
-          )
-        }
-      } catch {
-        setUsage([])
-      }
-    },
-    []
-  )
+    } catch {
+      setUsage([])
+    }
+  }, [])
 
   const pickSource = useCallback(async () => {
     const picked = await window.securereel.volumes.pickPath('directory', t('copy.pickSource'))
@@ -419,7 +436,8 @@ export function CopyView(): ReactNode {
   )
 
   const submit = useCallback(
-    async (start: boolean) => {      if (sourcePath.trim() === '') {
+    async (start: boolean) => {
+      if (sourcePath.trim() === '') {
         pushToast('warn', t('copy.sourcePlaceholder'))
         return
       }
@@ -461,9 +479,9 @@ export function CopyView(): ReactNode {
             mode: verifyOnlyMode ? 'verify' : 'copy',
             hashAlgorithm: settings.hashAlgorithm,
             manifestFormat: settings.manifestFormat,
-            verifyAfterWrite: verify,
+            verifyAfterWrite: true,
             // 代理是**每任务**的：把这次选的三个值带进任务记录。
-            proxyEnabled: proxyOn,
+            proxyEnabled: !verifyOnlyMode && proxyOn,
             proxyResolution,
             proxyCodec,
             proxyProfile,
@@ -523,7 +541,6 @@ export function CopyView(): ReactNode {
       usage,
       t,
       targets,
-      verify,
       verifyOnlyMode
     ]
   )
@@ -560,7 +577,11 @@ export function CopyView(): ReactNode {
    * 下拉里出现两个一模一样的「MHL v1」，看着就像重复了。改为按格式名逐一取标签。
    */
   const manifestOptions = useMemo<ComboOption<ManifestFormat>[]>(
-    () => MANIFEST_FORMATS.map((format) => ({ value: format, label: t(`manifest.${format}` as never) })),
+    () =>
+      MANIFEST_FORMATS.map((format) => ({
+        value: format,
+        label: t(`manifest.${format}` as never)
+      })),
     [t]
   )
 
@@ -627,86 +648,158 @@ export function CopyView(): ReactNode {
        * 把来源提到最前面并给足视觉权重（近黑反色 + 电光绿编号），
        * 页面一打开就知道从哪儿下手。
        */}
-      <LeadBlock step={1} title={t('copy.source')} hint={t('copy.sourcePlaceholder')}>
-        <Field label={t('copy.jobName')}>
-          <input
-            className="input"
-            value={jobName}
-            placeholder={t('copy.jobNamePlaceholder')}
-            onChange={(event) => setJobName(event.target.value)}
+      <div className="copy-workbench">
+        <LeadBlock step={1} title={t('copy.source')} hint={t('copy.sourcePlaceholder')}>
+          <Field label={t('copy.jobName')}>
+            <input
+              className="input"
+              value={jobName}
+              placeholder={t('copy.jobNamePlaceholder')}
+              onChange={(event) => setJobName(event.target.value)}
+            />
+          </Field>
+          <PathPicker
+            value={sourcePath}
+            placeholder={t('copy.sourcePlaceholder')}
+            buttonLabel={t('copy.pickSource')}
+            onPick={() => void pickSource()}
+            onChange={setSourcePath}
+            disabled={scanning || busy}
           />
-        </Field>
-        <PathPicker
-          value={sourcePath}
-          placeholder={t('copy.sourcePlaceholder')}
-          buttonLabel={t('copy.pickSource')}
-          onPick={() => void pickSource()}
-          onChange={setSourcePath}
-          disabled={scanning || busy}
-        />
 
-        {scanning && <Note>{t('copy.scanning')}</Note>}
+          {scanning && <Note>{t('copy.scanning')}</Note>}
 
-        {scan !== null && (
-          <>
-            <div className="grid-2" style={{ marginTop: 14 }}>
-              <div>
-                <div className="field-label">{t('copy.fileCount')}</div>
-                <div className="scanStat">{scan.fileCount}</div>
-              </div>
-              <div>
-                <div className="field-label">{t('copy.totalSize')}</div>
-                <div className="scanStat">{humanBytes(scan.totalBytes)}</div>
-              </div>
-              <div>
-                <div className="field-label">{t('copy.kind')}</div>
+          {scan !== null && (
+            <>
+              <div className="grid-2" style={{ marginTop: 14 }}>
                 <div>
-                  <span className="badge accent">{t(KIND_LABEL[scan.kind] as never)}</span>
+                  <div className="field-label">{t('copy.fileCount')}</div>
+                  <div className="scanStat">{scan.fileCount}</div>
+                </div>
+                <div>
+                  <div className="field-label">{t('copy.totalSize')}</div>
+                  <div className="scanStat">{humanBytes(scan.totalBytes)}</div>
+                </div>
+                <div>
+                  <div className="field-label">{t('copy.kind')}</div>
+                  <div>
+                    <span className="badge accent">{t(KIND_LABEL[scan.kind] as never)}</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {scan.kind === 'hde-vfs' && <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>}
+              {scan.kind === 'hde-vfs' && (
+                <Note tone="warn">{t(zeroByteNoteKey(appInfo?.platform))}</Note>
+              )}
 
-            {/*
+              {/*
               佳能 Cinema RAW Light：能拷能校验，但出不了画面。
               开首帧/代理却拿不到图时，这条提示就是"为什么"的答案 + 出路。
             */}
-            {crmCount > 0 && <Note tone="warn">{t('copy.crmNotice')}</Note>}
+              {crmCount > 0 && <Note tone="warn">{t('copy.crmNotice')}</Note>}
 
-            {scan.warnings.length > 0 && (
-              <Note tone="warn">
-                <strong>{t('copy.scanWarnings')}</strong>
-                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-                  {scan.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </Note>
-            )}
+              {scan.warnings.length > 0 && (
+                <Note tone="warn">
+                  <strong>{t('copy.scanWarnings')}</strong>
+                  <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                    {scan.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </Note>
+              )}
 
-            {scan.preview.length > 0 && (
-              <details style={{ marginTop: 10 }}>
-                <summary className="field-label" style={{ cursor: 'pointer' }}>
-                  {t('copy.biggestFiles')}
-                </summary>
-                <div className="table-wrap" style={{ marginTop: 8 }}>
-                  <table className="data">
-                    <tbody>
-                      {scan.preview.slice(0, 12).map((file) => (
-                        <tr key={file.relPath}>
-                          <td className="mono">{file.relPath}</td>
-                          <td className="num">{humanBytes(file.sizeBytes)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            )}
-          </>
-        )}
-      </LeadBlock>
+              {scan.preview.length > 0 && (
+                <details style={{ marginTop: 10 }}>
+                  <summary className="field-label" style={{ cursor: 'pointer' }}>
+                    {t('copy.biggestFiles')}
+                  </summary>
+                  <div className="table-wrap" style={{ marginTop: 8 }}>
+                    <table className="data">
+                      <tbody>
+                        {scan.preview.slice(0, 12).map((file) => (
+                          <tr key={file.relPath}>
+                            <td className="mono">{file.relPath}</td>
+                            <td className="num">{humanBytes(file.sizeBytes)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+        </LeadBlock>
+        <Card
+          title={t('copy.targets')}
+          hint={`${targets.length} / 8`}
+          actions={
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void addTarget()}
+              disabled={busy}
+            >
+              + {t('copy.addTarget')}
+            </button>
+          }
+        >
+          {targets.length === 0 ? (
+            <div className="faint">{t('copy.noTarget')}</div>
+          ) : (
+            <div className="target-list">
+              {targets.map((path, index) => {
+                const info = usage.find((item) => item.path === path)
+                return (
+                  <div className="target-item" key={path}>
+                    <span className="badge">{index + 1}</span>
+                    <span className="target-path" title={path}>
+                      {path}
+                    </span>
+                    {info !== undefined && (
+                      <span className={`badge ${info.sufficient === false ? 'danger' : 'ok'}`}>
+                        {info.sufficient === false
+                          ? `${t('copy.insufficient')} · ${humanBytes(info.freeBytes)}`
+                          : `${t('copy.free')} ${humanBytes(info.freeBytes)}`}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => void removeTarget(path)}
+                      disabled={busy}
+                    >
+                      {t('common.remove')}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {requiredBytes !== null && targets.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div className="field-label">
+                {t('copy.required')} {humanBytes(requiredBytes)}
+              </div>
+              {insufficient.length > 0 && (
+                <Note tone="danger">
+                  {t('copy.insufficientNotice', { count: insufficient.length })}
+                  <label className="row-actions" style={{ cursor: 'pointer', marginTop: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={spaceAck}
+                      onChange={(event) => setSpaceAck(event.target.checked)}
+                    />
+                    <span>{t('copy.spaceAck')}</span>
+                  </label>
+                </Note>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
 
       <Card title={t('copy.parentSection')} hint={t('copy.parentHintTitle')}>
         <div className="path-row">
@@ -769,153 +862,99 @@ export function CopyView(): ReactNode {
         </div>
       </Card>
 
-      <Card
-        title={t('copy.projectInfo')}
-        hint={t('copy.projectHint')}
-        actions={
-          <>
-            {selectedParent !== null && (
+      <details className="workbench-disclosure workbench-disclosure--panel">
+        <summary>
+          {t('copy.projectInfo')} · {t('workbench.optionalFields')}
+        </summary>
+        <Card
+          title={t('copy.projectInfo')}
+          hint={t('copy.projectHint')}
+          actions={
+            <>
+              {selectedParent !== null && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busy || draft === null}
+                  onClick={() => void pickParent(selectedParent.id)}
+                >
+                  {t('copy.resetToParent')}
+                </button>
+              )}
               <button
                 type="button"
-                className="btn btn-sm"
-                disabled={busy || draft === null}
-                onClick={() => void pickParent(selectedParent.id)}
+                className="btn btn-sm btn-ghost"
+                disabled={busy}
+                onClick={clearAll}
               >
-                {t('copy.resetToParent')}
+                {t('common.clear')}
               </button>
-            )}
-            <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={clearAll}>
-              {t('common.clear')}
-            </button>
-          </>
-        }
-      >
-        {selectedParent !== null && (
-          <Note>
-            {t('copy.inheritedFrom')}
-            {selectedParent.name} · {t('copy.inheritedHint')}
-          </Note>
-        )}
+            </>
+          }
+        >
+          {selectedParent !== null && (
+            <Note>
+              {t('copy.inheritedFrom')}
+              {selectedParent.name} · {t('copy.inheritedHint')}
+            </Note>
+          )}
 
-        {draft === null ? (
-          <div className="faint">{t('common.loading')}</div>
-        ) : (
-          <>
-            <ProjectInfoFields
-              value={draft}
-              disabled={busy}
-              sections={['basic', 'lenses', 'crew', 'notes']}
-              /*
-               * 已选母项目时：
-               *   · 不再单独问「项目名称」—— 那时它就是母项目的名字，再问一遍是重复
-               *     （还会让报告出现「母项目：X / 项目：X」两行同名）。值仍保留在
-               *     draft 里，报告与清单照常写。
-               *   · 把镜头/人员/项目备注折叠起来 —— 它们刚被母项目整包带进来，
-               *     铺在眼前只会让表单又长又重复。想改点开就是。
-               */
-              showProjectName={selectedParent === null}
-              collapsedSections={selectedParent === null ? [] : ['lenses', 'crew', 'notes']}
-              onChange={(next) => patchDraft(next)}
-            />
+          {draft === null ? (
+            <div className="faint">{t('common.loading')}</div>
+          ) : (
+            <>
+              <ProjectInfoFields
+                value={draft}
+                disabled={busy}
+                sections={['basic', 'lenses', 'crew', 'notes']}
+                /*
+                 * 已选母项目时：
+                 *   · 不再单独问「项目名称」—— 那时它就是母项目的名字，再问一遍是重复
+                 *     （还会让报告出现「母项目：X / 项目：X」两行同名）。值仍保留在
+                 *     draft 里，报告与清单照常写。
+                 *   · 把镜头/人员/项目备注折叠起来 —— 它们刚被母项目整包带进来，
+                 *     铺在眼前只会让表单又长又重复。想改点开就是。
+                 */
+                showProjectName={selectedParent === null}
+                collapsedSections={['lenses', 'crew', 'notes']}
+                onChange={(next) => patchDraft(next)}
+              />
 
-            <div className="sub-block">
-              <label className="field">
-                <span className="field-label">{t('copy.cardLabel')}</span>
-                <input
-                  className="input"
-                  value={draft.cardLabel}
-                  disabled={busy}
-                  placeholder={t('copy.cardLabelAuto')}
-                  onChange={(event) => patchDraft({ cardLabel: event.target.value })}
-                />
-                {/* 同一句 copy.cardLabelAuto 曾经 placeholder 与常驻 hint 各画一遍，
-                    删掉常驻那份 —— 和 copy.verifyHint 的去重是同一个道理。 */}
-              </label>
-
-              <label className="field">
-                <span className="field-label">{t('copy.copyNotes')}</span>
-                <textarea
-                  className="textarea"
-                  value={draft.copyNotes}
-                  disabled={busy}
-                  maxLength={MAX_COPY_NOTES_LENGTH}
-                  onChange={(event) => patchDraft({ copyNotes: event.target.value })}
-                />
-                <span className="hint faint" style={{ fontSize: 11 }}>
-                  {t('copy.copyNotesHint')}
-                </span>
-                <div className="counter">
-                  {draft.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
-                </div>
-              </label>
-            </div>
-          </>
-        )}
-      </Card>
-
-      <Card
-        title={t('copy.targets')}
-        hint={`${targets.length} / 8`}
-        actions={
-          <button type="button" className="btn btn-sm" onClick={() => void addTarget()} disabled={busy}>
-            + {t('copy.addTarget')}
-          </button>
-        }
-      >
-        {targets.length === 0 ? (
-          <div className="faint">{t('copy.noTarget')}</div>
-        ) : (
-          <div className="target-list">
-            {targets.map((path, index) => {
-              const info = usage.find((item) => item.path === path)
-              return (
-                <div className="target-item" key={path}>
-                  <span className="badge">{index + 1}</span>
-                  <span className="target-path" title={path}>
-                    {path}
-                  </span>
-                  {info !== undefined && (
-                    <span className={`badge ${info.sufficient === false ? 'danger' : 'ok'}`}>
-                      {info.sufficient === false
-                        ? `${t('copy.insufficient')} · ${humanBytes(info.freeBytes)}`
-                        : `${t('copy.free')} ${humanBytes(info.freeBytes)}`}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => void removeTarget(path)}
-                    disabled={busy}
-                  >
-                    {t('common.remove')}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        {requiredBytes !== null && targets.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div className="field-label">
-              {t('copy.required')} {humanBytes(requiredBytes)}
-            </div>
-            {insufficient.length > 0 && (
-              <Note tone="danger">
-                {t('copy.insufficientNotice', { count: insufficient.length })}
-                <label className="row-actions" style={{ cursor: 'pointer', marginTop: 8 }}>
+              <div className="sub-block">
+                <label className="field">
+                  <span className="field-label">{t('copy.cardLabel')}</span>
                   <input
-                    type="checkbox"
-                    checked={spaceAck}
-                    onChange={(event) => setSpaceAck(event.target.checked)}
+                    className="input"
+                    value={draft.cardLabel}
+                    disabled={busy}
+                    placeholder={t('copy.cardLabelAuto')}
+                    onChange={(event) => patchDraft({ cardLabel: event.target.value })}
                   />
-                  <span>{t('copy.spaceAck')}</span>
+                  {/* 同一句 copy.cardLabelAuto 曾经 placeholder 与常驻 hint 各画一遍，
+                    删掉常驻那份 —— 和 copy.verifyHint 的去重是同一个道理。 */}
                 </label>
-              </Note>
-            )}
-          </div>
-        )}
-      </Card>
+
+                <label className="field">
+                  <span className="field-label">{t('copy.copyNotes')}</span>
+                  <textarea
+                    className="textarea"
+                    value={draft.copyNotes}
+                    disabled={busy}
+                    maxLength={MAX_COPY_NOTES_LENGTH}
+                    onChange={(event) => patchDraft({ copyNotes: event.target.value })}
+                  />
+                  <span className="hint faint" style={{ fontSize: 11 }}>
+                    {t('copy.copyNotesHint')}
+                  </span>
+                  <div className="counter">
+                    {draft.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
+                  </div>
+                </label>
+              </div>
+            </>
+          )}
+        </Card>
+      </details>
 
       <Card title={t('copy.advanced')}>
         <Field label={t('copy.hashAlgorithm')}>
@@ -939,10 +978,7 @@ export function CopyView(): ReactNode {
           />
         </Field>
 
-        <Toggle checked={verify} onChange={setVerify} label={t('copy.verifyAfterWrite')} />
-        {/* 同一句说明曾经渲染两遍（常驻 .faint + 关掉校验时的警告），
-            划掉了常驻那份 —— 只在"真的关了校验、需要提醒"时才出现。 */}
-        {!verify && <Note tone="warn">{t('copy.verifyHint')}</Note>}
+        <Note>{t('workbench.independentVerify')}</Note>
 
         {/*
           「仅校验（不拷贝）」原先独占一整个 Card，只放一个 checkbox + 一段长说明，
@@ -971,9 +1007,17 @@ export function CopyView(): ReactNode {
           先定编码再谈规格 —— 选了 H.264/H.265 就不该看到 ProRes 规格，
           那会让人以为"选了 264 还要配 ProRes"。
         */}
-        <div className="sub-block" style={{ marginTop: 16 }}>
-          <Toggle checked={proxyOn} onChange={setProxyOn} label={t('copy.proxyEnabled')} />
-          {proxyOn && (
+        <details className="workbench-disclosure">
+          <summary>
+            {t('copy.proxyEnabled')} ·{' '}
+            {t(!verifyOnlyMode && proxyOn ? 'workbench.enabled' : 'workbench.disabled')}
+          </summary>
+          {verifyOnlyMode ? (
+            <Note>{t('workbench.readOnlyProxy')}</Note>
+          ) : (
+            <Toggle checked={proxyOn} onChange={setProxyOn} label={t('copy.proxyEnabled')} />
+          )}
+          {!verifyOnlyMode && proxyOn && (
             <>
               <Field label={t('copy.proxyCodec')}>
                 <SelectBox<ProxyCodec>
@@ -1009,7 +1053,10 @@ export function CopyView(): ReactNode {
                   buttonLabel={t('copy.proxyLutPick')}
                   onPick={() => {
                     void (async () => {
-                      const picked = await window.securereel.volumes.pickPath('file', t('copy.proxyLutPick'))
+                      const picked = await window.securereel.volumes.pickPath(
+                        'file',
+                        t('copy.proxyLutPick')
+                      )
                       if (picked.ok && picked.data !== null) setProxyLutPath(picked.data)
                     })()
                   }}
@@ -1021,7 +1068,7 @@ export function CopyView(): ReactNode {
               </div>
             </>
           )}
-        </div>
+        </details>
       </Card>
 
       <div className="action-bar">
@@ -1043,7 +1090,9 @@ export function CopyView(): ReactNode {
           {t('copy.createOnly')}
         </button>
         <span className="faint" style={{ fontSize: 12 }}>
-          {t('copy.willStartHint')}
+          {scan === null
+            ? t('copy.willStartHint')
+            : `${scan.fileCount} ${t('common.files')} · ${humanBytes(scan.totalBytes)} · ${targets.length} ${t('copy.targets')}`}
         </span>
       </div>
 

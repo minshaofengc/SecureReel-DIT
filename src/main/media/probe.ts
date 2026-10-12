@@ -61,7 +61,7 @@ export interface MediaProbeRunner {
   /** 每条素材出几张候选静帧（0 = 不出） */
   setStillFrameCount(count: number): void
   /** 重新探测工具位置（用户改了设置之后调用） */
-  refresh(): Promise<void>
+  refresh(userDir?: string | null): Promise<void>
 }
 
 /**
@@ -155,6 +155,10 @@ interface FfprobeFormat {
 interface FfprobeOutput {
   streams?: FfprobeStream[]
   format?: FfprobeFormat
+}
+
+export function unavailableMediaProbe(path: string, reason: string): MediaProbe {
+  return baseProbe(fallbackByExtension(path), 'none', reason)
 }
 
 function baseProbe(
@@ -286,6 +290,13 @@ export class FfprobeRunner implements MediaProbeRunner {
     }
   ) {}
 
+  fork(): FfprobeRunner {
+    const runner = new FfprobeRunner(this.deps)
+    runner.ffprobePath = this.ffprobePath
+    runner.ffmpegPath = this.ffmpegPath
+    return runner
+  }
+
   get available(): boolean {
     return this.ffprobePath !== null
   }
@@ -322,15 +333,20 @@ export class FfprobeRunner implements MediaProbeRunner {
     this.stillFrameCount = Math.max(0, Math.floor(count))
   }
 
-  async refresh(): Promise<void> {
+  async refresh(userDir?: string | null): Promise<void> {
+    if (userDir !== undefined) this.deps.userDir = userDir
     // 随包二进制的命名按平台不同（见 bundledBinaryNames）：
     // macOS 是 `ffprobe-darwin-<arch>`，Windows 是 `ffprobe.exe`。
     const bundledCandidates =
       this.deps.bundledDir === null
         ? []
         : [
-            ...bundledBinaryNames('ffprobe').map((name) => join(this.deps.bundledDir as string, name)),
-            ...bundledBinaryNames('ffmpeg').map((name) => join(this.deps.bundledDir as string, name))
+            ...bundledBinaryNames('ffprobe').map((name) =>
+              join(this.deps.bundledDir as string, name)
+            ),
+            ...bundledBinaryNames('ffmpeg').map((name) =>
+              join(this.deps.bundledDir as string, name)
+            )
           ]
 
     const candidates: string[] = []
@@ -353,7 +369,8 @@ export class FfprobeRunner implements MediaProbeRunner {
       const resolved = await resolveExecutable(candidate)
       if (resolved === null) continue
       if (ffprobePath === null && basename(candidate).startsWith('ffprobe')) ffprobePath = resolved
-      else if (ffmpegPath === null && basename(candidate).startsWith('ffmpeg')) ffmpegPath = resolved
+      else if (ffmpegPath === null && basename(candidate).startsWith('ffmpeg'))
+        ffmpegPath = resolved
       if (ffprobePath !== null && ffmpegPath !== null) break
     }
     this.ffprobePath = ffprobePath ?? (await resolveExecutable(pathProbe))
@@ -416,7 +433,8 @@ export class FfprobeRunner implements MediaProbeRunner {
 
       // codec_name 缺失时退到 fourcc（CRM 就是这种情况，fourcc 是 CRAW），
       // 再退到容器名。不要在这里用容器名冒充编码名 —— 那是最后的选择。
-      probe.codec = video?.codec_name ?? video?.codec_tag_string ?? parsed.format?.format_name ?? null
+      probe.codec =
+        video?.codec_name ?? video?.codec_tag_string ?? parsed.format?.format_name ?? null
       probe.width = video?.width ?? null
       probe.height = video?.height ?? null
       probe.frameRate = pickFrameRate(video)
@@ -542,7 +560,12 @@ export class FfprobeRunner implements MediaProbeRunner {
     absPath: string,
     decodable: boolean,
     signal?: AbortSignal
-  ): Promise<{ fileName: string; source: FrameSource; width: number | null; height: number | null } | null> {
+  ): Promise<{
+    fileName: string
+    source: FrameSource
+    width: number | null
+    height: number | null
+  } | null> {
     const canDecode = decodable && this.ffmpegPath !== null
 
     if (canDecode) {
@@ -583,7 +606,10 @@ export class FfprobeRunner implements MediaProbeRunner {
    * 首帧用 `-ss 0`；尾帧用 `-sseof -1` 从结尾回退取样 ——
    * 比 seek 到 duration 更稳，VFR 与截断文件都能取到。
    */
-  private async extractFrameWithFfmpeg(absPath: string, which: 'first' | 'last'): Promise<string | null> {
+  private async extractFrameWithFfmpeg(
+    absPath: string,
+    which: 'first' | 'last'
+  ): Promise<string | null> {
     if (this.ffmpegPath === null || this.frameOutputDir === null) return null
 
     try {
@@ -665,8 +691,7 @@ export class FfprobeRunner implements MediaProbeRunner {
 
     // 用 fps 均匀采样：先求出时长，再算等效采样率；拿不到时长就退到按帧数抽。
     const duration = await this.probeDurationSeconds(absPath, signal)
-    const sampleFps =
-      duration !== null && duration > 0 ? candidateCount / duration : null
+    const sampleFps = duration !== null && duration > 0 ? candidateCount / duration : null
 
     const tmpDir = join(outputDir, '.stills-tmp')
     try {
@@ -767,7 +792,10 @@ export class FfprobeRunner implements MediaProbeRunner {
   }
 
   /** 探测时长（秒）；拿不到返回 null。 */
-  private async probeDurationSeconds(absPath: string, signal?: AbortSignal): Promise<number | null> {
+  private async probeDurationSeconds(
+    absPath: string,
+    signal?: AbortSignal
+  ): Promise<number | null> {
     const parsed = await this.runFfprobe(absPath, signal)
     if (parsed === null) return null
     const raw = parsed.format?.duration ?? parsed.video?.duration
@@ -802,9 +830,7 @@ function buildNote(
   const decodable = canDecodeWithFfmpeg(format.family)
 
   if (!decodable) {
-    parts.push(
-      `${format.label} 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。`
-    )
+    parts.push(`${format.label} 使用厂商私有编码，FFmpeg 没有对应解码器，无法直接解码画面。`)
     if (usuallyHasEmbeddedPreview(format.family)) {
       parts.push(
         '首帧取自摄影机写在文件内部的预览图；表格中的分辨率同样来自该预览图，' +

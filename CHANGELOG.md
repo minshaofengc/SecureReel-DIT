@@ -1,5 +1,20 @@
 # 更新日志
 
+## 2.0.7 — Workbench, reports and reliable proxies
+
+- Redesign task setup, monitoring and delivery with searchable paginated file lists.
+- Add delivery, technical and monochrome print report themes; hide empty project fields.
+- Generate delivery notes from actual artifacts and record report delivery per target.
+- Enforce read-only verification and independent reread verification for copies.
+- Encode a verified copy once, validate proxies and independently verify each distribution.
+- Prevent proxy name collisions and overwrites; persist recoverable proxy state and independent retry.
+- Coordinate copy, verification and proxy I/O across volumes and physical disks; batch byte counters.
+- Make queued work cancellable and interrupt/restart proxy encoding on pause.
+- Delay disk ejection and shutdown until all task and delivery work has ended.
+
+Windows runtime and device-specific speed measurements require separate hardware acceptance.
+
+
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)；版本号遵循语义化版本。
 
 ## [2.0.6] - 2026-10-11

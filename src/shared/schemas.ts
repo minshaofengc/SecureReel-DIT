@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import {
   HASH_ALGORITHMS,
+  FILE_STATES,
   JOB_MODES,
   LANGUAGES,
   MANIFEST_FORMATS,
@@ -19,6 +20,7 @@ import {
   PROXY_CODECS,
   PROXY_PROFILES,
   PROXY_RESOLUTIONS,
+  REPORT_THEMES,
   THEME_MODES,
   THEMES
 } from './types'
@@ -189,6 +191,7 @@ export const settingsPatchSchema = z
     soundEnabled: z.boolean(),
     soundVolume: z.number().min(0).max(1),
     generateReport: z.boolean(),
+    reportTheme: z.enum(REPORT_THEMES),
     reportOutputDir: z.union([absolutePathSchema, z.null()]),
     shutdownAfterCopy: z.boolean(),
     proxyEnabled: z.boolean(),
@@ -228,10 +231,33 @@ export const tailSchema = z.object({
  * 值限 200 字符 —— 已够放一个标记位，不必给它开口子。
  */
 export const kvGetSchema = z.object({
-  key: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/)
+  key: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9._-]+$/)
 })
 
 export const kvSetSchema = z.object({
-  key: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/),
+  key: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9._-]+$/),
   value: z.string().max(200)
+})
+
+export const reportRequestSchema = z.object({
+  jobId: jobIdSchema,
+  theme: z.enum(REPORT_THEMES).optional()
+})
+
+export const fileQuerySchema = z.object({
+  jobId: jobIdSchema,
+  limit: z.number().int().min(1).max(5000).default(500),
+  offset: z.number().int().min(0).default(0),
+  filter: z
+    .object({ search: z.string().max(512).optional(), state: z.enum(FILE_STATES).optional() })
+    .strict()
+    .default({})
 })

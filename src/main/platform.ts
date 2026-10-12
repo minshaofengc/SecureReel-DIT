@@ -114,3 +114,72 @@ export const USE_OVERLAY_TITLEBAR = true
  * 就能让两侧的留白**共用同一套数值**，一行 CSS 都不用为 Windows 改动。
  */
 export const TITLE_BAR_HEIGHT = 40
+
+/** Portable no-replace file move, including volumes without hard-link support. */
+export function proxyPublicationCommand(
+  partial: string,
+  finalPath: string,
+  platform: HostPlatform = HOST
+): { executable: string; args: string[]; env?: Record<string, string> } {
+  if (platform === 'win32')
+    return {
+      executable: win32.join(
+        process.env.SystemRoot ?? 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe'
+      ),
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[System.IO.File]::Move($env:SECUREREEL_PROXY_PARTIAL, $env:SECUREREEL_PROXY_FINAL)'
+      ],
+      env: { SECUREREEL_PROXY_PARTIAL: partial, SECUREREEL_PROXY_FINAL: finalPath }
+    }
+  return { executable: '/bin/mv', args: ['-n', partial, finalPath] }
+}
+
+export function physicalVolumeProbe(
+  path: string,
+  platform: HostPlatform = HOST
+): {
+  executable: string
+  args: string[]
+  env?: Record<string, string>
+  kind: 'df' | 'windows'
+} | null {
+  if (platform === 'darwin') return { executable: '/bin/df', args: ['-P', path], kind: 'df' }
+  if (platform === 'win32') {
+    const drive = win32.parse(path).root.match(/^([A-Za-z]):/i)?.[1]
+    if (!drive) return null
+    return {
+      executable: win32.join(
+        process.env.SystemRoot ?? 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe'
+      ),
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "$ErrorActionPreference='Stop'; Get-Partition -DriveLetter $env:SECUREREEL_DRIVE | Get-Disk | Select-Object -ExpandProperty Number"
+      ],
+      env: { SECUREREEL_DRIVE: drive },
+      kind: 'windows'
+    }
+  }
+  return null
+}
+
+export function physicalDisksFromPlist(plist: string): string[] {
+  const stores = [
+    ...plist.matchAll(/<key>APFSPhysicalStore<\/key>\s*<string>(disk\d+)s\d+<\/string>/g)
+  ].map((match) => match[1]!)
+  if (stores.length > 0) return [...new Set(stores)].sort()
+  const parent = plist.match(/<key>ParentWholeDisk<\/key>\s*<string>(disk\d+)<\/string>/)?.[1]
+  return parent ? [parent] : []
+}

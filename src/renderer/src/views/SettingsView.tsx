@@ -6,6 +6,7 @@ import {
   MANIFEST_FORMATS,
   PERFORMANCE_MODES,
   PERFORMANCE_MODE_PRESETS,
+  REPORT_THEMES,
   PROXY_CODECS,
   PROXY_RESOLUTIONS,
   THEME_MODES,
@@ -16,10 +17,20 @@ import {
   type ProxyCodec,
   type ProxyProfile,
   type ProxyResolution,
+  type ReportTheme,
   type ThemeId
 } from '@shared/types'
 import type { EncodersInfo } from '@shared/ipc'
-import { BlockGrid, Card, Field, PageHead, PathPicker, Segmented, Note, Toggle } from '../components/ui'
+import {
+  BlockGrid,
+  Card,
+  Field,
+  PageHead,
+  PathPicker,
+  Segmented,
+  Note,
+  Toggle
+} from '../components/ui'
 import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { SKINS } from '../theme'
 import { PAGE_INDEX } from '../nav'
@@ -94,7 +105,8 @@ export function SettingsView(): ReactNode {
         const info = await unwrap(window.securereel.media.encoders())
         if (alive) setEncoders(info)
       } catch {
-        if (alive) setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
+        if (alive)
+          setEncoders({ h264: false, h265: false, h264Hardware: false, h265Hardware: false })
       }
     })()
     return () => {
@@ -196,7 +208,11 @@ export function SettingsView(): ReactNode {
 
   return (
     <div className="page">
-      <PageHead index={PAGE_INDEX.settings} kicker={t('nav.settings')} title={t('settings.title')} />
+      <PageHead
+        index={PAGE_INDEX.settings}
+        kicker={t('nav.settings')}
+        title={t('settings.title')}
+      />
 
       <Card title={t('settings.appearance')}>
         <Field label={t('settings.skin')} hint={t('settings.skinHint')}>
@@ -259,7 +275,9 @@ export function SettingsView(): ReactNode {
                 step={5}
                 aria-label={t('settings.soundVolume')}
                 value={Math.round(settings.soundVolume * 100)}
-                onChange={(event) => void updateSettings({ soundVolume: Number(event.target.value) / 100 })}
+                onChange={(event) =>
+                  void updateSettings({ soundVolume: Number(event.target.value) / 100 })
+                }
               />
               <span className="faint" style={{ fontSize: 12 }}>
                 {Math.round(settings.soundVolume * 100)}%
@@ -270,102 +288,106 @@ export function SettingsView(): ReactNode {
       </Card>
 
       <BlockGrid>
-      <Card title={t('settings.defaults')}>
-        <Field label={t('copy.hashAlgorithm')} hint={t('copy.hashHint')}>
-          <SelectBox<HashAlgorithm>
-            value={settings.hashAlgorithm}
-            ariaLabel={t('copy.hashAlgorithm')}
-            options={hashOptions}
-            onChange={(next) => void updateSettings({ hashAlgorithm: next })}
-          />
-        </Field>
-
-        <Field label={t('copy.manifestFormat')} hint={t('settings.manifestHint')}>
-          <SelectBox<ManifestFormat>
-            value={settings.manifestFormat}
-            ariaLabel={t('copy.manifestFormat')}
-            options={manifestOptions}
-            onChange={(next) => void updateSettings({ manifestFormat: next })}
-          />
-        </Field>
-
-        {/*
-         * 只有在"存下来的那一对本来就不成立"时才会出现（例如从旧版本数据库
-         * 带过来的组合，或者设置被外部 IPC 直接改过）。正常从界面上点，点不出
-         * 这个组合 —— 不成立的那一项是灰的。留这条是因为**灰选项挡不住旧数据**。
-         */}
-        {!pairUsable && (
-          <Note tone="warn">
-            {t('settings.incompatiblePair', {
-              format: manifestLabel(settings.manifestFormat),
-              algorithm: HASH_ALGORITHM_LABELS[settings.hashAlgorithm]
-            })}
-          </Note>
-        )}
-
-        <label className="row-actions" style={{ cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={settings.verifyAfterWrite}
-            onChange={(event) => void updateSettings({ verifyAfterWrite: event.target.checked })}
-          />
-          <span>{t('copy.verifyAfterWrite')}</span>
-        </label>
-      </Card>
-
-      <Card title={t('settings.performance')}>
-        {/*
-          档位是"一键套用"：点一下把那几个细项一次设好。多数现场不需要逐项去调，
-          所以把细项收进「高级」，默认只看档位 —— 卡片一下就短了。
-        */}
-        <Field label={t('settings.performanceMode')} hint={t('settings.performanceModeHint')}>
-          <Segmented<PerformanceMode>
-            value={settings.performanceMode}
-            options={PERFORMANCE_MODES.map((mode) => ({
-              value: mode,
-              label: t(`perf.${mode}` as never)
-            }))}
-            onChange={(next) =>
-              void updateSettings({ performanceMode: next, ...PERFORMANCE_MODE_PRESETS[next] })
-            }
-          />
-        </Field>
-
-        <details className="sub-block" style={{ marginTop: 8 }}>
-          <summary style={{ cursor: 'pointer' }}>{t('settings.advanced')}</summary>
-
-          <Field label={t('settings.maxParallelTargets')} hint={t('settings.parallelHint')}>
-            <NumberSetting
-              value={settings.maxParallelTargets}
-              min={1}
-              max={8}
-              onCommit={(next) => void updateSettings({ maxParallelTargets: next })}
+        <Card title={t('settings.defaults')}>
+          <Field label={t('copy.hashAlgorithm')} hint={t('copy.hashHint')}>
+            <SelectBox<HashAlgorithm>
+              value={settings.hashAlgorithm}
+              ariaLabel={t('copy.hashAlgorithm')}
+              options={hashOptions}
+              onChange={(next) => void updateSettings({ hashAlgorithm: next })}
             />
           </Field>
 
-          <Toggle
-            checked={settings.resumePartialFiles}
-            onChange={(next) => void updateSettings({ resumePartialFiles: next })}
-            label={t('settings.resume')}
-          />
+          <Field label={t('copy.manifestFormat')} hint={t('settings.manifestHint')}>
+            <SelectBox<ManifestFormat>
+              value={settings.manifestFormat}
+              ariaLabel={t('copy.manifestFormat')}
+              options={manifestOptions}
+              onChange={(next) => void updateSettings({ manifestFormat: next })}
+            />
+          </Field>
 
-          <Toggle
-            checked={settings.ejectAfterCopy}
-            onChange={(next) => void updateSettings({ ejectAfterCopy: next })}
-            label={t('settings.eject')}
-          />
+          {/*
+           * 只有在"存下来的那一对本来就不成立"时才会出现（例如从旧版本数据库
+           * 带过来的组合，或者设置被外部 IPC 直接改过）。正常从界面上点，点不出
+           * 这个组合 —— 不成立的那一项是灰的。留这条是因为**灰选项挡不住旧数据**。
+           */}
+          {!pairUsable && (
+            <Note tone="warn">
+              {t('settings.incompatiblePair', {
+                format: manifestLabel(settings.manifestFormat),
+                algorithm: HASH_ALGORITHM_LABELS[settings.hashAlgorithm]
+              })}
+            </Note>
+          )}
 
-          <Toggle
-            checked={settings.shutdownAfterCopy}
-            onChange={(next) => void updateSettings({ shutdownAfterCopy: next })}
-            label={t('settings.shutdown')}
-          />
-          <div className="hint">{t('settings.shutdownHint')}</div>
-        </details>
-      </Card>
+          <Note>{t('workbench.independentVerify')}</Note>
+        </Card>
+
+        <Card title={t('settings.performance')}>
+          {/*
+          档位是"一键套用"：点一下把那几个细项一次设好。多数现场不需要逐项去调，
+          所以把细项收进「高级」，默认只看档位 —— 卡片一下就短了。
+        */}
+          <Field label={t('settings.performanceMode')} hint={t('settings.performanceModeHint')}>
+            <Segmented<PerformanceMode>
+              value={settings.performanceMode}
+              options={PERFORMANCE_MODES.map((mode) => ({
+                value: mode,
+                label: t(`perf.${mode}` as never)
+              }))}
+              onChange={(next) =>
+                void updateSettings({ performanceMode: next, ...PERFORMANCE_MODE_PRESETS[next] })
+              }
+            />
+          </Field>
+
+          <details className="sub-block" style={{ marginTop: 8 }}>
+            <summary style={{ cursor: 'pointer' }}>{t('settings.advanced')}</summary>
+
+            <Field label={t('settings.maxParallelTargets')} hint={t('settings.parallelHint')}>
+              <NumberSetting
+                value={settings.maxParallelTargets}
+                min={1}
+                max={8}
+                onCommit={(next) => void updateSettings({ maxParallelTargets: next })}
+              />
+            </Field>
+
+            <Toggle
+              checked={settings.resumePartialFiles}
+              onChange={(next) => void updateSettings({ resumePartialFiles: next })}
+              label={t('settings.resume')}
+            />
+
+            <Toggle
+              checked={settings.ejectAfterCopy}
+              onChange={(next) => void updateSettings({ ejectAfterCopy: next })}
+              label={t('settings.eject')}
+            />
+
+            <Toggle
+              checked={settings.shutdownAfterCopy}
+              onChange={(next) => void updateSettings({ shutdownAfterCopy: next })}
+              label={t('settings.shutdown')}
+            />
+            <div className="hint">{t('settings.shutdownHint')}</div>
+          </details>
+        </Card>
       </BlockGrid>
 
       <Card title={t('settings.report')}>
+        <Field label={t('workbench.reportTheme')} hint={t('workbench.reportThemeHint')}>
+          <SelectBox<ReportTheme>
+            value={settings.reportTheme}
+            ariaLabel={t('workbench.reportTheme')}
+            options={REPORT_THEMES.map((theme) => ({
+              value: theme,
+              label: t(`workbench.theme.${theme}`)
+            }))}
+            onChange={(reportTheme) => void updateSettings({ reportTheme })}
+          />
+        </Field>
         <label className="row-actions" style={{ cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -385,11 +407,17 @@ export function SettingsView(): ReactNode {
               buttonLabel={t('copy.pickSource')}
               onPick={() => {
                 void (async () => {
-                  const picked = await window.securereel.volumes.pickPath('directory', t('settings.reportDir'))
-                  if (picked.ok && picked.data !== null) void updateSettings({ reportOutputDir: picked.data })
+                  const picked = await window.securereel.volumes.pickPath(
+                    'directory',
+                    t('settings.reportDir')
+                  )
+                  if (picked.ok && picked.data !== null)
+                    void updateSettings({ reportOutputDir: picked.data })
                 })()
               }}
-              onChange={(next) => void updateSettings({ reportOutputDir: next.trim() === '' ? null : next })}
+              onChange={(next) =>
+                void updateSettings({ reportOutputDir: next.trim() === '' ? null : next })
+              }
             />
           </Field>
         )}
@@ -450,8 +478,12 @@ export function SettingsView(): ReactNode {
                 buttonLabel={t('copy.proxyLutPick')}
                 onPick={() => {
                   void (async () => {
-                    const picked = await window.securereel.volumes.pickPath('file', t('copy.proxyLutPick'))
-                    if (picked.ok && picked.data !== null) void updateSettings({ proxyLutPath: picked.data })
+                    const picked = await window.securereel.volumes.pickPath(
+                      'file',
+                      t('copy.proxyLutPick')
+                    )
+                    if (picked.ok && picked.data !== null)
+                      void updateSettings({ proxyLutPath: picked.data })
                   })()
                 }}
                 onChange={(next) =>
@@ -481,9 +513,7 @@ export function SettingsView(): ReactNode {
           />
           <span>{t('settings.extractFrames')}</span>
         </label>
-        <div className="hint">
-          {t('settings.extractFramesHint')}
-        </div>
+        <div className="hint">{t('settings.extractFramesHint')}</div>
 
         {settings.extractFrames && (
           <>
@@ -528,87 +558,99 @@ export function SettingsView(): ReactNode {
       </Card>
 
       <BlockGrid>
-      <Card title={t('settings.tools')}>
-        <Field label={t('settings.ffmpegDir')} hint={t('settings.ffmpegHint')}>
-          <PathPicker
-            value={settings.ffmpegDir ?? ''}
-            buttonLabel={t('copy.pickSource')}
-            onPick={() => {
-              void (async () => {
-                const picked = await window.securereel.volumes.pickPath('directory', t('settings.ffmpegDir'))
-                if (picked.ok && picked.data !== null) void updateSettings({ ffmpegDir: picked.data })
-              })()
-            }}
-            onChange={(next) => void updateSettings({ ffmpegDir: next.trim() === '' ? null : next })}
-          />
-        </Field>
+        <Card title={t('settings.tools')}>
+          <Field label={t('settings.ffmpegDir')} hint={t('settings.ffmpegHint')}>
+            <PathPicker
+              value={settings.ffmpegDir ?? ''}
+              buttonLabel={t('copy.pickSource')}
+              onPick={() => {
+                void (async () => {
+                  const picked = await window.securereel.volumes.pickPath(
+                    'directory',
+                    t('settings.ffmpegDir')
+                  )
+                  if (picked.ok && picked.data !== null)
+                    void updateSettings({ ffmpegDir: picked.data })
+                })()
+              }}
+              onChange={(next) =>
+                void updateSettings({ ffmpegDir: next.trim() === '' ? null : next })
+              }
+            />
+          </Field>
 
-        <Field label={t('settings.arrirawHde')}>
-          <PathPicker
-            value={settings.arrirawHdePath ?? ''}
-            buttonLabel={t('copy.pickSource')}
-            onPick={() => {
-              void (async () => {
-                const picked = await window.securereel.volumes.pickPath('file', t('settings.arrirawHde'))
-                if (picked.ok && picked.data !== null) void updateSettings({ arrirawHdePath: picked.data })
-              })()
-            }}
-            onChange={(next) => void updateSettings({ arrirawHdePath: next.trim() === '' ? null : next })}
-          />
-        </Field>
-      </Card>
+          <Field label={t('settings.arrirawHde')}>
+            <PathPicker
+              value={settings.arrirawHdePath ?? ''}
+              buttonLabel={t('copy.pickSource')}
+              onPick={() => {
+                void (async () => {
+                  const picked = await window.securereel.volumes.pickPath(
+                    'file',
+                    t('settings.arrirawHde')
+                  )
+                  if (picked.ok && picked.data !== null)
+                    void updateSettings({ arrirawHdePath: picked.data })
+                })()
+              }}
+              onChange={(next) =>
+                void updateSettings({ arrirawHdePath: next.trim() === '' ? null : next })
+              }
+            />
+          </Field>
+        </Card>
 
-      <Card title={t('settings.data')}>
-        <dl className="kv">
-          <dt>{t('settings.userData')}</dt>
-          <dd className="mono">{appInfo?.userDataDir ?? '—'}</dd>
-          <dt>{t('settings.logs')}</dt>
-          <dd className="mono">{appInfo?.logsDir ?? '—'}</dd>
-          <dt>{t('settings.reports')}</dt>
-          <dd className="mono">{appInfo?.reportsDir ?? '—'}</dd>
-        </dl>
+        <Card title={t('settings.data')}>
+          <dl className="kv">
+            <dt>{t('settings.userData')}</dt>
+            <dd className="mono">{appInfo?.userDataDir ?? '—'}</dd>
+            <dt>{t('settings.logs')}</dt>
+            <dd className="mono">{appInfo?.logsDir ?? '—'}</dd>
+            <dt>{t('settings.reports')}</dt>
+            <dd className="mono">{appInfo?.reportsDir ?? '—'}</dd>
+          </dl>
 
-        <div className="row-actions" style={{ marginTop: 12 }}>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              void (async () => {
-                try {
-                  await unwrap(window.securereel.logs.reveal())
-                } catch (error) {
-                  pushToast('error', error instanceof Error ? error.message : String(error))
-                }
-              })()
-            }}
-          >
-            {t('settings.openLogs')}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={diagBusy}
-            onClick={() => {
-              void (async () => {
-                setDiagBusy(true)
-                try {
-                  const saved = await unwrap(window.securereel.logs.exportDiagnostics())
-                  if (saved === null) return
-                  pushToast('success', t('settings.diagExported'))
-                } catch (error) {
-                  pushToast('error', error instanceof Error ? error.message : String(error))
-                } finally {
-                  setDiagBusy(false)
-                }
-              })()
-            }}
-          >
-            {t('settings.exportDiagnostics')}
-          </button>
-        </div>
+          <div className="row-actions" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await unwrap(window.securereel.logs.reveal())
+                  } catch (error) {
+                    pushToast('error', error instanceof Error ? error.message : String(error))
+                  }
+                })()
+              }}
+            >
+              {t('settings.openLogs')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={diagBusy}
+              onClick={() => {
+                void (async () => {
+                  setDiagBusy(true)
+                  try {
+                    const saved = await unwrap(window.securereel.logs.exportDiagnostics())
+                    if (saved === null) return
+                    pushToast('success', t('settings.diagExported'))
+                  } catch (error) {
+                    pushToast('error', error instanceof Error ? error.message : String(error))
+                  } finally {
+                    setDiagBusy(false)
+                  }
+                })()
+              }}
+            >
+              {t('settings.exportDiagnostics')}
+            </button>
+          </div>
 
-        <Note>{t('settings.privacy')}</Note>
-      </Card>
+          <Note>{t('settings.privacy')}</Note>
+        </Card>
       </BlockGrid>
     </div>
   )

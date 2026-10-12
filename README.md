@@ -1,6 +1,6 @@
 # SecureReel DIT
 
-[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.6 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.6)
+[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.7 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.7)
 
 ---
 
@@ -290,3 +290,13 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 ### 许可
 
 应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 LGPL 授权（macOS 为 LGPL-2.1，Windows 为 LGPL-3.0），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+
+### 2.0.7 工作台与报告
+
+建任务页并列显示来源与目标，项目信息和代理设置可展开。拷贝始终执行独立重读校验；仅校验模式只读目标，不生成代理。
+监控页支持每页 100 条、路径搜索和状态筛选；代理失败可独立重试，不重新拷贝原始素材。
+交付页可预览简洁交付、详细技术和黑白打印主题；改主题会新增修订，不覆盖旧报告。未填写的可选字段不进入报告。
+代理从已经校验的副本读取，同一素材编码一次，再分发到各目标并重读校验。暂停会中断正在编码的代理，恢复后重新编码未完成项。已验证缓存保留在首个可用目标的 `.securereel-proxy-cache/<任务编号>/`，用于故障重试，需要额外磁盘空间。
+代理命名为 `Proxies/<来源目录>/<完整原文件名>.<代理扩展名>`，例如 `Proxies/A001/C001.mov.mov`，用于区分同名不同格式的素材。已有同名代理不覆盖。
+代理、原始素材与报告交付状态分别显示。Windows 真机验收及具体磁盘的性能测量与构建验证分开记录。

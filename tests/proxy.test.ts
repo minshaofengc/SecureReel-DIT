@@ -180,17 +180,17 @@ describe('编码分支', () => {
 
 describe('代理输出路径推导', () => {
   it('落在 Proxies/ 下并保留源目录结构', () => {
-    expect(proxyRelPathFor('Clips/A001/C001.mov')).toBe('Proxies/Clips/A001/C001.mov')
+    expect(proxyRelPathFor('Clips/A001/C001.mov')).toBe('Proxies/Clips/A001/C001.mov.mov')
   })
 
   it('ProRes 扩展名统一成 .mov', () => {
-    expect(proxyRelPathFor('a.mxf')).toBe('Proxies/a.mov')
-    expect(proxyRelPathFor('a.mp4')).toBe('Proxies/a.mov')
+    expect(proxyRelPathFor('a.mxf')).toBe('Proxies/a.mxf.mov')
+    expect(proxyRelPathFor('a.mp4')).toBe('Proxies/a.mp4.mov')
   })
 
   it('H.264/H.265 扩展名是 .mp4', () => {
-    expect(proxyRelPathFor('a.mxf', 'h264')).toBe('Proxies/a.mp4')
-    expect(proxyRelPathFor('a.mov', 'h265')).toBe('Proxies/a.mp4')
+    expect(proxyRelPathFor('a.mxf', 'h264')).toBe('Proxies/a.mxf.mp4')
+    expect(proxyRelPathFor('a.mov', 'h265')).toBe('Proxies/a.mov.mp4')
   })
 
   it('没有扩展名的素材也给出合法路径', () => {
@@ -205,12 +205,12 @@ describe('代理输出路径推导', () => {
 
   it('目标盘绝对路径 = 盘根 + 相对路径', () => {
     const abs = proxyAbsPathFor('/Volumes/A001', 'Clips/C001.mov')
-    expect(abs).toBe(`/Volumes/A001/${PROXY_FOLDER}/Clips/C001.mov`)
+    expect(abs).toBe(`/Volumes/A001/${PROXY_FOLDER}/Clips/C001.mov.mov`)
   })
 
   it('按编码给出不同的绝对路径扩展名', () => {
     expect(proxyAbsPathFor('/Volumes/A001', 'Clips/C001.mov', 'h264')).toBe(
-      `/Volumes/A001/${PROXY_FOLDER}/Clips/C001.mp4`
+      `/Volumes/A001/${PROXY_FOLDER}/Clips/C001.mov.mp4`
     )
   })
 })

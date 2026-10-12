@@ -15,9 +15,10 @@ import type {
   JobState,
   ProjectInfo,
   ReportSummary,
+  ReportTheme,
   TargetProgress
 } from '@shared/types'
-import { clockDuration, humanBytes, humanDuration, percent } from '@shared/format'
+import { clockDuration, humanBytes, humanDuration, percent, reportTimestamp } from '@shared/format'
 import { escapeXml } from './manifests'
 
 /** 任务状态的中文说明，写进报告正文。 */
@@ -33,6 +34,7 @@ const JOB_STATE_TEXT: Record<JobState, string> = {
 }
 
 export interface HtmlReportContext {
+  theme?: ReportTheme
   summary: ReportSummary
   job: CopyJob
   project: ProjectInfo
@@ -52,10 +54,12 @@ export interface HtmlReportContext {
 
 export async function renderHtmlReport(context: HtmlReportContext): Promise<string> {
   const { summary } = context
+  const theme = context.theme ?? summary.theme ?? 'delivery'
   const rows: string[] = []
   const failures: string[] = []
   const probed: string[] = []
   const frames: string[] = []
+  const proxies: string[] = []
   const notes = new Set<string>()
   /**
    * 拿不到静帧的素材，按「格式 + 原因 + 所需工具」去重计数。
@@ -73,6 +77,35 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
 
   for await (const file of context.files) {
     total++
+    const proxy = file.probe?.proxy
+    if (proxy !== undefined && proxy !== null) {
+      const results = proxy.targets?.length
+        ? proxy.targets
+        : [
+            {
+              targetId: '',
+              state: proxy.status ?? (proxy.ok ? 'verified' : 'failed'),
+              relPath: proxy.relPath,
+              error: proxy.reason
+            }
+          ]
+      for (const result of results) {
+        const label =
+          context.job.targets.find((target) => target.id === result.targetId)?.label ??
+          (result.targetId || '旧版汇总（未记录逐目标结果）')
+        const labels = {
+          pending: '等待',
+          running: '处理中',
+          verified: '已校验交付',
+          failed: '失败',
+          skipped: '跳过'
+        }
+        proxies.push(
+          `<tr><td class="mono">${escapeXml(file.relPath)}</td><td>${escapeXml(label)}</td><td>${labels[result.state]}</td><td class="mono">${escapeXml(result.relPath ?? '')}</td><td>${escapeXml([proxy.codec, proxy.profile, proxy.resolution].filter(Boolean).join(' / '))}</td><td class="${result.state === 'failed' ? 'bad' : ''}">${escapeXml(result.error ?? '')}</td></tr>`
+        )
+      }
+    }
+
     if (file.state === 'failed') {
       failures.push(
         `<tr><td class="mono">${escapeXml(file.relPath)}</td><td>${humanBytes(file.sizeBytes)}</td><td>${escapeXml(
@@ -113,7 +146,7 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
                     `<img src="frames/${encodeURIComponent(name)}" alt="${escapeXml(file.relPath)} 候选静帧" width="160">`
                 )
                 .join('')}</div>`
-        const cover = probe.firstFrame === null ? stills[0] ?? null : probe.firstFrame
+        const cover = probe.firstFrame === null ? (stills[0] ?? null) : probe.firstFrame
         frames.push(
           `<figure class="frame">
             ${cover === null ? '' : `<img src="frames/${encodeURIComponent(cover)}" alt="${escapeXml(file.relPath)}" width="320">`}
@@ -163,23 +196,23 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
         <td class="num">${target.filesDone}</td>
         <td class="num ${target.filesFailed > 0 ? 'bad' : ''}">${target.filesFailed}</td>
         <td>${stateBadge(
-          target.state === 'completed' ? 'verified' : target.state === 'failed' ? 'failed' : 'copying'
+          target.state === 'completed'
+            ? 'verified'
+            : target.state === 'failed'
+              ? 'failed'
+              : 'copying'
         )}${target.error === null ? '' : `<div class="small bad">${escapeXml(target.error)}</div>`}</td>
       </tr>`
     )
     .join('\n')
 
-  const crewRows =
-    context.project.crew.length === 0
-      ? '<tr><td colspan="2" class="muted">未填写</td></tr>'
-      : context.project.crew
-          .map(
-            (member) =>
-              `<tr><td>${escapeXml(member.role === '' ? '—' : member.role)}</td><td>${escapeXml(
-                member.name === '' ? '—' : member.name
-              )}</td></tr>`
-          )
-          .join('\n')
+  const crewRows = context.project.crew
+    .filter((member) => member.role.trim() !== '' || member.name.trim() !== '')
+    .map(
+      (member) =>
+        `<tr><td>${escapeXml(member.role.trim())}</td><td>${escapeXml(member.name.trim())}</td></tr>`
+    )
+    .join('\n')
 
   // 一颗镜头一行。多颗时标上序号，只有一颗时不啰嗦。
   const lenses = context.project.lenses.filter(
@@ -193,7 +226,22 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
     })
     .join('')
 
-  const finishedCleanly = summary.jobState === 'completed' || summary.jobState === 'completed-with-errors'
+  const projectRows =
+    [
+      ['母项目', context.project.parentProjectName ?? ''],
+      ['项目名称', context.project.projectName],
+      ['拍摄日', context.project.shootDay],
+      ['摄影机', context.project.camera],
+      ['卡号 / 卷号', context.project.cardLabel]
+    ]
+      .filter(([, value]) => value?.trim() !== '')
+      .map(
+        ([label, value]) => `<tr><th>${label}</th><td>${escapeXml(value?.trim() ?? '')}</td></tr>`
+      )
+      .join('\n') + lensRows
+
+  const finishedCleanly =
+    summary.jobState === 'completed' || summary.jobState === 'completed-with-errors'
   const headline = !finishedCleanly
     ? `任务未正常结束（${JOB_STATE_TEXT[summary.jobState]}）— 以下为该时刻的实际结果`
     : summary.failedFiles === 0
@@ -265,14 +313,28 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
   .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #dcd9d0; color: #7d8a83; font-size: 12px; }
   .truncated { font-size: 12px; color: #7d8a83; margin-top: 8px; }
   @media print { body { padding: 0; max-width: none; } h2 { page-break-after: avoid; } tr { page-break-inside: avoid; } }
+  body[data-report-theme="technical"] { max-width: 1280px; font-size: 13px; }
+  body[data-report-theme="technical"] .mono { font-size: 11px; }
+  body[data-report-theme="technical"] td { padding: 5px 8px; }
+  body[data-report-theme="delivery"] .gallery { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  body[data-report-theme="print"] { color: #000; background: #fff; font-size: 12px; }
+  body[data-report-theme="print"] .card,
+  body[data-report-theme="print"] .pill,
+  body[data-report-theme="print"] .badge,
+  body[data-report-theme="print"] .note,
+  body[data-report-theme="print"] th { color: #000; background: #fff; border-color: #666; border-radius: 0; }
+  body[data-report-theme="print"] .bad,
+  body[data-report-theme="print"] .muted,
+  body[data-report-theme="print"] .hash { color: #333; }
+  body[data-report-theme="print"] img { filter: grayscale(1); }
 </style>
 </head>
-<body>
+<body data-report-theme="${theme}">
 
 <h1>${escapeXml(summary.jobName)}</h1>
 <p class="sub">
   SecureReel DIT 拷贝报告 · 修订 ${escapeXml(summary.revision)} ·
-  生成于 ${escapeXml(summary.createdAt)} · 主机 ${escapeXml(context.hostname)}
+  生成于 ${escapeXml(reportTimestamp(summary.createdAt))} · 主机 ${escapeXml(context.hostname)}
 </p>
 
 <div class="banner">
@@ -307,29 +369,8 @@ ${targetRows}
   </tbody>
 </table>
 
-<h2>项目信息</h2>
-<table>
-  <tbody>
-${
-  context.project.parentProjectName === null || context.project.parentProjectName === ''
-    ? ''
-    : `    <tr><th style="width:150px">母项目</th><td><strong>${escapeXml(
-        context.project.parentProjectName
-      )}</strong></td></tr>\n`
-}    <tr><th style="width:150px">项目名称</th><td>${escapeXml(context.project.projectName || '—')}</td></tr>
-    <tr><th>拍摄日</th><td>${escapeXml(context.project.shootDay || '—')}</td></tr>
-    <tr><th>摄影机</th><td>${escapeXml(context.project.camera || '—')}</td></tr>
-${lensRows}    <tr><th>卡号 / 卷号</th><td>${escapeXml(context.project.cardLabel || '—')}</td></tr>
-  </tbody>
-</table>
-
-<h2>职务与所属人</h2>
-<table>
-  <thead><tr><th style="width:220px">职务</th><th>所属人</th></tr></thead>
-  <tbody>
-${crewRows}
-  </tbody>
-</table>
+${projectRows === '' ? '' : `<h2>项目信息</h2><table><tbody>${projectRows}</tbody></table>`}
+${crewRows === '' ? '' : `<h2>职务与所属人</h2><table><thead><tr><th>职务</th><th>所属人</th></tr></thead><tbody>${crewRows}</tbody></table>`}
 
 ${
   context.project.notes.trim() === ''
@@ -344,10 +385,18 @@ ${
 <div class="note">${escapeXml(context.project.copyNotes).replace(/\n/g, '<br>')}</div>`
 }
 
+${
+  proxies.length === 0
+    ? ''
+    : `<h2>代理素材</h2>
+<p class="small muted">代理为转码产物，独立显示各目标分发与校验结果，不使用原始素材的校验值。</p>
+<table><thead><tr><th>原始素材</th><th>目标</th><th>状态</th><th>代理相对路径</th><th>编码规格</th><th>原因</th></tr></thead><tbody>${proxies.join('\n')}</tbody></table>`
+}
+
 <h2>失败清单</h2>
 ${
   failures.length === 0
-    ? '<div class="note">没有任何文件校验失败。所有已写入的目标副本都与源盘逐字节一致。</div>'
+    ? '<div class="note">未记录文件级校验失败；完成情况仍须结合任务状态、各目标盘结果与逐文件记录判断。</div>'
     : `<table>
   <thead><tr><th>文件</th><th class="num">大小</th><th>原因</th></tr></thead>
   <tbody>
@@ -389,14 +438,17 @@ ${
     : `<h2>没有首帧画面的素材（${[...frameGaps.values()].reduce((sum, n) => sum + n, 0)} 条）</h2>
 <p class="small muted">
   下列格式当前无法在本地生成画面，因此报告中没有对应的首帧图。
-  <strong>这与拷贝和校验结果无关</strong> —— 这些文件同样已逐字节写入并通过独立重读校验，
-  见上方「全部文件通过校验」与文件明细里的校验值。
+  <strong>这与拷贝和校验结果无关</strong> —— 这些文件的拷贝与校验结果，
+  请查看上方各目标盘结果与文件明细，不以是否有画面判断。
 </p>
 <ul class="small">
 ${[...frameGaps.entries()]
   .map(([key, count]) => {
     const [label, why, vendor] = key.split('\u0000')
-    const tool = vendor === undefined || vendor === '' ? '' : ` 完整技术参数与画面需要厂商官方工具：${vendor}。`
+    const tool =
+      vendor === undefined || vendor === ''
+        ? ''
+        : ` 完整技术参数与画面需要厂商官方工具：${vendor}。`
     return `  <li>${count} 条 ${escapeXml(label ?? '未识别格式')}：${escapeXml(why ?? '')}${escapeXml(tool)}</li>`
   })
   .join('\n')}
@@ -445,7 +497,7 @@ ${context.notes.map((note) => `<li>${escapeXml(note)}</li>`).join('\n')}
 <div class="footer">
   <div>由 ${escapeXml(context.toolName)} ${escapeXml(context.toolVersion)} 生成。本报告为不可变归档，同一任务的后续修订会使用新的修订号，不会覆盖本文件。</div>
   <div>校验值算法 ${escapeXml(summary.hashAlgorithm)}；目标副本的校验值由写入完成后**独立重读**目标文件得出，与源侧值逐字节比对通过后才会改名为最终文件名。</div>
-  <div>报告生成时间 ${escapeXml(summary.createdAt)}。</div>
+  <div>报告生成时间 ${escapeXml(reportTimestamp(summary.createdAt))}。</div>
 </div>
 
 </body>

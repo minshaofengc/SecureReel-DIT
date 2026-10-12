@@ -28,6 +28,7 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/renderer/src/state/file-page.ts",
     "tests/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts"

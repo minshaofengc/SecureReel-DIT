@@ -14,13 +14,23 @@
 export class PauseGate {
   private paused = false
   private waiters: (() => void)[] = []
+  private readonly pauseListeners = new Set<() => void>()
 
   get isPaused(): boolean {
     return this.paused
   }
 
+  onPause(listener: () => void): () => void {
+    this.pauseListeners.add(listener)
+    return () => {
+      this.pauseListeners.delete(listener)
+    }
+  }
+
   pause(): void {
+    if (this.paused) return
     this.paused = true
+    for (const listener of this.pauseListeners) listener()
   }
 
   resume(): void {
@@ -33,6 +43,7 @@ export class PauseGate {
 
   /** 暂停中则挂起；`signal` 中止时抛出，避免暂停状态下无法取消任务。 */
   async waitIfPaused(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('任务已取消')
     if (!this.paused) return
     await new Promise<void>((resolve, reject) => {
       const cleanup = (): void => {
@@ -68,12 +79,26 @@ export class Semaphore {
     this.available = Math.max(1, limit)
   }
 
-  async acquire(): Promise<void> {
+  async acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('任务已取消')
     if (this.available > 0) {
       this.available--
       return
     }
-    await new Promise<void>((resolve) => this.queue.push(resolve))
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = (): void => {
+        const index = this.queue.indexOf(onReady)
+        if (index !== -1) this.queue.splice(index, 1)
+        signal?.removeEventListener('abort', onAbort)
+        reject(new Error('任务已取消'))
+      }
+      const onReady = (): void => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }
+      this.queue.push(onReady)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
   }
 
   release(): void {
@@ -86,9 +111,10 @@ export class Semaphore {
   }
 
   /** 在信号量保护下执行一段逻辑。 */
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire()
+  async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquire(signal)
     try {
+      if (signal?.aborted) throw new Error('任务已取消')
       return await fn()
     } finally {
       this.release()

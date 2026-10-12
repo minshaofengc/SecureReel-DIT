@@ -6,7 +6,7 @@
  * 每个测试都在真实的临时目录上跑完整的读写与校验流程。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CopyJob, CopyJobFile, FileStateDelta, HashAlgorithm, JobProgress } from '../src/shared/types'
@@ -1030,4 +1030,15 @@ describe('目标盘的目录层级', () => {
     expect(result.state).toBe('completed')
     expect(result.files.map((file) => file.state)).toEqual(['verified'])
   })
+})
+
+it('拷贝不会把指向源素材的目标符号链接冒认为独立副本',async()=>{
+ const source=await makeSource({'clip.mov':Buffer.from('camera clip')})
+ const targets=await makeTargets(1)
+ await symlink(join(source,'clip.mov'),join(targets[0]!,'clip.mov'))
+ const job=await seedJob(source,targets)
+ const result=await runEngine(job)
+ expect(result.state).toBe('completed-with-errors')
+ expect(store.getJob(job.id)?.filesDone).toBe(0)
+ expect(await readFile(join(source,'clip.mov'),'utf8')).toBe('camera clip')
 })

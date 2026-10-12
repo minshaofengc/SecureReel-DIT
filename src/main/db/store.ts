@@ -10,6 +10,7 @@ import type {
   CopyJobFile,
   CopyTarget,
   FileState,
+  FileQueryFilter,
   FileTargetResult,
   JobState,
   LastJobDraft,
@@ -22,7 +23,18 @@ import type {
   TargetProgress,
   VolumeKind
 } from '@shared/types'
-import { DEFAULT_SETTINGS, HASH_ALGORITHMS, JOB_MODES, JOB_STATES, MANIFEST_FORMATS, migrateThemeId, PROXY_CODECS, PROXY_PROFILES, PROXY_RESOLUTIONS, VOLUME_KINDS } from '@shared/types'
+import {
+  DEFAULT_SETTINGS,
+  HASH_ALGORITHMS,
+  JOB_MODES,
+  JOB_STATES,
+  MANIFEST_FORMATS,
+  migrateThemeId,
+  PROXY_CODECS,
+  PROXY_PROFILES,
+  PROXY_RESOLUTIONS,
+  VOLUME_KINDS
+} from '@shared/types'
 import {
   fillMissingDetails,
   hasCrew,
@@ -58,7 +70,11 @@ function asString(value: SqlValue | undefined, fallback = ''): string {
   return value === null || value === undefined ? fallback : String(value)
 }
 
-function pick<T extends readonly string[]>(options: T, value: SqlValue | undefined, fallback: T[number]): T[number] {
+function pick<T extends readonly string[]>(
+  options: T,
+  value: SqlValue | undefined,
+  fallback: T[number]
+): T[number] {
   const raw = value === null || value === undefined ? '' : String(value)
   return (options as readonly string[]).includes(raw) ? (raw as T[number]) : fallback
 }
@@ -159,7 +175,6 @@ export class Store {
     return `已有 jobs 表缺少列：${missing.join(', ')}（现有列：${columns.join(', ')}）`
   }
 
-
   /** 给单测用的内存库。 */
   static async openInMemory(): Promise<Store> {
     return Store.open(':memory:')
@@ -240,7 +255,15 @@ export class Store {
        * 所有 --accent 之类全部取不到值，界面变成一片无样式的透明块，
        * 看起来像应用崩了 —— 而且不报任何错。
        */
-      return { ...DEFAULT_SETTINGS, ...parsed, themeId: migrateThemeId(parsed.themeId) }
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        themeId: migrateThemeId(parsed.themeId),
+        reportTheme:
+          parsed.reportTheme === 'technical' || parsed.reportTheme === 'print'
+            ? parsed.reportTheme
+            : 'delivery'
+      }
     } catch {
       return { ...DEFAULT_SETTINGS }
     }
@@ -375,7 +398,9 @@ export class Store {
   /** 按母项目分组用：取某个母项目名下的全部任务。 */
   listJobsByParent(parentProjectId: string): CopyJob[] {
     const rows = this.db
-      .prepare('SELECT * FROM jobs WHERE parent_project_id = ? ORDER BY created_at DESC, rowid DESC')
+      .prepare(
+        'SELECT * FROM jobs WHERE parent_project_id = ? ORDER BY created_at DESC, rowid DESC'
+      )
       .all(parentProjectId)
     return rows.map((row) => this.mapJob(row, this.listTargets(asString(row.id))))
   }
@@ -390,7 +415,9 @@ export class Store {
   /** 上次异常退出时停在 running/paused 的任务，启动后需要提示用户恢复。 */
   listResumableJobs(): CopyJob[] {
     const rows = this.db
-      .prepare("SELECT * FROM jobs WHERE state IN ('running', 'paused', 'queued') ORDER BY created_at DESC")
+      .prepare(
+        "SELECT * FROM jobs WHERE state IN ('running', 'paused', 'queued') ORDER BY created_at DESC"
+      )
       .all()
     return rows.map((row) => this.mapJob(row, this.listTargets(asString(row.id))))
   }
@@ -554,11 +581,15 @@ export class Store {
 
     if (columns.length === 0) return
     values.push(jobId, targetId)
-    this.db.prepare(`UPDATE job_targets SET ${columns.join(', ')} WHERE job_id = ? AND id = ?`).run(...values)
+    this.db
+      .prepare(`UPDATE job_targets SET ${columns.join(', ')} WHERE job_id = ? AND id = ?`)
+      .run(...values)
   }
 
   listTargetProgress(jobId: string): TargetProgress[] {
-    const rows = this.db.prepare('SELECT * FROM job_targets WHERE job_id = ? ORDER BY rowid ASC').all(jobId)
+    const rows = this.db
+      .prepare('SELECT * FROM job_targets WHERE job_id = ? ORDER BY rowid ASC')
+      .all(jobId)
     return rows.map((row) => ({
       targetId: asString(row.id),
       label: asString(row.label),
@@ -605,15 +636,20 @@ export class Store {
     if (patch.state !== undefined) assign('state', patch.state)
     if (patch.bytesCopied !== undefined) assign('bytes_copied', patch.bytesCopied)
     if (patch.error !== undefined) assign('error', patch.error)
-    if (patch.probe !== undefined) assign('probe_json', patch.probe === null ? null : JSON.stringify(patch.probe))
+    if (patch.probe !== undefined)
+      assign('probe_json', patch.probe === null ? null : JSON.stringify(patch.probe))
 
     if (columns.length === 0) return
     values.push(jobId, relPath)
-    this.db.prepare(`UPDATE job_files SET ${columns.join(', ')} WHERE job_id = ? AND rel_path = ?`).run(...values)
+    this.db
+      .prepare(`UPDATE job_files SET ${columns.join(', ')} WHERE job_id = ? AND rel_path = ?`)
+      .run(...values)
   }
 
   getFileRow(jobId: string, relPath: string): Row | undefined {
-    return this.db.prepare('SELECT * FROM job_files WHERE job_id = ? AND rel_path = ?').get(jobId, relPath)
+    return this.db
+      .prepare('SELECT * FROM job_files WHERE job_id = ? AND rel_path = ?')
+      .get(jobId, relPath)
   }
 
   /** 取单个文件的完整快照（含各目标结果），用于事件推送。 */
@@ -624,11 +660,15 @@ export class Store {
     return this.mapFile(row, this.resultsForFiles([id]))
   }
 
-  countFiles(jobId: string, state?: FileState): number {
-    const row =
-      state === undefined
-        ? this.db.prepare('SELECT COUNT(*) AS c FROM job_files WHERE job_id = ?').get(jobId)
-        : this.db.prepare('SELECT COUNT(*) AS c FROM job_files WHERE job_id = ? AND state = ?').get(jobId, state)
+  countFiles(jobId: string, stateOrFilter?: FileState | FileQueryFilter): number {
+    const filter =
+      typeof stateOrFilter === 'string' ? { state: stateOrFilter } : (stateOrFilter ?? {})
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM job_files WHERE job_id = ?
+      AND (? IS NULL OR state = ?) AND instr(lower(rel_path), lower(?)) > 0`
+      )
+      .get(jobId, filter.state ?? null, filter.state ?? null, filter.search ?? '')
     return fromSqlNumber(row?.c)
   }
 
@@ -660,13 +700,38 @@ export class Store {
   }
 
   /** 分页读文件，供界面表格使用。 */
-  listFiles(jobId: string, limit = 500, offset = 0): CopyJobFile[] {
+  listFiles(jobId: string, limit = 500, offset = 0, filter: FileQueryFilter = {}): CopyJobFile[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM job_files WHERE job_id = ? ORDER BY id ASC LIMIT ? OFFSET ?`
+        `SELECT * FROM job_files WHERE job_id = ? AND (? IS NULL OR state = ?)
+        AND instr(lower(rel_path), lower(?)) > 0 ORDER BY id ASC LIMIT ? OFFSET ?`
       )
-      .all(jobId, limit, offset)
-    return rows.map((row) => this.mapFile(row, this.resultsForFiles([fromSqlNumber(row.id)])))
+      .all(jobId, filter.state ?? null, filter.state ?? null, filter.search ?? '', limit, offset)
+    const results = this.resultsForFiles(rows.map((row) => fromSqlNumber(row.id)))
+    return rows.map((row) => this.mapFile(row, results))
+  }
+
+  proxyProgress(jobId: string): {
+    total: number
+    done: number
+    failed: number
+    active: string | null
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT
+      SUM(CASE WHEN json_extract(probe_json,'$.proxy.ok') IS NOT NULL AND COALESCE(json_extract(probe_json,'$.proxy.status'),'pending') != 'skipped' THEN 1 ELSE 0 END) AS total,
+      SUM(CASE WHEN json_extract(probe_json,'$.proxy.ok') = 1 THEN 1 ELSE 0 END) AS done,
+      SUM(CASE WHEN json_extract(probe_json,'$.proxy.ok') = 0 AND COALESCE(json_extract(probe_json,'$.proxy.status'),'failed') != 'skipped' THEN 1 ELSE 0 END) AS failed
+      FROM job_files WHERE job_id=?`
+      )
+      .get(jobId)
+    return {
+      total: fromSqlNumber(row?.total),
+      done: fromSqlNumber(row?.done),
+      failed: fromSqlNumber(row?.failed),
+      active: null
+    }
   }
 
   /**
@@ -678,9 +743,7 @@ export class Store {
     let lastId = 0
     for (;;) {
       const rows = this.db
-        .prepare(
-          `SELECT * FROM job_files WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT ?`
-        )
+        .prepare(`SELECT * FROM job_files WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT ?`)
         .all(jobId, lastId, batchSize)
       if (rows.length === 0) return
       const ids = rows.map((row) => fromSqlNumber(row.id))
@@ -859,7 +922,10 @@ export class Store {
         targetId: asString(row.target_id),
         state: asString(row.state, 'pending') as FileState,
         hash: fromSqlNullableString(row.hash),
-        hashMatch: row.hash_match === null || row.hash_match === undefined ? null : fromSqlBoolean(row.hash_match),
+        hashMatch:
+          row.hash_match === null || row.hash_match === undefined
+            ? null
+            : fromSqlBoolean(row.hash_match),
         bytesCopied: fromSqlNumber(row.bytes_copied),
         error: fromSqlNullableString(row.error)
       })
@@ -872,9 +938,7 @@ export class Store {
 
   /** 取下一个修订号。R001、R002…… 只增不减。 */
   nextRevision(jobId: string): string {
-    const row = this.db
-      .prepare("SELECT COUNT(*) AS c FROM reports WHERE job_id = ?")
-      .get(jobId)
+    const row = this.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE job_id = ?').get(jobId)
     const nextIndex = fromSqlNumber(row?.c) + 1
     return `R${String(nextIndex).padStart(3, '0')}`
   }
@@ -902,6 +966,16 @@ export class Store {
       .run(JSON.stringify(files), jobId, revision)
   }
 
+  updateReportDelivery(
+    jobId: string,
+    revision: string,
+    delivery: NonNullable<ReportRevision['delivery']>
+  ): void {
+    this.db
+      .prepare('UPDATE reports SET delivery_json = ? WHERE job_id = ? AND revision = ?')
+      .run(JSON.stringify(delivery), jobId, revision)
+  }
+
   listReports(jobId: string): ReportRevision[] {
     const rows = this.db
       .prepare('SELECT * FROM reports WHERE job_id = ? ORDER BY revision DESC')
@@ -913,7 +987,11 @@ export class Store {
       createdAt: asString(row.created_at),
       dir: asString(row.dir),
       files: JSON.parse(asString(row.files_json, '{}')) as ReportRevision['files'],
-      summary: JSON.parse(asString(row.summary_json, '{}')) as ReportSummary
+      summary: JSON.parse(asString(row.summary_json, '{}')) as ReportSummary,
+      delivery: JSON.parse(asString(row.delivery_json, '[]')) as NonNullable<
+        ReportRevision['delivery']
+      >,
+      theme: (JSON.parse(asString(row.summary_json, '{}')) as ReportSummary).theme ?? 'delivery'
     }))
   }
 
@@ -989,7 +1067,13 @@ export class Store {
         `INSERT INTO parent_projects (id, name, data_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?)`
       )
-      .run(project.id, project.name, JSON.stringify(project.details), project.createdAt, project.updatedAt)
+      .run(
+        project.id,
+        project.name,
+        JSON.stringify(project.details),
+        project.createdAt,
+        project.updatedAt
+      )
   }
 
   getParentProject(parentProjectId: string): ParentProject | null {
@@ -1049,7 +1133,9 @@ export class Store {
 
     // 档案已经齐了就不必翻历史
     const complete =
-      hasCrew(project.details.crew) && hasLenses(project.details.lenses) && project.details.camera !== ''
+      hasCrew(project.details.crew) &&
+      hasLenses(project.details.lenses) &&
+      project.details.camera !== ''
     if (complete) return project.details
 
     const rows = this.db

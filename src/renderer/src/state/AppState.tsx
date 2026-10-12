@@ -22,6 +22,7 @@ import type {
   AppSettings,
   CopyJob,
   CopyJobFile,
+  FileState,
   FileStateDelta,
   IpcResult,
   JobProgress,
@@ -31,9 +32,15 @@ import type {
   ProjectDraft,
   ReportRevision
 } from '@shared/types'
-import { DEFAULT_SETTINGS, cueForJobState, isJobLive, shouldApplyFileStateChange } from '@shared/types'
+import {
+  DEFAULT_SETTINGS,
+  cueForJobState,
+  isJobLive,
+  shouldApplyFileStateChange
+} from '@shared/types'
 import { translate } from '../i18n'
 import { playCue, unlockAudio } from '../sound'
+import { updateVisibleFilePage } from './file-page'
 
 export interface Toast {
   id: number
@@ -65,7 +72,12 @@ interface AppStateValue {
   setProjectDraft: Dispatch<SetStateAction<ProjectDraft | null>>
   refreshJobs: () => Promise<void>
   refreshReports: (jobId: string) => Promise<void>
-  loadFiles: (jobId: string, limit?: number) => Promise<void>
+  loadFiles: (
+    jobId: string,
+    limit?: number,
+    offset?: number,
+    filters?: { search?: string; state?: FileState }
+  ) => Promise<void>
   /**
    * 取某个任务当前已落库的进度。
    *
@@ -89,7 +101,6 @@ export async function unwrap<T>(promise: Promise<IpcResult<T>>): Promise<T> {
 }
 
 const MAX_LOG_LINES = 400
-const MAX_FILE_ROWS = 3000
 
 export function AppStateProvider({ children }: { children: ReactNode }): ReactNode {
   const [ready, setReady] = useState(false)
@@ -113,6 +124,14 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
    * 逐条 `findIndex` 线性扫的话每秒就是几十万次比较，全花在没意义的查找上。
    */
   const fileIndex = useRef<Record<string, Map<string, number>>>({})
+  const fileQueries = useRef<
+    Record<
+      string,
+      { limit: number; offset: number; filters?: { search?: string; state?: FileState } }
+    >
+  >({})
+  const fileRequest = useRef<Record<string, number>>({})
+  const fileReloadTimers = useRef<Record<string, number>>({})
   /**
    * 上一次看到的每个任务的状态。
    *
@@ -142,9 +161,12 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
   const pushToast = useCallback((level: Toast['level'], message: string) => {
     const id = toastSeq.current++
     setToasts((current) => [...current.slice(-4), { id, level, message }])
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id))
-    }, level === 'error' ? 10_000 : 4_500)
+    window.setTimeout(
+      () => {
+        setToasts((current) => current.filter((toast) => toast.id !== id))
+      },
+      level === 'error' ? 10_000 : 4_500
+    )
   }, [])
 
   const dismissToast = useCallback((id: number) => {
@@ -159,33 +181,69 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
     }
   }, [pushToast])
 
-  const refreshReports = useCallback(
-    async (jobId: string) => {
+  const refreshReports = useCallback(async (jobId: string) => {
+    try {
+      const list = await unwrap(window.securereel.reports.list(jobId))
+      setReports((current) => ({ ...current, [jobId]: list }))
+    } catch {
+      /* 报告列表读不到就先空着，不影响任务本身 */
+    }
+  }, [])
+
+  const loadFiles = useCallback(
+    async (
+      jobId: string,
+      limit?: number,
+      offset?: number,
+      filters?: { search?: string; state?: FileState }
+    ) => {
+      const query =
+        limit === undefined
+          ? (fileQueries.current[jobId] ?? { limit: 100, offset: 0 })
+          : { limit, offset: offset ?? 0, filters }
+      fileQueries.current[jobId] = query
+      const request = (fileRequest.current[jobId] ?? 0) + 1
+      fileRequest.current[jobId] = request
       try {
-        const list = await unwrap(window.securereel.reports.list(jobId))
-        setReports((current) => ({ ...current, [jobId]: list }))
-      } catch {
-        /* 报告列表读不到就先空着，不影响任务本身 */
+        const list = await unwrap(
+          window.securereel.jobs.files(jobId, query.limit, query.offset, query.filters)
+        )
+        // A previous page/search response must never replace the latest selection.
+        if (fileRequest.current[jobId] !== request) return
+        fileIndex.current[jobId] = new Map(list.map((file, index) => [file.relPath, index]))
+        setFiles((current) => ({ ...current, [jobId]: list }))
+      } catch (error) {
+        if (fileRequest.current[jobId] === request)
+          pushToast('error', error instanceof Error ? error.message : String(error))
       }
+    },
+    [pushToast]
+  )
+
+  const reloadFilePage = useCallback(
+    (jobId: string) => {
+      if (fileReloadTimers.current[jobId] !== undefined) return
+      fileReloadTimers.current[jobId] = window.setTimeout(() => {
+        delete fileReloadTimers.current[jobId]
+        void loadFiles(jobId)
+      }, 400)
+    },
+    [loadFiles]
+  )
+
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(fileReloadTimers.current)) window.clearTimeout(timer)
     },
     []
   )
 
-  const loadFiles = useCallback(async (jobId: string, limit = 1000) => {
-    try {
-      const list = (await unwrap(window.securereel.jobs.files(jobId, limit, 0))).slice(0, MAX_FILE_ROWS)
-      // 索引必须与列表同时重建，否则增量事件会改到错行上去
-      fileIndex.current[jobId] = new Map(list.map((file, index) => [file.relPath, index]))
-      setFiles((current) => ({ ...current, [jobId]: list }))
-    } catch {
-      /* 同上 */
-    }
-  }, [])
-
   const seedProgress = useCallback(async (jobId: string) => {
     try {
       const value = await unwrap(window.securereel.jobs.progress(jobId))
-      setProgress((current) => (current[jobId] === undefined ? { ...current, [jobId]: value } : current))
+      setProgress((current) =>
+        current[jobId] === undefined ? { ...current, [jobId]: value } : current
+      )
     } catch {
       /* 读不到就按没有进度处理，不影响其它功能 */
     }
@@ -251,7 +309,9 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
             }
           }
           setJobs((current) =>
-            current.map((job) => (job.id === payload.jobId ? { ...job, state: payload.state } : job))
+            current.map((job) =>
+              job.id === payload.jobId ? { ...job, state: payload.state } : job
+            )
           )
           /*
            * 进入非运行态后引擎就不再推中间态了，而库里可能还留着 copying /
@@ -261,28 +321,25 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
            * 暂停**不**重拉：paused 仍属运行态，那些"拷贝中"是真实状态，
            * 重拉反而会把正在动的进度打回原样。
            */
-          if (!isJobLive(payload.state)) void loadFiles(payload.jobId, 1500)
+          if (!isJobLive(payload.state)) void loadFiles(payload.jobId)
           break
         }
         case 'job:file': {
           const payload = event.payload as { jobId: string; file: CopyJobFile }
+          if (fileQueries.current[payload.jobId]?.filters?.state !== undefined)
+            reloadFilePage(payload.jobId)
           setFiles((current) => {
             const list = current[payload.jobId]
             if (list === undefined) return current
-            const index = fileIndex.current[payload.jobId]?.get(payload.file.relPath) ?? -1
-            if (index < 0) {
-              // 清单里还没这一行（正常流程不会发生，重拉之后才有）—— 追加并补索引
-              fileIndex.current[payload.jobId]?.set(payload.file.relPath, list.length)
-              return { ...current, [payload.jobId]: [...list, payload.file] }
-            }
-            const next = list.slice()
-            next[index] = payload.file
-            return { ...current, [payload.jobId]: next }
+            const next = updateVisibleFilePage(list, payload.file)
+            return next === list ? current : { ...current, [payload.jobId]: next }
           })
           break
         }
         case 'job:files-delta': {
           const payload = event.payload as { jobId: string; deltas: FileStateDelta[] }
+          if (fileQueries.current[payload.jobId]?.filters?.state !== undefined)
+            reloadFilePage(payload.jobId)
           setFiles((current) => {
             const list = current[payload.jobId]
             const index = fileIndex.current[payload.jobId]
@@ -334,7 +391,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
         }
         case 'job:files-resync': {
           const payload = event.payload as { jobId: string }
-          void loadFiles(payload.jobId, 1500)
+          void loadFiles(payload.jobId)
           break
         }
         case 'job:log': {
@@ -359,7 +416,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
           break
       }
     },
-    [loadFiles, pushToast, refreshReports]
+    [loadFiles, pushToast, refreshReports, reloadFilePage]
   )
 
   // 初始化

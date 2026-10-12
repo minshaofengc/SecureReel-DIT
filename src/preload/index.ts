@@ -35,7 +35,9 @@ const api: SecureReelApi = {
     create: (request: CreateJobRequest) => invoke(IPC.jobCreate, request),
     list: () => invoke(IPC.jobList),
     get: (jobId) => invoke(IPC.jobGet, { jobId }),
-    files: (jobId, limit, offset) => invoke(IPC.jobFiles, { jobId, limit, offset }),
+    files: (jobId, limit, offset, filter) => invoke(IPC.jobFiles, { jobId, limit, offset, filter }),
+    fileCount: (jobId, filter) => invoke(IPC.jobFileCount, { jobId, filter }),
+    retryProxies: (jobId) => invoke(IPC.jobRetryProxies, { jobId }),
     progress: (jobId) => invoke(IPC.jobProgress, { jobId }),
     start: (jobId) => invoke(IPC.jobStart, { jobId }),
     pause: (jobId) => invoke(IPC.jobPause, { jobId }),
@@ -63,7 +65,8 @@ const api: SecureReelApi = {
   },
   reports: {
     list: (jobId) => invoke(IPC.reportsList, { jobId }),
-    regenerate: (jobId) => invoke(IPC.reportsRegenerate, { jobId }),
+    regenerate: (jobId, theme) => invoke(IPC.reportsRegenerate, { jobId, theme }),
+    preview: (jobId, theme) => invoke(IPC.reportsPreview, { jobId, theme }),
     reveal: (path) => invoke(IPC.reportsReveal, { path }),
     open: (path) => invoke(IPC.reportsOpen, { path })
   },

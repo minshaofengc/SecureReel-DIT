@@ -13,7 +13,7 @@
  *   manifest/          本次写入的清单副本（ASC MHL 同时也会写进各目标盘）
  */
 import { createWriteStream } from 'node:fs'
-import { copyFile, cp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type {
   CopyJob,
@@ -23,6 +23,7 @@ import type {
   ProjectInfo,
   ReportRevision,
   ReportSummary,
+  ReportTheme,
   TargetProgress
 } from '@shared/types'
 import type { Store } from '@main/db/store'
@@ -36,7 +37,7 @@ import {
   targetRelativePath
 } from '@main/fs-utils'
 import { StreamWriter } from '@main/stream-writer'
-import { humanBytes } from '@shared/format'
+import { reportTimestamp, humanBytes } from '@shared/format'
 import { renderHtmlReport } from './html-report'
 import {
   writeAscMhlManifest,
@@ -62,6 +63,7 @@ async function* manifestEntries(job: CopyJob, store: Store): AsyncIterable<CopyJ
 }
 
 export interface WriteRevisionInput {
+  theme?: ReportTheme
   job: CopyJob
   project: ProjectInfo
   store: Store
@@ -124,6 +126,7 @@ export interface PublishToTargetsResult {
   failed: { label: string; reason: string }[]
   /** 每个盘上那份副本的相对路径（相对盘根），供日志与界面显示 */
   relativeDirs: string[]
+  deliveries: NonNullable<ReportRevision['delivery']>
 }
 
 /**
@@ -134,54 +137,99 @@ export interface PublishToTargetsResult {
  * 一份纯文本说明是最省事的入口 —— 它把"这次拷了什么、怎么验的、
  * 怎么复核"三句话讲清楚，不需要任何工具。
  */
-function renderDeliveryNote(input: PublishToTargetsInput): string {
-  const { revision } = input
+async function renderDeliveryNote(
+  input: PublishToTargetsInput,
+  target: CopyTarget
+): Promise<string> {
+  const { revision, job } = input
   const summary = revision.summary
-  const stateText =
-    summary.jobState === 'completed'
-      ? '完成（全部文件校验通过）'
-      : summary.jobState === 'completed-with-errors'
-        ? `完成，但有 ${summary.failedFiles} 个文件未通过`
-        : summary.jobState === 'cancelled'
-          ? '被中断（未跑完，这份记录不完整）'
-          : `异常结束（${summary.jobState}）`
-
+  const html = revision.files.html === undefined ? '' : await readFile(revision.files.html, 'utf8')
+  const frameDependencies = /src=["']frames\//i.test(html)
+  const snapshot =
+    revision.files.json === undefined
+      ? null
+      : (JSON.parse(await readFile(revision.files.json, 'utf8')) as {
+          files: CopyJobFile[]
+          manifest: { path: string } | null
+          notes: string[]
+        })
+  const targetSummary = summary.targets.find((item) => item.targetId === target.id)
+  const proxyLines = (snapshot?.files ?? []).flatMap((file) => {
+    const proxy = file.probe?.proxy
+    if (proxy === undefined || proxy === null) return []
+    const result = proxy.targets?.find((item) => item.targetId === target.id)
+    const state = result?.state ?? proxy.status ?? (proxy.ok ? 'verified' : 'failed')
+    const stateText =
+      state === 'verified'
+        ? '已校验交付'
+        : state === 'skipped'
+          ? '跳过'
+          : state === 'failed'
+            ? '失败'
+            : '未完成'
+    const relPath = result === undefined ? proxy.relPath : result.relPath
+    const reason = result === undefined ? proxy.reason : result.error
+    return [
+      `  ${file.relPath}：${stateText}${relPath ? ` → ${relPath}` : ''}${reason ? `（${reason}）` : ''}`
+    ]
+  })
+  const manifestHelp: Record<ManifestFormat, string> = {
+    'asc-mhl-2.0': 'ASC MHL 清单：使用支持 ASC MHL 2.0 的工具复核。',
+    'mhl-v1': 'MHL v1 清单：使用支持 MHL v1 的工具复核。',
+    csv: 'CSV 清单：用表格工具查看路径、算法和校验值；表格本身不会自动校验素材。',
+    json: 'JSON 清单：使用支持本清单结构的脚本逐文件计算并比较校验值。'
+  }
+  const resultText =
+    summary.jobState === 'completed' && summary.failedFiles === 0
+      ? '原始素材拷贝完成；代理及报告交付请查看各自状态'
+      : `任务状态 ${summary.jobState}；原始素材通过 ${summary.verifiedFiles}，失败 ${summary.failedFiles}，未完成 ${Math.max(0, summary.totalFiles - summary.verifiedFiles - summary.failedFiles)}`
   return [
     `${input.toolName} 交付说明`,
     '='.repeat(48),
     '',
     `修订号：${revision.revision}`,
     `任务名称：${summary.jobName}`,
-    `生成时间：${revision.createdAt}`,
+    `生成时间：${reportTimestamp(revision.createdAt)}`,
     `生成机器：${input.hostname}`,
     `工具版本：${input.toolName} ${input.toolVersion}`,
     '',
-    '【本次拷贝】',
+    '【原始素材】',
     `  来源路径：${summary.sourcePath}`,
-    `  来源标签：${summary.sourceLabel}`,
-    `  结果：${stateText}`,
+    `  本目标：${target.label}（${target.path}）`,
+    `  素材相对目录：${job.sourceRootName || '.'}`,
+    `  结果：${resultText}`,
     `  文件数量：${summary.totalFiles}`,
     `  数据量：${humanBytes(summary.totalBytes)}`,
-    `  通过校验：${summary.verifiedFiles}`,
-    `  未通过：${summary.failedFiles}`,
     `  校验算法：${summary.hashAlgorithm}`,
-    `  清单格式：${summary.manifestFormat}`,
+    ...(targetSummary === undefined
+      ? []
+      : [`  本目标通过：${targetSummary.filesCopied}；失败：${targetSummary.filesFailed}`]),
+    '  原始素材副本与源侧校验值经独立重读比对；代理另列结果，不代表与原片字节相同。',
+    '',
+    '【代理素材】',
+    ...(proxyLines.length > 0
+      ? proxyLines
+      : [job.proxyEnabled ? '  未记录可交付代理，请勿视为代理已完成。' : '  本任务未开启代理。']),
     '',
     '【本目录里有什么】',
-    '  report.html    可直接双击打开的离线报告（含首尾帧，单文件自包含）',
-    '  report.pdf     适合归档与交付的版式',
-    '  report.json    机器可读的逐文件记录',
-    '  frames/        首尾帧缩略图',
-    '  manifest/      本次写入的清单副本',
+    ...(revision.files.html === undefined
+      ? []
+      : [
+          `  report.html    离线报告${frameDependencies ? '（依赖 frames/ 图片目录，转交时保留完整目录）' : '（图片已内联或无需外部图片，可单文件打开）'}`
+        ]),
+    ...(revision.files.pdf === undefined ? [] : ['  report.pdf     适合打印和归档的报告']),
+    ...(revision.files.json === undefined ? [] : ['  report.json    完整逐文件记录和代理状态']),
+    ...(snapshot?.manifest === null || snapshot?.manifest === undefined
+      ? []
+      : [`  manifest/      ${summary.manifestFormat} 清单副本`]),
     '',
     '【怎么复核】',
-    '  1. 双击 report.html，逐文件看状态、校验值、素材参数与画面',
-    '  2. 盘根的 ascmhl/ 目录下另有一份清单随素材存放，',
-    '     可用任何支持 ASC MHL 的工具做完整性核对',
-    '  3. 需要重新验证时，在本工具里对同一来源跑一次「仅校验」，',
-    '     它只读比对、不写入也不删除任何字节',
-    '',
-    '说明：目标盘上出现完整文件名的素材，都已通过独立重读校验。',
+    `  ${manifestHelp[summary.manifestFormat]}`,
+    '  查看本目录 manifest/ 下的实际清单；目标盘清单写入失败等说明见下方。',
+    '  在本工具运行「仅校验」可重新读取比对原始素材；该模式不写入或删除目标盘内容。',
+    ...(snapshot?.notes.length
+      ? ['', '【执行说明】', ...snapshot.notes.map((note) => `  ${note}`)]
+      : []),
     ''
   ].join('\n')
 }
@@ -335,10 +383,12 @@ export class ReportStore {
     if (proxyStat.requested > 0) {
       if (proxyStat.skipped > 0) {
         notes.push(
-          `代理素材：已生成 ${proxyStat.ok} 条，跳过 ${proxyStat.skipped} 条（私有格式无法解码或目标盘不可写，逐条原因见文件明细）。`
+          `代理素材：已生成 ${proxyStat.ok} 条，未完成或跳过 ${proxyStat.skipped} 条（逐条原因与各目标状态见代理素材明细）。`
         )
       } else if (proxyStat.ok > 0) {
-        notes.push(`代理素材：已为 ${proxyStat.ok} 条素材生成 ProRes 代理（目标盘 Proxies/ 目录）。`)
+        notes.push(
+          `代理素材：已为 ${proxyStat.ok} 条素材生成代理（实际编码规格与各目标路径见代理素材明细）。`
+        )
       }
     }
 
@@ -350,6 +400,7 @@ export class ReportStore {
     const htmlPath = join(dir, 'report.html')
     const html = await renderHtmlReport({
       summary,
+      theme: input.theme ?? 'delivery',
       job,
       project,
       targets: targetProgress,
@@ -366,6 +417,7 @@ export class ReportStore {
 
     // 5) 落库
     const row: ReportRevision = {
+      theme: input.theme ?? 'delivery',
       id: 0,
       jobId: job.id,
       revision,
@@ -411,16 +463,25 @@ export class ReportStore {
     const published: string[] = []
     const failed: { label: string; reason: string }[] = []
     const relativeDirs: string[] = []
+    const deliveries: NonNullable<ReportRevision['delivery']> = []
 
     // 仅校验模式只读比对，不写任何字节 —— 这条没有例外
-    if (job.mode === 'verify') return { published, failed, relativeDirs }
+    if (job.mode === 'verify') return { published, failed, relativeDirs, deliveries }
 
-    const source = this.revisionDir(job.id, revision.revision)
+    const source = revision.dir
     if (!(await pathExists(source))) {
       return {
         published,
         failed: [{ label: '本机报告目录', reason: '修订目录不存在，无法复制' }],
-        relativeDirs
+        relativeDirs,
+        deliveries: targets
+          .filter((t) => t.enabled)
+          .map((t) => ({
+            targetId: t.id,
+            label: t.label,
+            state: 'failed' as const,
+            reason: '修订目录不存在'
+          }))
       }
     }
 
@@ -434,13 +495,35 @@ export class ReportStore {
 
       if (await pathExists(dest)) {
         // 绝不覆盖：宁可少一份副本，也不能把上一次的交付记录洗掉
+        deliveries.push({
+          targetId: target.id,
+          label: target.label,
+          state: 'failed',
+          reason: `${relative} 已存在，未覆盖`
+        })
         failed.push({ label: target.label, reason: `${relative} 已存在，未覆盖` })
         continue
       }
 
+      let ownsDestination = false
       try {
-        await cp(source, dest, { recursive: true, force: false, errorOnExist: false })
-        await writeFile(join(dest, '交付说明.txt'), renderDeliveryNote(input), 'utf8')
+        await ensureDir(dirname(dest))
+        await mkdir(dest)
+        ownsDestination = true
+        for (const name of await readdir(source)) {
+          await cp(join(source, name), join(dest, name), {
+            recursive: true,
+            force: false,
+            errorOnExist: true
+          })
+        }
+        await writeFile(join(dest, '交付说明.txt'), await renderDeliveryNote(input, target), 'utf8')
+        deliveries.push({
+          targetId: target.id,
+          label: target.label,
+          state: 'published',
+          path: dest
+        })
         published.push(target.label)
         relativeDirs.push(relative)
       } catch (error) {
@@ -450,12 +533,18 @@ export class ReportStore {
          * 删的绝不是用户素材，也不是上一次留下的副本 —— 那种情况在
          * 上面那个 pathExists 分支就已经中止了。
          */
-        await rm(dest, { recursive: true, force: true }).catch(() => undefined)
+        if (ownsDestination) await rm(dest, { recursive: true, force: true }).catch(() => undefined)
+        deliveries.push({
+          targetId: target.id,
+          label: target.label,
+          state: 'failed',
+          reason: describeError(error)
+        })
         failed.push({ label: target.label, reason: describeError(error) })
       }
     }
 
-    return { published, failed, relativeDirs: [...new Set(relativeDirs)] }
+    return { published, failed, relativeDirs: [...new Set(relativeDirs)], deliveries }
   }
 
   /**
@@ -537,11 +626,15 @@ export class ReportStore {
     const startedAt = job.startedAt === null ? null : Date.parse(job.startedAt)
     const finishedAt = job.finishedAt === null ? null : Date.parse(job.finishedAt)
     const durationSeconds =
-      startedAt !== null && finishedAt !== null && Number.isFinite(startedAt) && Number.isFinite(finishedAt)
+      startedAt !== null &&
+      finishedAt !== null &&
+      Number.isFinite(startedAt) &&
+      Number.isFinite(finishedAt)
         ? Math.max(0, (finishedAt - startedAt) / 1000)
         : null
 
     return {
+      theme: input.theme ?? 'delivery',
       jobId: job.id,
       jobName: job.name,
       revision,

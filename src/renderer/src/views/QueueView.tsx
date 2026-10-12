@@ -1,6 +1,15 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { CopyJob, CopyJobFile, ProjectInfo, TargetProgress } from '@shared/types'
-import { HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH, isJobLive } from '@shared/types'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
+import type { CopyJob, CopyJobFile, FileState, ProjectInfo, TargetProgress } from '@shared/types'
+import { FILE_STATES, HASH_ALGORITHM_LABELS, MAX_COPY_NOTES_LENGTH, isJobLive } from '@shared/types'
 import { describeLenses } from '@shared/project'
 import { humanBytes, humanDuration, humanRate, percent } from '@shared/format'
 import { frameUrl } from '@shared/frames'
@@ -90,12 +99,17 @@ function SpeedSparkline({ values }: { values: number[] }): ReactNode {
 const FileRow = memo(function FileRow({
   file,
   jobId,
-  dash
+  dash,
+  onSelect,
+  targets
 }: {
   file: CopyJobFile
   jobId: string
   dash: string
+  onSelect: (path: string) => void
+  targets: CopyJob['targets']
 }): ReactNode {
+  const { t } = useI18n()
   return (
     <tr>
       <td className="w-thumb">
@@ -111,7 +125,11 @@ const FileRow = memo(function FileRow({
           />
         )}
       </td>
-      <td className="mono">{file.relPath}</td>
+      <td className="mono">
+        <button type="button" className="file-path-button" onClick={() => onSelect(file.relPath)}>
+          {file.relPath}
+        </button>
+      </td>
       <td className="num">{humanBytes(file.sizeBytes)}</td>
       <td>
         {file.probe?.format == null ? null : <span className="badge">{file.probe.format}</span>}
@@ -120,6 +138,33 @@ const FileRow = memo(function FileRow({
         <FileStateBadge state={file.state} />
       </td>
       <td className="mono faint">{file.sourceHash ?? dash}</td>
+      <td>
+        {file.probe?.proxy == null ? (
+          dash
+        ) : (
+          <>
+            <span
+              className={`badge ${file.probe.proxy.ok ? 'ok' : file.probe.proxy.status === 'skipped' || file.probe.proxy.status === 'pending' ? '' : file.probe.proxy.status === 'running' ? 'accent' : 'danger'}`}
+              title={file.probe.proxy.reason ?? undefined}
+            >
+              {file.probe.proxy.status === 'skipped'
+                ? t('filestate.skipped')
+                : file.probe.proxy.status === 'pending'
+                  ? t('filestate.pending')
+                  : file.probe.proxy.status === 'running'
+                    ? t('queue.phase.proxying')
+                    : t(file.probe.proxy.ok ? 'workbench.proxySuccess' : 'workbench.proxyFailure')}
+            </span>
+            {file.probe.proxy.targets?.map((target) => (
+              <div key={target.targetId} className="hint" title={target.error ?? undefined}>
+                {targets.find((item) => item.id === target.targetId)?.label ??
+                  target.targetId.slice(0, 8)}{' '}
+                · {t(`filestate.${target.state === 'running' ? 'copying' : target.state}`)}
+              </div>
+            ))}
+          </>
+        )}
+      </td>
     </tr>
   )
 })
@@ -165,6 +210,24 @@ export function QueueView(): ReactNode {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('info')
   const [busy, setBusy] = useState(false)
+  const [filePage, setFilePage] = useState(0)
+  const [fileSearch, setFileSearch] = useState('')
+  const [fileState, setFileState] = useState<FileState | ''>('')
+  const [fileCount, setFileCount] = useState(0)
+  const [focusedPath, setFocusedPath] = useState<string | null>(null)
+  const selectFile = useCallback((path: string) => {
+    setFocusedPath(path)
+    setTab('info')
+  }, [])
+  const filters = useMemo(
+    () => ({ search: fileSearch.trim() || undefined, state: fileState || undefined }),
+    [fileSearch, fileState]
+  )
+  useEffect(() => {
+    setFilePage(0)
+    setFocusedPath(null)
+    setFileCount(0)
+  }, [selectedId, fileSearch, fileState])
 
   /*
    * 别处跳过来并要求"选中这个任务"（工作台点一条最近任务、
@@ -188,6 +251,7 @@ export function QueueView(): ReactNode {
     [jobs, selectedId]
   )
   const selectedJobId = selected?.id ?? null
+  const selectedState = selected?.state
 
   const parentOptions = useMemo<ComboOption<string>[]>(
     () => [
@@ -207,12 +271,39 @@ export function QueueView(): ReactNode {
    */
   useEffect(() => {
     if (selectedJobId === null) return
-    void loadFiles(selectedJobId, 1500)
     void refreshReports(selectedJobId)
     // 已完成（或重启后重新打开）的任务不会再收到进度事件，
     // 必须主动读一次，否则各目标统计会显示成 0 和「进行中」
     void seedProgress(selectedJobId)
-  }, [loadFiles, refreshReports, seedProgress, selectedJobId])
+  }, [refreshReports, seedProgress, selectedJobId])
+
+  useEffect(() => {
+    if (selectedJobId === null) return
+    let cancelled = false
+    const refresh = async (): Promise<void> => {
+      await loadFiles(selectedJobId, 100, filePage * 100, filters)
+      try {
+        const count = await unwrap(window.securereel.jobs.fileCount(selectedJobId, filters))
+        if (!cancelled) {
+          setFileCount(count)
+          if (filePage > 0 && filePage * 100 >= count)
+            setFilePage(Math.max(0, Math.ceil(count / 100) - 1))
+        }
+      } catch (error) {
+        if (!cancelled) pushToast('error', error instanceof Error ? error.message : String(error))
+      }
+    }
+    const timer = window.setTimeout(() => void refresh(), 200)
+    const poll =
+      selectedState !== undefined && isJobLive(selectedState)
+        ? window.setInterval(() => void refresh(), 2000)
+        : undefined
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      if (poll !== undefined) window.clearInterval(poll)
+    }
+  }, [filePage, filters, loadFiles, pushToast, selectedJobId, selectedState])
 
   /* ---------------- 拷贝信息（卡号 / 本次备注 / 归属） ---------------- */
 
@@ -284,13 +375,18 @@ export function QueueView(): ReactNode {
     const known = new Set(parents.map((project) => project.id))
     const buckets = new Map<string, CopyJob[]>()
     for (const job of jobs) {
-      const key = job.parentProjectId !== null && known.has(job.parentProjectId) ? job.parentProjectId : ''
+      const key =
+        job.parentProjectId !== null && known.has(job.parentProjectId) ? job.parentProjectId : ''
       const list = buckets.get(key)
       if (list === undefined) buckets.set(key, [job])
       else list.push(job)
     }
     const ordered = parents
-      .map((project) => ({ key: project.id, label: project.name, list: buckets.get(project.id) ?? [] }))
+      .map((project) => ({
+        key: project.id,
+        label: project.name,
+        list: buckets.get(project.id) ?? []
+      }))
       .filter((group) => group.list.length > 0)
     const ungrouped = buckets.get('')
     if (ungrouped !== undefined) {
@@ -408,7 +504,21 @@ export function QueueView(): ReactNode {
     try {
       await unwrap(window.securereel.jobs.retryFailed(selected.id))
       await refreshJobs()
-      await loadFiles(selected.id, 1500)
+      await loadFiles(selected.id)
+    } catch (error) {
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }, [loadFiles, pushToast, refreshJobs, selected])
+
+  const retryProxies = useCallback(async () => {
+    if (selected === null || isJobLive(selected.state)) return
+    setBusy(true)
+    try {
+      await unwrap(window.securereel.jobs.retryProxies(selected.id))
+      await refreshJobs()
+      await loadFiles(selected.id)
     } catch (error) {
       pushToast('error', error instanceof Error ? error.message : String(error))
     } finally {
@@ -529,9 +639,7 @@ export function QueueView(): ReactNode {
                 <div className="mhead__id">
                   <h2>{selected.name}</h2>
                   <div className="mhead__tags">
-                    <span className="tag">
-                      {HASH_ALGORITHM_LABELS[selected.hashAlgorithm]}
-                    </span>
+                    <span className="tag">{HASH_ALGORITHM_LABELS[selected.hashAlgorithm]}</span>
                     <span className="tag">
                       {selected.mode === 'verify'
                         ? t('queue.mode.verify')
@@ -545,15 +653,15 @@ export function QueueView(): ReactNode {
                     selected.state === 'cancelled' ||
                     selected.state === 'failed') &&
                     selected.filesFailed === 0 && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      disabled={busy}
-                      onClick={() => void act('start')}
-                    >
-                      {t('queue.start')}
-                    </button>
-                  )}
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        disabled={busy}
+                        onClick={() => void act('start')}
+                      >
+                        {t('queue.start')}
+                      </button>
+                    )}
                   {!isJobLive(selected.state) && selected.filesFailed > 0 && (
                     <button
                       type="button"
@@ -635,7 +743,10 @@ export function QueueView(): ReactNode {
                  */
                 const pct = jobProgress?.overallPercent ?? percent(bytesDone, total)
                 const phase = jobProgress?.phase ?? 'done'
-                const active = selected.state === 'running' || selected.state === 'queued'
+                const active =
+                  selected.state === 'running' ||
+                  selected.state === 'queued' ||
+                  phase === 'reporting'
                 // 任务不跑的时候 activeFiles 是陈旧数据，别显示
                 const activeFiles = active ? (jobProgress?.activeFiles ?? []) : []
                 // 已用时按任务真实的 startedAt 算，而不是从界面挂载算起 ——
@@ -643,7 +754,14 @@ export function QueueView(): ReactNode {
                 const elapsedSeconds =
                   selected.startedAt === null
                     ? null
-                    : Math.max(0, (Date.now() - Date.parse(selected.startedAt)) / 1000)
+                    : Math.max(
+                        0,
+                        ((selected.finishedAt === null
+                          ? Date.now()
+                          : Date.parse(selected.finishedAt)) -
+                          Date.parse(selected.startedAt)) /
+                          1000
+                      )
                 const speed = jobProgress?.bytesPerSecond ?? 0
                 const avgSpeed = jobProgress?.averageBytesPerSecond ?? 0
                 const eta = jobProgress?.etaSeconds ?? null
@@ -660,6 +778,48 @@ export function QueueView(): ReactNode {
                      * "0 B/s""—""84 小时 19 分"占了一整行，是这一页看起来
                      * 又空又乱的主要来源。
                      */}
+                    <div className="pipeline" aria-label={t('workbench.pipeline')}>
+                      {(['copying', 'verifying', 'proxying', 'reporting'] as const).map((stage) => (
+                        <div
+                          key={stage}
+                          className="pipeline__stage"
+                          data-active={phase === stage || undefined}
+                        >
+                          <span>{t(`queue.phase.${stage}`)}</span>
+                          {stage === 'proxying' && jobProgress?.proxy !== undefined && (
+                            <strong>
+                              {jobProgress.proxy.done} / {jobProgress.proxy.total}
+                            </strong>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {jobProgress?.proxy !== undefined && (
+                      <div className="proxy-progress">
+                        <span>
+                          {t('workbench.proxyStage')} · {jobProgress.proxy.done} /{' '}
+                          {jobProgress.proxy.total}
+                        </span>
+                        {jobProgress.proxy.failed > 0 && (
+                          <span className="danger">
+                            {t('workbench.proxyFailure')} {jobProgress.proxy.failed}
+                          </span>
+                        )}
+                        {jobProgress.proxy.active !== null && (
+                          <span className="mono faint">{jobProgress.proxy.active}</span>
+                        )}
+                        {jobProgress.proxy.failed > 0 && !isJobLive(selected.state) && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={busy}
+                            onClick={() => void retryProxies()}
+                          >
+                            {t('workbench.retryProxies')}
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <div className="progwrap">
                       <div className="progtop">
                         <div>
@@ -803,13 +963,40 @@ export function QueueView(): ReactNode {
                           </div>
                           <div className="tgt__v">{humanBytes(live?.bytesCopied ?? 0)}</div>
                           <span className={`badge ${targetTone[state]}`}>{targetText[state]}</span>
-                          {live?.error != null && <div className="tgt__err danger">{live.error}</div>}
+                          {live?.error != null && (
+                            <div className="tgt__err danger">{live.error}</div>
+                          )}
                         </div>
                       )
                     })}
 
                     <div className="sec-h">
-                      {t('queue.filesTab')} · {jobFiles.length}
+                      {t('queue.filesTab')} · {fileCount}
+                    </div>
+                    <div className="file-toolbar">
+                      <input
+                        className="input"
+                        type="search"
+                        value={fileSearch}
+                        placeholder={t('workbench.searchFiles')}
+                        aria-label={t('workbench.searchFiles')}
+                        onChange={(event) => setFileSearch(event.target.value)}
+                      />
+                      <SelectBox<FileState | ''>
+                        value={fileState}
+                        ariaLabel={t('common.status')}
+                        options={[
+                          { value: '', label: t('workbench.allStates') },
+                          ...FILE_STATES.map((state) => ({
+                            value: state,
+                            label: t(`filestate.${state}`)
+                          }))
+                        ]}
+                        onChange={setFileState}
+                      />
+                      <span className="faint">
+                        {fileCount} {t('common.files')}
+                      </span>
                     </div>
                     {jobFiles.length === 0 ? (
                       <div className="faint">{t('queue.noFiles')}</div>
@@ -824,6 +1011,7 @@ export function QueueView(): ReactNode {
                               <th>{t('queue.format')}</th>
                               <th>{t('common.status')}</th>
                               <th>{t('copy.hashAlgorithm')}</th>
+                              <th>{t('workbench.proxyStage')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -833,12 +1021,36 @@ export function QueueView(): ReactNode {
                                 file={file}
                                 jobId={selected.id}
                                 dash={t('common.dash')}
+                                targets={selected.targets}
+                                onSelect={selectFile}
                               />
                             ))}
                           </tbody>
                         </table>
                       </div>
                     )}
+                    <div className="file-pagination">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={filePage === 0}
+                        onClick={() => setFilePage((page) => page - 1)}
+                      >
+                        {t('workbench.previous')}
+                      </button>
+                      <span aria-live="polite">
+                        {fileCount === 0 ? 0 : filePage * 100 + 1}–
+                        {Math.min((filePage + 1) * 100, fileCount)} / {fileCount}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={(filePage + 1) * 100 >= fileCount}
+                        onClick={() => setFilePage((page) => page + 1)}
+                      >
+                        {t('workbench.next')}
+                      </button>
+                    </div>
                   </>
                 )
               })()}
@@ -873,6 +1085,33 @@ export function QueueView(): ReactNode {
               <div className="faint">{t('queue.pickOne')}</div>
             ) : tab === 'info' ? (
               <div className="info-pane">
+                {jobFiles.find((file) => file.relPath === focusedPath) !== undefined &&
+                  (() => {
+                    const file = jobFiles.find((item) => item.relPath === focusedPath)!
+                    return (
+                      <section className="material-detail">
+                        <div className="sec-h">{t('workbench.materialDetails')}</div>
+                        <div className="mono">{file.relPath}</div>
+                        <div>
+                          <FileStateBadge state={file.state} /> · {humanBytes(file.sizeBytes)}
+                        </div>
+                        {file.error !== null && <Note tone="danger">{file.error}</Note>}
+                        {file.probe?.proxy?.reason != null && (
+                          <Note tone={file.probe.proxy.ok ? undefined : 'warn'}>
+                            {file.probe.proxy.reason}
+                          </Note>
+                        )}
+                        {file.results.map((result) => (
+                          <div className="hint" key={result.targetId}>
+                            {selected.targets.find((item) => item.id === result.targetId)?.label} ·{' '}
+                            {t(`filestate.${result.state}`)}
+                            {result.error === null ? '' : ` · ${result.error}`}
+                          </div>
+                        ))}
+                      </section>
+                    )
+                  })()}
+
                 {/*
                  * 外层不能用 <label>：自研下拉的触发器是个 <button>，
                  * label 会把点击再转发一次给它，等于一点开一关。

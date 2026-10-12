@@ -19,7 +19,7 @@
  *   · 绝不覆盖 —— 目标盘上已有同名不同内容的文件时明确报错并保留原文件。
  *     静默覆盖别人的素材在 DIT 流程里是事故，不是功能。
  */
-import { open, stat } from 'node:fs/promises'
+import { open, stat, lstat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
 import type {
@@ -40,7 +40,6 @@ import type {
   ProxyResolution,
   TargetProgress
 } from '@shared/types'
-import { PROXY_RESOLUTION_HEIGHT } from '@shared/types'
 import { canDecodeWithFfmpeg } from '@main/media/formats'
 import { NAME_CONFLICT_PREFIXES, msg, type MsgKey } from '@shared/messages'
 import { computeOverallPercent } from '@shared/progress'
@@ -60,9 +59,9 @@ import {
 } from '@main/fs-utils'
 import { PauseGate, RateMeter, Semaphore } from './concurrency'
 import { FileDeltaBuffer } from './file-delta-buffer'
-import type { MediaProbeRunner } from '@main/media/probe'
-import { generateProxy, PROXY_CODEC_LABEL, proxyAbsPathFor } from '@main/media/proxy'
-import { detectEncoders, pickEncoder } from '@main/media/encoder-probe'
+import { unavailableMediaProbe, type MediaProbeRunner } from '@main/media/probe'
+import { processProxy } from '@main/media/proxy-pipeline'
+import { ioCoordinator, volumeKey } from './io-coordinator'
 
 export const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 
@@ -213,6 +212,7 @@ export function isNameConflictReason(error: string | null): boolean {
 export class CopyEngine {
   private readonly deps: CopyEngineDeps
   private readonly slots: TargetSlot[] = []
+  private readonly writeSemaphore: Semaphore
   private readonly verifySemaphore: Semaphore
   private readonly pendingVerifications = new Set<Promise<void>>()
   private readonly openWorks = new Set<FileTargetWork>()
@@ -234,8 +234,17 @@ export class CopyEngine {
    */
   private readonly pendingProxies = new Set<Promise<void>>()
   private readonly proxySemaphore: Semaphore
+  private proxyTotal = 0
+  private proxyDone = 0
+  private proxyFailed = 0
+  private readonly proxyActive = new Set<string>()
+  private readonly scheduledProxies = new Set<string>()
+  private readonly volumeKeys = new Map<string, string>()
+  private readonly targetByteDeltas = new Map<string, number>()
+  private lastCounterFlush = 0
   private readonly rate = new RateMeter()
   private cancelled = false
+  private backgroundError: unknown = null
   private lastProgressAt = 0
   /**
    * 当前正在处理的文件 → 已读字节数。
@@ -301,6 +310,7 @@ export class CopyEngine {
     this.deps = deps
     this.deltas = new FileDeltaBuffer(FILE_DELTA_FLUSH_MS, (list) => deps.onFilesChanged?.(list))
     this.progressThrottleMs = deps.progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS
+    this.writeSemaphore = new Semaphore(Math.max(1, deps.settings.maxParallelTargets))
     this.verifySemaphore = new Semaphore(Math.max(1, deps.settings.maxParallelTargets))
     this.probeSemaphore = new Semaphore(Math.max(1, deps.settings.frameConcurrency))
     this.proxySemaphore = new Semaphore(Math.max(1, deps.settings.proxyConcurrency))
@@ -350,7 +360,13 @@ export class CopyEngine {
       store.updateJob(job.id, { state: 'failed', finishedAt: new Date().toISOString() })
       this.log('error', this.m('engine.allTargetsUnavailable'))
       this.flushFileDeltas()
-      return { state: 'failed', filesDone: 0, filesFailed: job.totalFiles, bytesDone: 0, processed: 0 }
+      return {
+        state: 'failed',
+        filesDone: 0,
+        filesFailed: job.totalFiles,
+        bytesDone: 0,
+        processed: 0
+      }
     }
 
     let processed = 0
@@ -372,6 +388,8 @@ export class CopyEngine {
         }
       }
 
+      this.phase = 'verifying'
+      this.emitProgress(true)
       await this.drainVerifications()
 
       // 拷贝与校验都结束了，剩下的是解析素材元数据、提取首帧。
@@ -383,20 +401,25 @@ export class CopyEngine {
       }
       // 代理生成排在探测之后（依赖探测结论），也归入 analyzing 阶段 ——
       // 对用户来说"拷贝之后还在干活"是同一件事，不必再多一个阶段。
+      await this.recoverProxyQueue()
       if (this.pendingProxies.size > 0) {
+        this.phase = 'proxying'
+        this.emitProgress(true)
         await this.drainProxies()
       }
+      this.throwIfCancelled()
+      if (this.backgroundError !== null) throw this.backgroundError
       this.phase = 'finalizing'
       this.emitProgress(true)
     } catch (error) {
-      await this.drainVerifications()
-      await this.drainProbes()
-      await this.drainProxies()
+      await Promise.allSettled([this.drainVerifications(), this.drainProbes(), this.drainProxies()])
       await this.releaseAllHandles()
       const cancelled = this.cancelled || this.deps.signal.aborted
       this.log(
         cancelled ? 'warn' : 'error',
-        cancelled ? this.m('engine.cancelledResume') : this.m('engine.jobInterrupted', { reason: describeError(error) })
+        cancelled
+          ? this.m('engine.cancelledResume')
+          : this.m('engine.jobInterrupted', { reason: describeError(error) })
       )
       store.updateJob(job.id, {
         state: cancelled ? 'cancelled' : 'failed',
@@ -418,7 +441,8 @@ export class CopyEngine {
 
     const snapshot = store.getJob(job.id)
     const filesFailed = snapshot?.filesFailed ?? 0
-    const state: JobState = filesFailed > 0 ? 'completed-with-errors' : 'completed'
+    const state: JobState =
+      filesFailed > 0 || this.proxyFailed > 0 ? 'completed-with-errors' : 'completed'
 
     // 收尾时把各目标的状态定下来。少了这一步，任务结束后界面里每个目标
     // 都会一直显示「进行中」，而任务本身已经显示「已完成」—— 自相矛盾。
@@ -464,6 +488,7 @@ export class CopyEngine {
 
   private async prepareSlots(): Promise<void> {
     const { job, store } = this.deps
+    this.volumeKeys.set(job.sourcePath, await volumeKey(job.sourcePath))
     for (const slot of this.slots) {
       if (!slot.enabled) {
         store.updateTargetProgress(job.id, slot.target.id, { state: 'disabled', error: slot.error })
@@ -480,6 +505,7 @@ export class CopyEngine {
           const info = await stat(slot.target.path)
           if (!info.isDirectory()) throw new Error(this.m('engine.notDirectory'))
         }
+        this.volumeKeys.set(slot.target.path, await volumeKey(slot.target.path))
         store.updateTargetProgress(job.id, slot.target.id, { state: 'running', error: null })
       } catch (error) {
         slot.failed = true
@@ -663,7 +689,16 @@ export class CopyEngine {
         await ensureDir(dirname(finalPath))
 
         if (await pathExists(finalPath)) {
-          const info = await stat(finalPath)
+          const info = await lstat(finalPath)
+          if (!info.isFile()) {
+            work.nameConflict = true
+            work.slot.conflictCount++
+            work.fatalError = this.m('engine.conflictUnsafeEntry', {
+              prefix: NAME_CONFLICT_PREFIXES[this.deps.settings.language]
+            })
+            works.push(work)
+            continue
+          }
           if (sourceSize > 0 && info.size === sourceSize) {
             // 尺寸吻合：走"重读校验"，省掉一次全量拷贝
             work.adopted = true
@@ -685,7 +720,10 @@ export class CopyEngine {
           store.updateTargetProgress(job.id, slot.target.id, { error: work.fatalError })
           this.log(
             'warn',
-            this.m('engine.conflictSizeDiffLog', { label: slot.target.label, relPath: file.relPath })
+            this.m('engine.conflictSizeDiffLog', {
+              label: slot.target.label,
+              relPath: file.relPath
+            })
           )
           works.push(work)
           continue
@@ -735,7 +773,10 @@ export class CopyEngine {
         })
         this.log(
           'error',
-          this.m('engine.prepareWriteQuarantined', { label: slot.target.label, reason: work.fatalError })
+          this.m('engine.prepareWriteQuarantined', {
+            label: slot.target.label,
+            reason: work.fatalError
+          })
         )
         works.push(work)
       }
@@ -757,7 +798,7 @@ export class CopyEngine {
     works: FileTargetWork[],
     hasher: StreamingHasher
   ): Promise<FileOutcome> {
-    const { job, store } = this.deps
+    const { job } = this.deps
     const buffer = Buffer.allocUnsafe(DEFAULT_CHUNK_SIZE)
     let position = 0
     let sourceError: string | null = null
@@ -770,7 +811,12 @@ export class CopyEngine {
         this.throwIfCancelled()
         await this.deps.gate.waitIfPaused(this.deps.signal)
 
-        const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, position)
+        const { bytesRead } = await ioCoordinator.run(
+          [this.volumeKeys.get(job.sourcePath)!],
+          'copy',
+          () => sourceHandle!.read(buffer, 0, buffer.length, position),
+          this.deps.signal
+        )
         if (bytesRead === 0) break
 
         const chunk = buffer.subarray(0, bytesRead)
@@ -782,37 +828,57 @@ export class CopyEngine {
         const active = this.activeFiles.get(relPath)
         if (active !== undefined) active.bytesRead += bytesRead
 
-        for (const work of works) {
-          if (work.fatalError !== null || work.adopted || work.completeBeforeWrite) continue
-          if (work.handle === null) continue
+        await Promise.all(
+          works.map(async (work) => {
+            if (work.fatalError !== null || work.adopted || work.completeBeforeWrite) return
+            if (work.handle === null) return
 
-          const from = Math.max(position, work.writeOffset)
-          const length = position + bytesRead - from
-          if (length <= 0) continue
+            const from = Math.max(position, work.writeOffset)
+            const length = position + bytesRead - from
+            if (length <= 0) return
 
-          const slice = buffer.subarray(from - position, bytesRead)
-          try {
-            await writeFully(work.handle, slice, from)
-            work.bytesWritten += length
-            work.writeOffset = from + length
-            store.incrementTargetCounters(job.id, work.slot.target.id, { bytesCopied: length })
-          } catch (error) {
-            work.fatalError = this.m('engine.writeFail', {
-              reason:
-                error instanceof ZeroByteWriteError
-                  ? this.m('engine.writeZeroBytes')
-                  : describeError(error)
-            })
-            work.slot.failed = true
-            work.slot.error = work.fatalError
-            store.updateTargetProgress(job.id, work.slot.target.id, { error: work.fatalError })
-            this.log(
-              'error',
-              this.m('engine.writeInterrupted', { label: work.slot.target.label, reason: work.fatalError })
-            )
-            await this.closeHandle(work)
-          }
-        }
+            const slice = buffer.subarray(from - position, bytesRead)
+            try {
+              await this.writeSemaphore.run(
+                () =>
+                  ioCoordinator.run(
+                    [this.volumeKeys.get(work.slot.target.path)!],
+                    'copy',
+                    () => writeFully(work.handle!, slice, from),
+                    this.deps.signal
+                  ),
+                this.deps.signal
+              )
+              work.bytesWritten += length
+              work.writeOffset = from + length
+              this.targetByteDeltas.set(
+                work.slot.target.id,
+                (this.targetByteDeltas.get(work.slot.target.id) ?? 0) + length
+              )
+            } catch (error) {
+              work.fatalError = this.m('engine.writeFail', {
+                reason:
+                  error instanceof ZeroByteWriteError
+                    ? this.m('engine.writeZeroBytes')
+                    : describeError(error)
+              })
+              work.slot.failed = true
+              work.slot.error = work.fatalError
+              this.deps.store.updateTargetProgress(job.id, work.slot.target.id, {
+                error: work.fatalError
+              })
+              this.log(
+                'error',
+                this.m('engine.writeInterrupted', {
+                  label: work.slot.target.label,
+                  reason: work.fatalError
+                })
+              )
+              await this.closeHandle(work)
+            }
+          })
+        )
+        this.flushTargetBytes()
 
         position += bytesRead
 
@@ -834,9 +900,11 @@ export class CopyEngine {
     }
 
     if (sourceError !== null) {
+      this.flushTargetBytes(true)
       return { sourceHash: '', actualBytes: position, sourceError }
     }
 
+    this.flushTargetBytes(true)
     // 读取循环走完才允许取值；哈希实例只能取一次
     const sourceHash = hasher.digest()
 
@@ -891,7 +959,11 @@ export class CopyEngine {
    * 校验与提交
    * ---------------------------------------------------------------- */
 
-  private scheduleVerification(file: PendingFile, works: FileTargetWork[], outcome: FileOutcome): void {
+  private scheduleVerification(
+    file: PendingFile,
+    works: FileTargetWork[],
+    outcome: FileOutcome
+  ): void {
     const { job, store } = this.deps
 
     store.updateFile(job.id, file.relPath, {
@@ -911,7 +983,13 @@ export class CopyEngine {
     })()
 
     this.pendingVerifications.add(task)
-    void task.finally(() => this.pendingVerifications.delete(task))
+    void task.then(
+      () => this.pendingVerifications.delete(task),
+      (error) => {
+        this.backgroundError = error
+        this.pendingVerifications.delete(task)
+      }
+    )
   }
 
   private async verifyWork(
@@ -946,7 +1024,7 @@ export class CopyEngine {
 
     return this.verifySemaphore.run(async (): Promise<FileTargetResult> => {
       try {
-        const targetHash = await hashFileAt(work.verifyPath, job.hashAlgorithm)
+        const targetHash = await hashFileAt(work.verifyPath, job.hashAlgorithm, this.deps.signal)
         /*
          * 目标盘上的这一遍重读到此结束，无论比对结果如何，这段工作量都发生了。
          * 记在比对**之前**：比对不符时说明这个文件是坏的，但读它的时间一样花掉了 ——
@@ -966,7 +1044,10 @@ export class CopyEngine {
             store.updateTargetProgress(job.id, work.slot.target.id, { error: message })
             this.log(
               'error',
-              this.m('engine.verifyMismatchLog', { relPath: file.relPath, label: work.slot.target.label })
+              this.m('engine.verifyMismatchLog', {
+                relPath: file.relPath,
+                label: work.slot.target.label
+              })
             )
             return {
               targetId: work.slot.target.id,
@@ -1044,6 +1125,20 @@ export class CopyEngine {
           error: null
         }
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          work.nameConflict = true
+          work.slot.conflictCount++
+          return {
+            targetId: work.slot.target.id,
+            state: 'failed',
+            hash: null,
+            hashMatch: false,
+            bytesCopied: work.bytesWritten,
+            error: this.m('engine.conflictUnsafeEntry', {
+              prefix: NAME_CONFLICT_PREFIXES[this.deps.settings.language]
+            })
+          }
+        }
         // 仅校验模式不隔离目标：复核要覆盖全部文件，读不动哪一个就记哪一个，
         // 其余文件照常比对。隔离是拷贝时的保护动作，复核时只会掩盖问题。
         if (this.verifyOnly) {
@@ -1144,7 +1239,15 @@ export class CopyEngine {
       error
     })
 
-    this.scheduleProbe(file.relPath, state, resolveInside(job.sourcePath, file.relPath))
+    const trusted = results.find((result) => result.state === 'verified')
+    const target = job.targets.find((item) => item.id === trusted?.targetId)
+    this.scheduleProbe(
+      file.relPath,
+      trusted ? 'verified' : state,
+      target && !this.verifyOnly
+        ? resolveInside(target.path, this.targetRelPath(file.relPath))
+        : resolveInside(job.sourcePath, file.relPath)
+    )
     this.emitProgress()
   }
 
@@ -1172,7 +1275,11 @@ export class CopyEngine {
    */
   private scheduleProbe(relPath: string, state: FileState, sourceAbs: string): void {
     const runner = this.deps.probeRunner
-    if (state !== 'verified' || runner == null) return
+    if (state !== 'verified') return
+    if (runner == null) {
+      this.recordProbeFailure(relPath, '缺少媒体探测工具')
+      return
+    }
 
     // 首尾帧提取有实际开销（要解码或读文件前若干 MB），
     // 按设置里的上限控制总量；0 表示不限制。元数据解析不受此限，它很便宜。
@@ -1185,16 +1292,49 @@ export class CopyEngine {
     const task = this.probeSemaphore.run(async (): Promise<void> => {
       let probe: MediaProbe | null = null
       try {
-        probe = await runner.probe(sourceAbs, {
-          extractFrames: budgetLeft && this.deps.settings.extractFrames,
-          signal: this.deps.signal
-        })
+        await this.deps.gate.waitIfPaused(this.deps.signal)
+        this.throwIfCancelled()
+        const key = await volumeKey(sourceAbs)
+        for (;;) {
+          await this.deps.gate.waitIfPaused(this.deps.signal)
+          this.throwIfCancelled()
+          await ioCoordinator.waitForIdle([key], 'probe', 50, this.deps.signal)
+          const controller = new AbortController()
+          const abort = (): void => controller.abort()
+          this.deps.signal.addEventListener('abort', abort, { once: true })
+          try {
+            probe = await ioCoordinator.run(
+              [key],
+              'probe',
+              () =>
+                runner.probe(sourceAbs, {
+                  extractFrames: budgetLeft && this.deps.settings.extractFrames,
+                  signal: controller.signal
+                }),
+              controller.signal,
+              abort
+            )
+          } catch (error) {
+            if (!controller.signal.aborted) throw error
+          } finally {
+            this.deps.signal.removeEventListener('abort', abort)
+          }
+          if (controller.signal.aborted) {
+            this.throwIfCancelled()
+            continue
+          }
+          break
+        }
       } catch {
         // 探测失败绝不影响哈希报告，只是少几行元数据
         probe = null
       }
 
+      if (probe === null && !this.deps.signal.aborted)
+        this.recordProbeFailure(relPath, '媒体探测失败，无法验证所选代理参数')
       if (probe !== null) {
+        // 重新探测不能丢失已验证代理的缓存和发布凭据。
+        probe.proxy = this.deps.store.getFile(this.deps.job.id, relPath)?.probe?.proxy ?? null
         this.deps.store.updateFile(this.deps.job.id, relPath, { probe })
         this.emitFileRow(relPath)
 
@@ -1204,7 +1344,7 @@ export class CopyEngine {
          *
          * 开关读**每任务**的 `job.proxyEnabled`（拷贝页可选），不再读全局设置。
          */
-        if (this.deps.job.proxyEnabled) {
+        if (!this.verifyOnly && this.deps.job.proxyEnabled) {
           this.scheduleProxy(relPath, sourceAbs, probe)
         }
       }
@@ -1213,7 +1353,13 @@ export class CopyEngine {
     })
 
     this.pendingProbes.add(task)
-    void task.finally(() => this.pendingProbes.delete(task))
+    void task.then(
+      () => this.pendingProbes.delete(task),
+      (error) => {
+        this.backgroundError = error
+        this.pendingProbes.delete(task)
+      }
+    )
   }
 
   /**
@@ -1234,120 +1380,160 @@ export class CopyEngine {
    * 结果写回 `probe.proxy`（多条目标只记第一份的相对路径 + 是否全部成功），
    * 由报告如实展示。
    */
-  private scheduleProxy(relPath: string, sourceAbs: string, probe: MediaProbe): void {
-    // 每个启用的目标盘都要有一份代理；全部不可用就直接跳过
-    const enabledSlots = this.slots.filter((slot) => slot.enabled && !slot.failed)
-    if (enabledSlots.length === 0) return
+  private recordProbeFailure(relPath: string, reason: string): void {
+    if (this.verifyOnly || !this.deps.job.proxyEnabled || this.scheduledProxies.has(relPath)) return
+    const probe = unavailableMediaProbe(relPath, reason)
+    const supported = canProxyFamily(probe)
+    const proxy = {
+      ...failResult(reason, this.deps.job.proxyCodec, this.deps.job.proxyResolution),
+      status: supported ? ('failed' as const) : ('skipped' as const)
+    }
+    this.scheduledProxies.add(relPath)
+    if (supported) {
+      this.proxyTotal++
+      this.proxyFailed++
+    }
+    this.deps.store.updateFile(this.deps.job.id, relPath, { probe: { ...probe, proxy } })
+    this.emitFileRow(relPath)
+  }
 
-    // 本次任务选定的编码/分辨率（每任务）
-    const codec = this.deps.job.proxyCodec
-    const resolution = this.deps.job.proxyResolution
-
-    const ffmpeg = this.deps.probeRunner?.ffmpegExecutable ?? null
-    if (ffmpeg === null) {
-      // ffmpeg 不可用时如实记下原因，不静默留白
-      const reason = '未找到可用的 ffmpeg，无法生成代理。'
-      this.writeProxyResult(relPath, failResult(reason, codec, resolution))
+  private scheduleProxy(relPath: string, _sourceAbs: string, probe: MediaProbe): void {
+    if (this.verifyOnly || !this.deps.job.proxyEnabled || this.scheduledProxies.has(relPath)) return
+    if (probe.formatFamily === 'audio' || !canProxyFamily(probe)) {
+      this.writeProxyResult(relPath, {
+        ...failResult(
+          '该素材格式不支持代理生成',
+          this.deps.job.proxyCodec,
+          this.deps.job.proxyResolution
+        ),
+        status: 'skipped'
+      })
       return
     }
-
-    const wantsProxy = probe.available && canProxyFamily(probe)
-
-    const task = this.proxySemaphore.run(async (): Promise<void> => {
-      if (!wantsProxy) {
-        this.writeProxyResult(
-          relPath,
-          failResult(
-            `该格式（${probe.format ?? probe.formatFamily}）无法用 ffmpeg 解码画面，已跳过代理生成。`,
-            codec,
-            resolution
-          )
-        )
-        return
-      }
-
-      // 探测本机可用的编码器（结果按进程缓存）。该编码在本机不可用（典型：
-      // Windows 上选了 H.265 但没有可用的硬件编码器）时，如实跳过并说明，
-      // 绝不换成另一种编码假装成功。
-      const capability = await detectEncoders(ffmpeg)
-      const encoder = pickEncoder(capability, codec)
-      if (encoder === null) {
-        this.writeProxyResult(
-          relPath,
-          failResult(
-            `本机没有可用的 ${PROXY_CODEC_LABEL[codec]} 编码器，已跳过代理生成。`,
-            codec,
-            resolution
-          )
-        )
-        return
-      }
-
-      const profile = this.deps.job.proxyProfile
-
-      /*
-       * LUT：任务里指定了才套。这里**先确认文件在**再交给 ffmpeg ——
-       * 否则 ffmpeg 会因为读不到 .cube 直接让整条代理失败，而用户只想知道
-       * "LUT 没生效"，不是"代理没出来"。缺文件时按"不套 LUT"继续出代理，
-       * 并把这件事记进 reason（绝不静默）。
-       */
-      let lutPath = this.deps.job.proxyLutPath
-      let lutWarning: string | null = null
-      if (lutPath !== null) {
-        if (await pathExists(lutPath)) {
-          // 文件确实在，正常套用
-        } else {
-          lutWarning = `指定的 LUT 文件不存在，已跳过调色：${lutPath}`
-          lutPath = null
+    if (!probe.available) {
+      this.recordProbeFailure(relPath, probe.reason ?? '媒体解析失败')
+      return
+    }
+    this.scheduledProxies.add(relPath)
+    this.proxyTotal++
+    const task = this.proxySemaphore.run(async () => {
+      await this.deps.gate.waitIfPaused(this.deps.signal)
+      this.throwIfCancelled()
+      this.proxyActive.add(relPath)
+      this.emitProgress(true)
+      try {
+        const file = this.deps.store.getFile(this.deps.job.id, relPath)
+        const ffmpegPath = this.deps.probeRunner?.ffmpegExecutable
+        if (file === null || !ffmpegPath) {
+          this.proxyFailed++
+          this.writeProxyResult(relPath, {
+            ...failResult(
+              '缺少素材记录或 ffmpeg，无法生成代理',
+              this.deps.job.proxyCodec,
+              this.deps.job.proxyResolution
+            ),
+            status: 'failed'
+          })
+          return
         }
-      }
-
-      let firstRel: string | null = null
-      let allOk = true
-      let firstError: string | null = null
-
-      for (const slot of enabledSlots) {
-        const outputAbs = proxyAbsPathFor(slot.target.path, relPath, codec)
-        const result = await generateProxy({
-          ffmpegPath: ffmpeg,
-          inputAbsPath: sourceAbs,
-          outputAbsPath: outputAbs,
-          profile,
-          resolution,
-          codec,
-          encoder: encoder.name,
-          lutPath,
-          signal: this.deps.signal
+        const result = await processProxy({
+          job: this.deps.job,
+          file,
+          ffmpegPath,
+          gate: this.deps.gate,
+          signal: this.deps.signal,
+          settings: this.deps.settings,
+          previous: file.probe?.proxy,
+          onUpdate: (proxy) => this.writeProxyResult(relPath, proxy)
         })
-        if (result.ok) {
-          // 记相对目标盘的路径，便于报告与界面展示
-          if (firstRel === null) {
-            firstRel = proxyAbsPathFor('', relPath, codec).replace(/^[\\/]+/, '')
-          }
-        } else {
-          allOk = false
-          if (firstError === null) firstError = result.reason
-        }
+        if (result.ok) this.proxyDone++
+        else if (result.status !== 'skipped') this.proxyFailed++
+      } catch (error) {
+        this.proxyFailed++
+        const existing = this.deps.store.getFile(this.deps.job.id, relPath)?.probe?.proxy
+        this.writeProxyResult(relPath, {
+          ...(existing ??
+            failResult('代理中断', this.deps.job.proxyCodec, this.deps.job.proxyResolution)),
+          ok: false,
+          status: 'failed',
+          reason: describeError(error)
+        })
+      } finally {
+        this.proxyActive.delete(relPath)
+        this.emitProgress(true)
       }
-
-      this.writeProxyResult(relPath, {
-        relPath: allOk ? firstRel : null,
-        ok: allOk,
-        // 出成了但 LUT 被跳过时，也把这件事说出来（否则用户以为套上了）
-        reason: allOk ? lutWarning : (firstError ?? '部分目标盘上的代理生成失败。'),
-        profile: allOk && codec === 'prores' ? profile : null,
-        codec: allOk ? codec : null,
-        resolution: allOk ? resolution : null,
-        // 实际画面尺寸由"只降不升"决定，这里记为所选档位的目标高；
-        // 源更矮时实际会更小 —— 由报告侧按需以 probe 的真实尺寸为准。
-        width: null,
-        height: allOk ? PROXY_RESOLUTION_HEIGHT[resolution] : null,
-        lutPath: allOk ? lutPath : null
-      })
-    })
-
+    }, this.deps.signal)
     this.pendingProxies.add(task)
-    void task.finally(() => this.pendingProxies.delete(task))
+    void task.then(
+      () => this.pendingProxies.delete(task),
+      (error) => {
+        this.backgroundError = error
+        this.pendingProxies.delete(task)
+      }
+    )
+  }
+
+  private async recoverProxyQueue(): Promise<void> {
+    if (this.verifyOnly || !this.deps.job.proxyEnabled) return
+    for await (const file of this.deps.store.iterateFiles(this.deps.job.id)) {
+      if (!file.results.some((result) => result.state === 'verified')) continue
+      if (file.probe?.available) this.scheduleProxy(file.relPath, '', file.probe)
+      else if (!this.scheduledProxies.has(file.relPath))
+        this.scheduleProbe(
+          file.relPath,
+          'verified',
+          resolveInside(
+            this.deps.job.targets.find((target) =>
+              file.results.some(
+                (result) => result.targetId === target.id && result.state === 'verified'
+              )
+            )!.path,
+            this.targetRelPath(file.relPath)
+          )
+        )
+    }
+    await this.drainProbes()
+  }
+
+  /** Retry proxy work without touching original material or original counters. */
+  async retryProxies(): Promise<CopyEngineResult> {
+    let state: JobState = 'failed'
+    try {
+      await this.recoverProxyQueue()
+      this.phase = 'proxying'
+      this.emitProgress(true)
+      await this.drainProxies()
+      this.throwIfCancelled()
+      if (this.backgroundError !== null) throw this.backgroundError
+      state =
+        this.deps.store.getJob(this.deps.job.id)!.filesFailed > 0 || this.proxyFailed > 0
+          ? 'completed-with-errors'
+          : 'completed'
+    } catch (error) {
+      await Promise.allSettled([this.drainProbes(), this.drainProxies()])
+      state = this.deps.signal.aborted || this.cancelled ? 'cancelled' : 'failed'
+      this.log('warn', describeError(error))
+    }
+    const snapshot = this.deps.store.getJob(this.deps.job.id)!
+    this.deps.store.updateJob(snapshot.id, { state, finishedAt: new Date().toISOString() })
+    this.phase = 'done'
+    this.emitProgress(true)
+    return {
+      state,
+      filesDone: snapshot.filesDone,
+      filesFailed: snapshot.filesFailed,
+      bytesDone: snapshot.bytesDone,
+      processed: 0
+    }
+  }
+
+  private flushTargetBytes(force = false): void {
+    const now = Date.now()
+    if (!force && now - this.lastCounterFlush < 250) return
+    for (const [id, bytesCopied] of this.targetByteDeltas)
+      this.deps.store.incrementTargetCounters(this.deps.job.id, id, { bytesCopied })
+    this.targetByteDeltas.clear()
+    this.lastCounterFlush = now
   }
 
   /** 把代理结果合并进该文件的 probe 记录，并推给界面。 */
@@ -1512,7 +1698,10 @@ export class CopyEngine {
       inFlightBytes += active.bytesRead
       activeFiles.push({ relPath, sizeBytes: active.sizeBytes, bytesRead: active.bytesRead })
     }
-    const bytesDone = Math.min(snapshot.bytesDone + inFlightBytes, Math.max(totalBytes, snapshot.bytesDone))
+    const bytesDone = Math.min(
+      snapshot.bytesDone + inFlightBytes,
+      Math.max(totalBytes, snapshot.bytesDone)
+    )
     const rate = this.rate.rate()
 
     // 用瞬时速率更新"累计活跃时长"——暂停时 rate 为 0，时间自然不计入，
@@ -1534,8 +1723,7 @@ export class CopyEngine {
      * 迟早会拼出一个和实际不一致的口径 —— 而且换一处就漏一处。
      */
     const enabledTargets = this.slots.filter((slot) => slot.enabled).length
-    const verifyPasses =
-      job.mode === 'verify' || job.verifyAfterWrite ? enabledTargets : 0
+    const verifyPasses = enabledTargets
     const overallPercent = computeOverallPercent({
       totalBytes,
       // 拷贝阶段的完成量 = 已读完的 + 正在读的那一段。
@@ -1578,8 +1766,7 @@ export class CopyEngine {
      * 平均速度 = 已读完字节 ÷ 累计活跃拷贝时长（已剔除暂停），曲线平滑得多，
      * 算出来的完成时间才值得信。瞬时速率仍保留在 bytesPerSecond 里给波形图用。
      */
-    const avgRate =
-      this.activeCopyMs > 0 ? (this.copiedBytesDone / this.activeCopyMs) * 1000 : 0
+    const avgRate = this.activeCopyMs > 0 ? (this.copiedBytesDone / this.activeCopyMs) * 1000 : 0
     const remainingBytes = Math.max(0, totalBytes - bytesDone)
     const etaSeconds =
       !analyzing && avgRate > 0 && remainingBytes > 0 ? remainingBytes / avgRate : null
@@ -1618,7 +1805,13 @@ export class CopyEngine {
       // 写入速度波形：每秒一个采样点，最多 SPEED_HISTORY_MAX 个
       speedHistory: [...this.speedHistory],
       analyzeDone: this.analyzeDone,
-      analyzeTotal: this.analyzeTotal
+      analyzeTotal: this.analyzeTotal,
+      proxy: {
+        total: this.proxyTotal,
+        done: this.proxyDone,
+        failed: this.proxyFailed,
+        active: [...this.proxyActive][0] ?? null
+      }
     })
   }
 
@@ -1718,14 +1911,25 @@ async function writeFully(handle: FileHandle, data: Buffer, position: number): P
 }
 
 /** 独立地对一个文件重新计算校验值（目标侧重读、源侧单独计算共用）。 */
-export async function hashFileAt(path: string, algorithm: CopyJob['hashAlgorithm']): Promise<string> {
+export async function hashFileAt(
+  path: string,
+  algorithm: CopyJob['hashAlgorithm'],
+  signal?: AbortSignal
+): Promise<string> {
   const hasher = await createStreamingHasher(algorithm)
   const handle = await open(path, 'r')
   const buffer = Buffer.allocUnsafe(DEFAULT_CHUNK_SIZE)
+  const key = await volumeKey(path)
   try {
     let position = 0
     for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
+      if (signal?.aborted) throw new Error('任务已取消')
+      const { bytesRead } = await ioCoordinator.run(
+        [key],
+        'verify',
+        () => handle.read(buffer, 0, buffer.length, position),
+        signal
+      )
       if (bytesRead === 0) break
       hasher.update(buffer.subarray(0, bytesRead))
       position += bytesRead

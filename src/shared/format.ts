@@ -6,7 +6,10 @@ export function humanBytes(bytes: number | null | undefined, fractionDigits = 2)
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '—'
   if (bytes === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  const exponent = Math.min(Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024)), units.length - 1)
+  const exponent = Math.min(
+    Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024)),
+    units.length - 1
+  )
   const value = bytes / 1024 ** exponent
   const digits = exponent === 0 ? 0 : fractionDigits
   return `${value.toFixed(digits)} ${units[exponent]}`
@@ -20,7 +23,8 @@ export function humanRate(bytesPerSecond: number | null | undefined): string {
 }
 
 export function humanDuration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return '—'
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0)
+    return '—'
   const total = Math.round(seconds)
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
@@ -87,4 +91,12 @@ export function todayLocalDate(now: Date = new Date()): string {
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+/** Human-readable report time; retain UTC in JSON for machine processing. */
+export function reportTimestamp(value: string): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return value
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  return `${date.toLocaleString('zh-CN', { hour12: false })}（${timezone}）`
 }

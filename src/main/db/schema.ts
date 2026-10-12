@@ -8,7 +8,7 @@
  *  - 报告修订用 UNIQUE(job_id, revision) 锁死，做到物理上不可能覆盖旧修订。
  */
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /**
  * 兼容性判据：`jobs` 表必须同时具备这些列。
@@ -47,6 +47,11 @@ export const REQUIRED_JOB_COLUMNS = [
  * 所以：只有这里列出的 ALTER 才是安全的加列途径。只加列，绝不删列或改列。
  */
 export const JOB_COLUMN_MIGRATIONS = [
+  {
+    table: 'reports',
+    column: 'delivery_json',
+    ddl: "ALTER TABLE reports ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '[]'"
+  },
   {
     table: 'jobs',
     column: 'parent_project_id',
@@ -189,6 +194,7 @@ CREATE TABLE IF NOT EXISTS reports (
   dir          TEXT NOT NULL,
   files_json   TEXT NOT NULL,
   summary_json TEXT NOT NULL,
+  delivery_json TEXT NOT NULL DEFAULT '[]',
   UNIQUE (job_id, revision),
   FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
@@ -240,4 +246,3 @@ CREATE TABLE IF NOT EXISTS parent_projects (
 export const SCHEMA_POST_MIGRATION_SQL = `
 CREATE INDEX IF NOT EXISTS idx_jobs_parent_project ON jobs(parent_project_id);
 `
-

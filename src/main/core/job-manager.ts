@@ -6,7 +6,7 @@
  */
 import { hostname } from 'node:os'
 import { randomBytes } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, stat, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type {
   AppSettings,
@@ -17,8 +17,11 @@ import type {
   MainEvent,
   ProjectInfo,
   ReportSummary,
+  ReportTheme,
   ScanResult
 } from '@shared/types'
+import { isJobLive } from '@shared/types'
+import { renderHtmlReport } from '@main/reports/html-report'
 import { msg, type MsgKey } from '@shared/messages'
 import { todayLocalDate } from '@shared/format'
 import type { CreateJobRequest } from '@shared/ipc'
@@ -83,6 +86,32 @@ interface RunHandle {
 }
 
 export class JobManager {
+  private readonly finishing = new Set<string>()
+  private readonly allWork = new Map<string, Promise<void>>()
+  private readonly endActions = new Set<string>()
+  private completionHadErrors = false
+  private ending = false
+  private readonly reportJobs = new Set<string>()
+
+  get hasActiveWork(): boolean {
+    return this.runs.size > 0 || this.finishing.size > 0 || this.reportJobs.size > 0
+  }
+
+  get canEject(): boolean {
+    return !this.hasActiveWork && !this.ending
+  }
+
+  async withIdleEjection<T>(action: () => Promise<T>): Promise<T> {
+    if (!this.canEject) throw new Error('任务或报告交付仍在进行，不能弹出磁盘')
+    this.ending = true
+    try {
+      return await action()
+    } finally {
+      this.ending = false
+      await this.performEndActions()
+    }
+  }
+
   private readonly runs = new Map<string, RunHandle>()
   /**
    * 每个运行中的任务持有一个防休眠句柄。
@@ -136,7 +165,7 @@ export class JobManager {
   }
 
   isRunning(jobId: string): boolean {
-    return this.runs.has(jobId)
+    return this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId)
   }
 
   /**
@@ -183,7 +212,7 @@ export class JobManager {
   }
 
   runningJobIds(): string[] {
-    return [...this.runs.keys()]
+    return [...new Set([...this.runs.keys(), ...this.finishing, ...this.reportJobs])]
   }
 
   /* ---------------------------------------------------------------- *
@@ -301,15 +330,16 @@ export class JobManager {
       targets,
       hashAlgorithm: request.hashAlgorithm ?? settings.hashAlgorithm,
       manifestFormat: request.manifestFormat ?? settings.manifestFormat,
-      verifyAfterWrite: request.verifyAfterWrite ?? settings.verifyAfterWrite,
+      verifyAfterWrite: true,
       // 代理设置：**每任务**（拷贝页可选），缺省回落到全局设置 ——
       // 与 verifyAfterWrite 同一套"设置给默认、任务可覆盖"的模式。
-      proxyEnabled: request.proxyEnabled ?? settings.proxyEnabled,
+      proxyEnabled: !verifyOnly && (request.proxyEnabled ?? settings.proxyEnabled),
       proxyResolution: request.proxyResolution ?? settings.proxyResolution,
       proxyCodec: request.proxyCodec ?? settings.proxyCodec,
       proxyProfile: request.proxyProfile ?? settings.proxyProfile,
       // LUT：任务里传了就用任务的（含显式 null = 不套），没传则用全局默认。
-      proxyLutPath: request.proxyLutPath === undefined ? settings.proxyLutPath : request.proxyLutPath,
+      proxyLutPath:
+        request.proxyLutPath === undefined ? settings.proxyLutPath : request.proxyLutPath,
       state: 'draft',
       totalFiles: scan.fileCount,
       totalBytes: scan.totalBytes,
@@ -325,9 +355,7 @@ export class JobManager {
     store.insertJob(job)
     store.upsertFiles(
       jobId,
-      scan.preview.length > 0 || scan.fileCount > 0
-        ? await this.collectFileList(sourcePath)
-        : []
+      scan.preview.length > 0 || scan.fileCount > 0 ? await this.collectFileList(sourcePath) : []
     )
 
     // 项目信息 = 项目级共享信息的**快照** + 这一张卡的属性。
@@ -396,7 +424,9 @@ export class JobManager {
         bytes: scan.totalBytes,
         targets: targets.length
       }) +
-        this.m('job.createdMode', { mode: verifyOnly ? this.m('queueMode.verify') : this.m('queueMode.copy') }) +
+        this.m('job.createdMode', {
+          mode: verifyOnly ? this.m('queueMode.verify') : this.m('queueMode.copy')
+        }) +
         (parentProject === null
           ? this.m('job.createdNoParent')
           : this.m('job.createdWithParent', { name: parentProject.name }))
@@ -414,22 +444,25 @@ export class JobManager {
    * 运行
    * ---------------------------------------------------------------- */
 
-  async start(jobId: string): Promise<CopyJob> {
+  async start(jobId: string, proxyOnly = false): Promise<CopyJob> {
     const { store } = this.deps
+    if (this.ending) throw new Error('正在安全弹出磁盘，请等待完成')
     const job = store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
-    if (this.runs.has(jobId)) throw new Error(this.m('job.alreadyRunning'))
+    if (this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId))
+      throw new Error(this.m('job.alreadyRunning'))
 
     const settings = this.deps.getSettings()
     const gate = new PauseGate()
     const controller = new AbortController()
 
     // 首尾帧先落到任务工作目录，出报告时再挑被引用的拷进修订目录
+    const probeRunner = this.deps.probeRunner.fork?.() ?? this.deps.probeRunner
     const frameWorkDir = this.deps.reportStore.frameWorkDir(jobId)
-    this.deps.probeRunner.setFrameOutputDir(frameWorkDir)
+    probeRunner.setFrameOutputDir(frameWorkDir)
     // 候选静帧与首尾帧同目录（报告 frames/），按设置决定每条出几张
-    this.deps.probeRunner.setStillFrameOutputDir(frameWorkDir)
-    this.deps.probeRunner.setStillFrameCount(settings.stillFrameCount)
+    probeRunner.setStillFrameOutputDir(frameWorkDir)
+    probeRunner.setStillFrameCount(settings.stillFrameCount)
 
     const engine = new CopyEngine({
       job,
@@ -438,7 +471,7 @@ export class JobManager {
       settings,
       signal: controller.signal,
       gate,
-      probeRunner: this.deps.probeRunner,
+      probeRunner,
       onLog: (level, message) => {
         this.deps.emit({
           type: 'job:log',
@@ -478,7 +511,7 @@ export class JobManager {
     const promise = (async (): Promise<void> => {
       let terminalState: CopyJob['state'] = 'failed'
       try {
-        const result = await engine.run()
+        const result = proxyOnly ? await engine.retryProxies() : await engine.run()
         terminalState = result.state
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -486,9 +519,15 @@ export class JobManager {
         store.updateJob(jobId, { state: 'failed', finishedAt: new Date().toISOString() })
         terminalState = 'failed'
       } finally {
+        this.finishing.add(jobId)
         this.runs.delete(jobId)
+        const progress = this.latestProgress.get(jobId)
+        if (progress) {
+          const reporting = { ...progress, phase: 'reporting' as const }
+          this.latestProgress.set(jobId, reporting)
+          this.deps.emit({ type: 'job:progress', payload: reporting })
+        }
         // 与 acquire 的唯一配对点：正常完成、引擎抛错、被取消都会走到这里
-        this.releaseSleepBlocker(jobId)
         this.emitState(jobId)
       }
 
@@ -497,9 +536,12 @@ export class JobManager {
       // ⚠️ 只关"自动生成"，手动补报告仍走 generateReport()（受运行中红线约束）。
       if (this.deps.getSettings().generateReport) {
         try {
-          await this.generateReports(jobId, terminalState)
+          const report = await this.generateReports(jobId, terminalState)
+          if (report.delivery?.some((item) => item.state === 'failed'))
+            this.completionHadErrors = true
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
+          this.completionHadErrors = true
           this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
           this.deps.emit({
             type: 'toast',
@@ -510,23 +552,25 @@ export class JobManager {
         this.deps.logger.info('job', '报告生成已在设置中关闭，跳过。')
       }
 
-      if (terminalState === 'completed' || terminalState === 'completed-with-errors') {
-        const current = store.getJob(jobId)
-        if (current !== null && this.deps.getSettings().ejectAfterCopy) {
-          await this.ejectTargets(current)
-        }
-        // 关机必须排在弹出**之后**：先安全卸载磁盘再断电，顺序反了会丢盘。
-        if (
-          terminalState === 'completed' &&
-          current !== null &&
-          this.deps.getSettings().shutdownAfterCopy
-        ) {
-          await this.scheduleShutdown()
-        }
+      if (terminalState !== 'completed') this.completionHadErrors = true
+      else this.endActions.add(jobId)
+      this.finishing.delete(jobId)
+      this.releaseSleepBlocker(jobId)
+      const finalProgress = this.latestProgress.get(jobId)
+      if (finalProgress) {
+        const done = { ...finalProgress, phase: 'done' as const }
+        this.latestProgress.set(jobId, done)
+        this.deps.emit({ type: 'job:progress', payload: done })
       }
+      await this.performEndActions()
     })()
 
     this.runs.set(jobId, { engine, gate, controller, promise })
+    this.allWork.set(jobId, promise)
+    void promise.then(
+      () => this.allWork.delete(jobId),
+      () => this.allWork.delete(jobId)
+    )
 
     return store.getJob(jobId) ?? job
   }
@@ -559,7 +603,8 @@ export class JobManager {
   async retryFailed(jobId: string): Promise<CopyJob> {
     const job = this.deps.store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
-    if (this.runs.has(jobId)) throw new Error(this.m('job.alreadyRunning'))
+    if (this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId))
+      throw new Error(this.m('job.alreadyRunning'))
 
     const resetCount = this.deps.store.resetFailedFilesForRetry(jobId)
     if (resetCount === 0) throw new Error(this.m('job.noFailedFiles'))
@@ -571,7 +616,16 @@ export class JobManager {
     return this.start(jobId)
   }
 
+  async retryProxies(jobId: string): Promise<CopyJob> {
+    const job = this.requireJob(jobId)
+    if (job.mode === 'verify' || !job.proxyEnabled || isJobLive(job.state))
+      throw new Error('该任务不能重试代理')
+    return this.start(jobId, true)
+  }
+
   cancel(jobId: string): CopyJob {
+    if (this.finishing.has(jobId) || this.reportJobs.has(jobId))
+      throw new Error('报告交付处理中，请等待完成')
     const handle = this.runs.get(jobId)
     if (handle === undefined) {
       // 没在运行也要把状态修正，避免界面卡在"运行中"。
@@ -591,8 +645,7 @@ export class JobManager {
 
   /** 等待某个任务彻底结束（含报告生成）。主要给自动化测试用。 */
   async wait(jobId: string): Promise<void> {
-    const handle = this.runs.get(jobId)
-    if (handle !== undefined) await handle.promise
+    await this.allWork.get(jobId)
   }
 
   private requireJob(jobId: string): CopyJob {
@@ -611,7 +664,92 @@ export class JobManager {
    * 报告
    * ---------------------------------------------------------------- */
 
-  async generateReports(jobId: string, terminalState?: CopyJob['state']): Promise<ReportSummary> {
+  async previewReport(jobId: string, theme: ReportTheme): Promise<string> {
+    if (this.ending) throw new Error('正在安全弹出磁盘，请等待完成')
+    const { store } = this.deps
+    const job = this.requireJob(jobId)
+    if (
+      this.runs.has(jobId) ||
+      this.finishing.has(jobId) ||
+      this.reportJobs.has(jobId) ||
+      isJobLive(job.state)
+    )
+      throw new Error(this.m('job.reportWhileRunning'))
+    this.reportJobs.add(jobId)
+    try {
+      const project = store.getProjectInfo(jobId) ?? emptyProjectInfo()
+      const targets = store.listTargetProgress(jobId)
+      const description = await describeVolume(job.sourcePath)
+      const summary: ReportSummary = {
+        theme,
+        jobId,
+        jobName: job.name,
+        revision: '预览',
+        createdAt: new Date().toISOString(),
+        jobState: job.state,
+        sourcePath: job.sourcePath,
+        sourceLabel: description?.label ?? basename(job.sourcePath),
+        hashAlgorithm: job.hashAlgorithm,
+        manifestFormat: job.manifestFormat,
+        totalFiles: job.totalFiles,
+        totalBytes: job.totalBytes,
+        verifiedFiles: job.filesDone,
+        failedFiles: job.filesFailed,
+        durationSeconds:
+          job.startedAt === null || job.finishedAt === null
+            ? null
+            : Math.max(0, (Date.parse(job.finishedAt) - Date.parse(job.startedAt)) / 1000),
+        targets: targets.map((target) => ({
+          targetId: target.targetId,
+          label: target.label,
+          path: job.targets.find((item) => item.id === target.targetId)?.path ?? '',
+          filesCopied: target.filesDone,
+          filesFailed: target.filesFailed,
+          bytesCopied: target.bytesCopied
+        })),
+        project
+      }
+      let html = await renderHtmlReport({
+        summary,
+        theme,
+        job,
+        project,
+        targets,
+        totalFiles: job.totalFiles,
+        files: store.iterateFiles(jobId),
+        fileRowLimit: 2000,
+        hostname: hostname(),
+        toolName: TOOL_NAME,
+        toolVersion: TOOL_VERSION,
+        manifestPaths: [],
+        notes: ['此为报告预览，未生成修订，未写入目标盘。']
+      })
+      let budget = 16 * 1024 * 1024
+      for (const match of [...html.matchAll(/src="frames\/([^"]+)"/g)]) {
+        try {
+          const frame = await readFile(
+            join(this.deps.reportStore.frameWorkDir(jobId), basename(match[1]!))
+          )
+          if (frame.length > budget) continue
+          budget -= frame.length
+          html = html.replace(match[0], `src="data:image/jpeg;base64,${frame.toString('base64')}"`)
+        } catch {
+          /* Preview remains usable when a historical frame is missing. */
+        }
+      }
+      return html
+    } finally {
+      this.reportJobs.delete(jobId)
+      await this.performEndActions()
+    }
+  }
+
+  async generateReports(
+    jobId: string,
+    terminalState?: CopyJob['state'],
+    theme?: ReportTheme
+  ): Promise<ReportSummary> {
+    if (this.ending) throw new Error('正在安全弹出磁盘，请等待完成')
     const { store, reportStore, logger } = this.deps
     const job = store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
@@ -631,141 +769,211 @@ export class JobManager {
      * 第 3 条的根因（归零那一步）已经从 report-store 里删掉，这里再兜一道闸，
      * 让"运行中生成报告"在语义上不可能发生 —— 界面上的按钮也会相应禁用。
      */
-    if (this.runs.has(jobId)) {
+    if (
+      this.runs.has(jobId) ||
+      this.reportJobs.has(jobId) ||
+      (terminalState === undefined && (this.finishing.has(jobId) || isJobLive(job.state)))
+    ) {
       throw new Error(this.m('job.reportWhileRunning'))
     }
 
-    const project = store.getProjectInfo(jobId) ?? emptyProjectInfo()
+    this.reportJobs.add(jobId)
+    try {
+      const project = store.getProjectInfo(jobId) ?? emptyProjectInfo()
 
-    const sourceDescription = await describeVolume(job.sourcePath)
-    const sourceLabel = sourceDescription?.label ?? basename(job.sourcePath)
+      const sourceDescription = await describeVolume(job.sourcePath)
+      const sourceLabel = sourceDescription?.label ?? basename(job.sourcePath)
 
-    const state = terminalState ?? job.state
-    const completedCleanly = state === 'completed' || state === 'completed-with-errors'
+      const state = terminalState ?? job.state
+      const completedCleanly = state === 'completed' || state === 'completed-with-errors'
 
-    /*
-     * 附注必须在报告**渲染之前**交进去。
-     *
-     * 报告是先渲染再落盘的，渲染之后往哪儿 push 都进不去 —— 这里曾经拿 writeRevision
-     * 返回的 extraNotes 数组 push 了四条说明，然后整个数组被丢弃，
-     * 于是报告的「执行说明」一节基本是空的，其中"这是仅校验任务的报告"
-     * 这条尤其要紧：拿到报告的人分不清它是复核记录还是拷贝交付。
-     */
-    const preNotes: string[] = []
-    if (!completedCleanly) {
-      preNotes.push(this.m('job.reportNotCleanNote', { state }))
-    }
-    if (job.mode === 'verify') {
-      preNotes.push(this.m('job.verifyModeNote'))
-    }
-
-    const { revision } = await reportStore.writeRevision({
-      job,
-      project,
-      store,
-      sourceLabel,
-      targets: job.targets,
-      hostname: hostname(),
-      toolName: TOOL_NAME,
-      toolVersion: TOOL_VERSION,
-      now: new Date(),
-      // 只有正常跑完的拷贝任务才往目标盘写清单；取消/失败的任务清单并不代表
-      // 一份可信的交付。仅校验模式按定义不写目标盘的任何字节，清单同样不写。
-      writeManifestToTargets: completedCleanly && job.mode !== 'verify',
-      preNotes,
-      // 报告根目录覆盖：null 表示用默认的本机 reports 目录
-      outputBaseDir: this.deps.getSettings().reportOutputDir
-    })
-
-    /*
-     * 下面两条只有等报告渲染完才知道，赶不上「执行说明」那一节。
-     *
-     * 刻意**不**为此把报告再渲染一遍：报告目录里的两份产物（report.html 与
-     * report.json）必须一致，补写就等于重写 HTML、并把 report.json 的逐文件
-     * 记录整体再流一遍 —— 十万条素材的任务为此多跑一遍全量查询，
-     * 代价与收益不成比例。
-     * 所以它们改成写日志 + 界面提示：信息没丢，只是不落在交付物里。
-     */
-
-    // PDF 需要 Chromium，失败也不影响 JSON / HTML
-    const htmlPath = revision.files.html
-    if (htmlPath !== undefined) {
-      const pdfPath = join(revision.dir, 'report.pdf')
-      const pdf = await renderHtmlToPdf(htmlPath, pdfPath, logger)
-      if (pdf.ok) {
-        reportStore.attachPdf(store, jobId, revision.revision, pdfPath)
+      /*
+       * 附注必须在报告**渲染之前**交进去。
+       *
+       * 报告是先渲染再落盘的，渲染之后往哪儿 push 都进不去 —— 这里曾经拿 writeRevision
+       * 返回的 extraNotes 数组 push 了四条说明，然后整个数组被丢弃，
+       * 于是报告的「执行说明」一节基本是空的，其中"这是仅校验任务的报告"
+       * 这条尤其要紧：拿到报告的人分不清它是复核记录还是拷贝交付。
+       */
+      const preNotes: string[] = []
+      if (!completedCleanly) {
+        preNotes.push(this.m('job.reportNotCleanNote', { state }))
       }
-      if (pdf.ok && pdf.imageTotal > 0 && pdf.imageLoaded < pdf.imageTotal) {
-        const missing = pdf.imageTotal - pdf.imageLoaded
-        const message = this.m('job.pdfMissingFrames', { missing, total: pdf.imageTotal })
-        logger.warn('job', message)
-        this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
+      if (job.mode === 'verify') {
+        preNotes.push(this.m('job.verifyModeNote'))
       }
 
-      // PDF 生成完才内联首帧图：内联后的单文件 HTML 不再依赖 frames/ 目录，
-      // 单独发出去也能看到画面。超出预算未内联的图保留相对路径引用。
-      try {
-        const { inlined, skipped } = await reportStore.inlineReportFrames(revision)
-        if (inlined > 0) {
-          logger.info('job', `已将 ${inlined} 张首帧图内联进 HTML 报告（单文件自包含）。`)
+      const { revision } = await reportStore.writeRevision({
+        job: terminalState === undefined ? job : { ...job, state: terminalState },
+        theme: theme ?? this.deps.getSettings().reportTheme,
+        project,
+        store,
+        sourceLabel,
+        targets: job.targets,
+        hostname: hostname(),
+        toolName: TOOL_NAME,
+        toolVersion: TOOL_VERSION,
+        now: new Date(),
+        // 只有正常跑完的拷贝任务才往目标盘写清单；取消/失败的任务清单并不代表
+        // 一份可信的交付。仅校验模式按定义不写目标盘的任何字节，清单同样不写。
+        writeManifestToTargets: completedCleanly && job.mode !== 'verify',
+        preNotes,
+        // 报告根目录覆盖：null 表示用默认的本机 reports 目录
+        outputBaseDir: this.deps.getSettings().reportOutputDir
+      })
+
+      /*
+       * 下面两条只有等报告渲染完才知道，赶不上「执行说明」那一节。
+       *
+       * 刻意**不**为此把报告再渲染一遍：报告目录里的两份产物（report.html 与
+       * report.json）必须一致，补写就等于重写 HTML、并把 report.json 的逐文件
+       * 记录整体再流一遍 —— 十万条素材的任务为此多跑一遍全量查询，
+       * 代价与收益不成比例。
+       * 所以它们改成写日志 + 界面提示：信息没丢，只是不落在交付物里。
+       */
+
+      // PDF 需要 Chromium，失败也不影响 JSON / HTML
+      const htmlPath = revision.files.html
+      if (htmlPath !== undefined) {
+        const pdfPath = join(revision.dir, 'report.pdf')
+        const pdf = await renderHtmlToPdf(htmlPath, pdfPath, logger)
+        if (pdf.ok) {
+          reportStore.attachPdf(store, jobId, revision.revision, pdfPath)
         }
-        if (skipped > 0) {
-          const message = this.m('job.inlineSkippedNote', { count: skipped })
+        if (pdf.ok && pdf.imageTotal > 0 && pdf.imageLoaded < pdf.imageTotal) {
+          const missing = pdf.imageTotal - pdf.imageLoaded
+          const message = this.m('job.pdfMissingFrames', { missing, total: pdf.imageTotal })
+          logger.warn('job', message)
+          this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
+        }
+
+        // PDF 生成完才内联首帧图：内联后的单文件 HTML 不再依赖 frames/ 目录，
+        // 单独发出去也能看到画面。超出预算未内联的图保留相对路径引用。
+        try {
+          const { inlined, skipped } = await reportStore.inlineReportFrames(revision)
+          if (inlined > 0) {
+            logger.info('job', `已将 ${inlined} 张首帧图内联进 HTML 报告（单文件自包含）。`)
+          }
+          if (skipped > 0) {
+            const message = this.m('job.inlineSkippedNote', { count: skipped })
+            logger.warn('job', message)
+            this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          logger.warn('job', `首帧图内联失败（报告仍可用）：${message}`)
+        }
+      }
+
+      /*
+       * 最后一步：把整份修订复制到各目标盘。
+       *
+       * 必须放在这里 —— 要等 PDF 生成与首帧内联都做完，盘上那一份才是完整的
+       * 单文件报告。复制失败只记日志与提示，绝不让它把已经成功的拷贝任务
+       * 变成一次"失败"（它只是交付便利，不是交付本身）。
+       */
+      const delivery: NonNullable<ReportSummary['delivery']> = []
+      const publishRevision =
+        store.listReports(jobId).find((item) => item.revision === revision.revision) ?? revision
+      try {
+        const result = await reportStore.publishToTargets({
+          job,
+          revision: publishRevision,
+          targets: job.targets,
+          hostname: hostname(),
+          toolName: TOOL_NAME,
+          toolVersion: TOOL_VERSION,
+          now: new Date()
+        })
+        if (job.mode !== 'verify') delivery.push(...result.deliveries)
+        if (result.published.length > 0) {
+          logger.info(
+            'job',
+            this.m('job.reportPublished', { targets: result.published.join('、') })
+          )
+        }
+        for (const item of result.failed) {
+          const message = this.m('job.reportPublishFail', {
+            label: item.label,
+            reason: item.reason
+          })
           logger.warn('job', message)
           this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        logger.warn('job', `首帧图内联失败（报告仍可用）：${message}`)
+        logger.warn('job', `报告复制到目标盘失败（本机报告已生成）：${message}`)
+        if (job.mode !== 'verify')
+          delivery.push(
+            ...job.targets
+              .filter((target) => target.enabled)
+              .map((target) => ({
+                targetId: target.id,
+                label: target.label,
+                state: 'failed' as const,
+                reason: message
+              }))
+          )
       }
-    }
 
-    /*
-     * 最后一步：把整份修订复制到各目标盘。
-     *
-     * 必须放在这里 —— 要等 PDF 生成与首帧内联都做完，盘上那一份才是完整的
-     * 单文件报告。复制失败只记日志与提示，绝不让它把已经成功的拷贝任务
-     * 变成一次"失败"（它只是交付便利，不是交付本身）。
-     */
-    try {
-      const result = await reportStore.publishToTargets({
-        job,
-        revision,
-        targets: job.targets,
-        hostname: hostname(),
-        toolName: TOOL_NAME,
-        toolVersion: TOOL_VERSION,
-        now: new Date()
-      })
-      if (result.published.length > 0) {
-        logger.info('job', this.m('job.reportPublished', { targets: result.published.join('、') }))
-      }
-      for (const item of result.failed) {
-        const message = this.m('job.reportPublishFail', { label: item.label, reason: item.reason })
-        logger.warn('job', message)
-        this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      logger.warn('job', `报告复制到目标盘失败（本机报告已生成）：${message}`)
+      store.updateReportDelivery(jobId, revision.revision, delivery)
+      this.deps.emit({ type: 'reports:changed', payload: { jobId } })
+      return { ...revision.summary, delivery }
+    } finally {
+      this.reportJobs.delete(jobId)
+      await this.performEndActions()
     }
-
-    this.deps.emit({ type: 'reports:changed', payload: { jobId } })
-    return revision.summary
   }
 
-  private async ejectTargets(job: CopyJob): Promise<void> {
+  private async performEndActions(): Promise<void> {
+    if (this.ending) return
+    if (!this.hasActiveWork) {
+      this.ending = true
+      try {
+        const settings = this.deps.getSettings()
+        const ejected = new Set<string>()
+        const ids = [...this.endActions]
+        this.endActions.clear()
+        if (settings.ejectAfterCopy)
+          for (const id of ids) {
+            if (this.hasActiveWork) break
+            const finished = this.deps.store.getJob(id)
+            if (finished && !(await this.ejectTargets(finished, ejected)))
+              this.completionHadErrors = true
+          }
+        if (
+          !this.hasActiveWork &&
+          !this.completionHadErrors &&
+          ids.length > 0 &&
+          settings.shutdownAfterCopy
+        )
+          await this.scheduleShutdown()
+        this.completionHadErrors = false
+      } finally {
+        this.ending = false
+      }
+    }
+  }
+
+  private async ejectTargets(job: CopyJob, ejected: Set<string>): Promise<boolean> {
+    let ok = true
     for (const target of job.targets) {
       if (!target.enabled) continue
       const description = await describeVolume(target.path)
-      if (description === null) continue
+      if (description === null || ejected.has(description.mountPoint)) continue
+      ejected.add(description.mountPoint)
       const result = await ejectVolume(description.mountPoint, this.deps.getSettings().language)
       if (result.ok) {
         this.deps.logger.info('job', this.m('job.ejected', { label: target.label }))
       } else {
-        this.deps.logger.warn('job', this.m('job.ejectFail', { label: target.label, reason: result.message }))
+        ok = false
+        this.deps.logger.warn(
+          'job',
+          this.m('job.ejectFail', { label: target.label, reason: result.message })
+        )
       }
     }
+    return ok
   }
 
   /**
@@ -779,7 +987,10 @@ export class JobManager {
     const result = await scheduleShutdown(this.deps.getSettings().language)
     if (result.ok) {
       this.deps.logger.info('job', this.m('job.shutdownScheduled'))
-      this.deps.emit({ type: 'toast', payload: { level: 'info', message: this.m('job.shutdownScheduled') } })
+      this.deps.emit({
+        type: 'toast',
+        payload: { level: 'info', message: this.m('job.shutdownScheduled') }
+      })
     } else {
       this.deps.logger.warn('job', this.m('job.shutdownFail', { reason: result.message }))
       this.deps.emit({

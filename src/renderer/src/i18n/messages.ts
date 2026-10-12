@@ -7,6 +7,35 @@
  */
 
 export const zhCN = {
+  'workbench.materialDetails': '素材详情',
+  'workbench.independentVerify': '每个目标副本都必须独立重读校验，通过后才发布完整文件。',
+  'workbench.enabled': '已启用',
+  'workbench.disabled': '未启用',
+  'workbench.readOnlyProxy': '仅校验模式只读，不能生成代理。',
+  'workbench.optionalFields': '可选信息 · 空字段不进入报告',
+  'workbench.reportTheme': '报告主题',
+  'workbench.reportThemeHint': '自动报告使用此主题；交付页可为新修订另选主题。',
+  'workbench.theme.delivery': '简洁交付',
+  'workbench.theme.technical': '详细技术',
+  'workbench.theme.print': '黑白打印',
+  'workbench.preview': '主题预览',
+  'workbench.closePreview': '收起预览',
+  'workbench.deliveryStatus': '报告交付状态',
+  'workbench.published': '已交付',
+  'workbench.deliveryFailed': '交付失败',
+  'workbench.proxyStage': '代理',
+  'workbench.proxySuccess': '代理可用',
+  'workbench.proxyFailure': '代理失败',
+  'workbench.retryProxies': '重试失败代理',
+  'workbench.pipeline': '任务阶段',
+  'workbench.searchFiles': '搜索素材路径',
+  'workbench.allStates': '全部状态',
+  'workbench.previous': '上一页',
+  'workbench.next': '下一页',
+  'queue.phase.verifying': '独立校验',
+  'queue.phase.proxying': '生成代理',
+  'queue.phase.reporting': '报告交付',
+
   'app.name': 'SecureReel DIT',
   'app.tagline': '素材拷贝 · 哈希校验 · 报告',
   'app.initFailed': '初始化失败：{reason}',
@@ -113,7 +142,8 @@ export const zhCN = {
   'copy.jobNamePlaceholder': '例如：A002 卡 · 现场备份',
   'copy.modeTitle': '任务模式',
   'copy.verifyOnly': '仅校验（不拷贝）',
-  'copy.verifyOnlyHint': '勾选后「目标」指已拷好的目录：只读取两侧比对校验值，不写入、不删除任何数据。适合复检或核对别人的盘。',
+  'copy.verifyOnlyHint':
+    '勾选后「目标」指已拷好的目录：只读取两侧比对校验值，不写入、不删除任何数据。适合复检或核对别人的盘。',
   'copy.spaceAck': '我已知晓：目标盘可能在拷到一半时因写满被隔离，我选择继续。',
   'copy.spaceAckRequired': '有目标盘空间可能不足。请先确认下方提示并勾选"我已知晓"，或更换目标。',
   'copy.insufficientNotice':
@@ -132,7 +162,8 @@ export const zhCN = {
   'copy.advanced': '校验与清单',
   'copy.hashAlgorithm': '校验算法',
   'copy.manifestFormat': '清单格式',
-  'copy.hashHint': 'xxHash 最快，MD5 / SHA-1 / SHA-256 通用性最好，ASC C4 是 MHL 原生标准。越标准越慢。',
+  'copy.hashHint':
+    'xxHash 最快，MD5 / SHA-1 / SHA-256 通用性最好，ASC C4 是 MHL 原生标准。越标准越慢。',
   'manifest.asc-mhl-2.0': 'ASC MHL 2.0（推荐）',
   'manifest.mhl-v1': 'MHL v1（传统）',
   'manifest.csv': 'CSV 表格（Excel 直接打开）',
@@ -234,14 +265,16 @@ export const zhCN = {
   'crew.role.editor': '剪辑师',
 
   'parent.title': '母项目',
-  'parent.subtitle': '一部戏一个母项目。拷贝时选它，机型、镜头、主创会自动带入，报告与清单也会标出归属。',
+  'parent.subtitle':
+    '一部戏一个母项目。拷贝时选它，机型、镜头、主创会自动带入，报告与清单也会标出归属。',
   'parent.pick': '选择母项目',
   'parent.create': '新建母项目',
   'parent.createHint': '例如《母亲》。创建后到「拷贝」页选它即可。',
   'parent.rename': '重命名',
   'parent.remove': '删除母项目',
   'parent.removeConfirm': '确定删除这个母项目？',
-  'parent.removeWarning': '名下 {count} 个拷贝任务会变为「未分组」。任务记录与已经拷到盘上的素材都不会被删除。',
+  'parent.removeWarning':
+    '名下 {count} 个拷贝任务会变为「未分组」。任务记录与已经拷到盘上的素材都不会被删除。',
   'parent.jobs': '名下的拷贝任务',
   'parent.jobsSuffix': '个任务',
   'parent.noJobs': '这个母项目下还没有拷贝任务。',
@@ -327,7 +360,8 @@ export const zhCN = {
   'hde.needsTranscoder': '官方转码器',
   'hde.degraded': '已降级',
   'hde.zeroByte': '这些文件在访达里显示 0 字节是预期行为，读取时由虚拟文件系统还原真实数据。',
-  'hde.zeroByteWindows': '这些文件在资源管理器里显示 0 字节是预期行为，读取时由虚拟文件系统还原真实数据。',
+  'hde.zeroByteWindows':
+    '这些文件在资源管理器里显示 0 字节是预期行为，读取时由虚拟文件系统还原真实数据。',
   'hde.compliance': '合规说明',
   'hde.complianceBody':
     'HDE 编码能力由 ARRI / CODEX 官方免费工具提供。SecureReel DIT 只负责发现并参数化调用这些工具，不会自己实现编码算法，也不会把任何 CODEX / ARRI 的专有二进制打进安装包。找不到官方工具时，软件只会解释原因，并在你明确确认后才降级为普通 ARRIRAW 拷贝 + 哈希校验。',
@@ -431,12 +465,12 @@ export const zhCN = {
   'settings.openLogs': '打开日志目录',
   'settings.exportDiagnostics': '导出诊断包',
   'settings.diagExported': '诊断包已导出，请把它发给开发者。',
-  'settings.privacy':
-    '本软件不上传遥测、不格式化磁盘、不删除源素材。所有数据都留在本机。',
+  'settings.privacy': '本软件不上传遥测、不格式化磁盘、不删除源素材。所有数据都留在本机。',
 
   'settings.frames': '素材首帧',
   'settings.extractFrames': '为视频素材提取首帧并写进报告',
-  'settings.extractFramesHint': '报告里能看到每条素材的画面，是判断卡有没有读错最直接的手段。私有格式取内嵌预览图，不耗时。',
+  'settings.extractFramesHint':
+    '报告里能看到每条素材的画面，是判断卡有没有读错最直接的手段。私有格式取内嵌预览图，不耗时。',
   'settings.maxFrames': '提取上限',
   'settings.maxFramesHint': '0 表示不限制。一张几千条素材的卡，PDF 里塞满图会变成几百 MB。',
   'settings.maxFramesUnlimited': '不限制',
@@ -495,13 +529,44 @@ export const zhCN = {
     '本软件的解码能力来自 FFmpeg。某些编解码器（如 H.264 / HEVC）可能涉及第三方专利，本项目不提供任何专利许可，使用者应自行确认其使用场景的合规性。',
   'help.privacy': '隐私与免责',
   'help.privacyBody':
-    '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。',
-
+    '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。'
 } as const
 
 export type MessageKey = keyof typeof zhCN
 
 export const en: Record<MessageKey, string> = {
+  'workbench.materialDetails': 'Material details',
+  'workbench.independentVerify':
+    'Every destination copy is independently reread and verified before its final filename is published.',
+  'workbench.enabled': 'Enabled',
+  'workbench.disabled': 'Disabled',
+  'workbench.readOnlyProxy':
+    'Verification-only mode is read-only; proxy generation is unavailable.',
+  'workbench.optionalFields': 'Optional information · Empty fields are omitted from reports',
+  'workbench.reportTheme': 'Report theme',
+  'workbench.reportThemeHint':
+    'Used for automatic reports. Choose another theme for a new revision on the delivery page.',
+  'workbench.theme.delivery': 'Delivery',
+  'workbench.theme.technical': 'Technical',
+  'workbench.theme.print': 'Print',
+  'workbench.preview': 'Theme preview',
+  'workbench.closePreview': 'Close preview',
+  'workbench.deliveryStatus': 'Report delivery status',
+  'workbench.published': 'Published',
+  'workbench.deliveryFailed': 'Delivery failed',
+  'workbench.proxyStage': 'Proxies',
+  'workbench.proxySuccess': 'Proxy ready',
+  'workbench.proxyFailure': 'Proxy failed',
+  'workbench.retryProxies': 'Retry failed proxies',
+  'workbench.pipeline': 'Task stages',
+  'workbench.searchFiles': 'Search material paths',
+  'workbench.allStates': 'All statuses',
+  'workbench.previous': 'Previous',
+  'workbench.next': 'Next',
+  'queue.phase.verifying': 'Independent verification',
+  'queue.phase.proxying': 'Generating proxies',
+  'queue.phase.reporting': 'Delivering reports',
+
   'app.name': 'SecureReel DIT',
   'app.tagline': 'Offload · Verify · Report',
   'app.initFailed': 'Initialization failed: {reason}',
@@ -611,7 +676,8 @@ export const en: Record<MessageKey, string> = {
   'copy.verifyOnly': 'Verify only (no copying)',
   'copy.verifyOnlyHint':
     'When enabled, "targets" are existing copy folders: the app only reads both sides and compares hashes — it writes and deletes nothing. For rechecks or verifying someone else\'s drive.',
-  'copy.spaceAck': 'I understand: a target may run out of space mid-copy and be isolated. Continue anyway.',
+  'copy.spaceAck':
+    'I understand: a target may run out of space mid-copy and be isolated. Continue anyway.',
   'copy.spaceAckRequired':
     'A target may not have enough space. Please read the notice and tick the confirmation box, or pick another target.',
   'copy.insufficientNotice':
@@ -640,7 +706,8 @@ export const en: Record<MessageKey, string> = {
   'settings.formatUnsupported': ' (this format cannot express a {algorithm} checksum)',
   'settings.incompatiblePair':
     'This combination does not work: the official {format} schema has no {algorithm} element, so forcing it would produce a list other tools cannot read. Switch the manifest format to CSV / JSON, or pick one of the checksum algorithms that format supports.',
-  'settings.manifestHint': 'ASC MHL is the industry standard; CSV opens in Excel; JSON has the most fields.',
+  'settings.manifestHint':
+    'ASC MHL is the industry standard; CSV opens in Excel; JSON has the most fields.',
   'copy.verifyAfterWrite': 'Re-read and verify after writing',
   'copy.verifyHint': 'Strongly recommended. If disabled, target copies are never re-read.',
   'copy.proxyEnabled': 'Generate proxies for video (this job)',
@@ -662,7 +729,8 @@ export const en: Record<MessageKey, string> = {
   'proxy.codecUnavailable': 'unavailable on this machine',
   'copy.createAndStart': 'Create and start',
   'copy.createOnly': 'Create only',
-  'copy.creating': 'Scanning the source and creating the job… a full card can take minutes. Do not unplug the drive.',
+  'copy.creating':
+    'Scanning the source and creating the job… a full card can take minutes. Do not unplug the drive.',
   'copy.scanResult': 'Source summary',
   'copy.fileCount': 'Files',
   'copy.totalSize': 'Total size',
@@ -691,16 +759,19 @@ export const en: Record<MessageKey, string> = {
   'copy.parentNamePlaceholder': 'e.g. The Mother',
   'copy.parentCreateConfirm': 'Create',
   'copy.parentCancel': 'Cancel',
-  'copy.parentHintUnassigned': 'Not grouped under any parent project; you can set one later on the job page.',
+  'copy.parentHintUnassigned':
+    'Not grouped under any parent project; you can set one later on the job page.',
   'copy.parentHintAssigned': 'Grouped under:',
   'copy.parentCreateFailed': 'Could not create parent project',
-  'copy.parentHintTitle': 'A parent project holds what stays the same across the shoot (camera, lenses, crew) and is carried in automatically.',
+  'copy.parentHintTitle':
+    'A parent project holds what stays the same across the shoot (camera, lenses, crew) and is carried in automatically.',
   'copy.projectInfo': 'Project information',
   'copy.projectHint': 'Goes into the reports and the ASC MHL manifest.',
   'copy.inheritedFrom': 'Carried over from:',
   'copy.inheritedHint':
     'Camera / project notes affect this copy only; lenses / crew are saved into the parent project and come back next time.',
-  'copy.talentRemembered': 'Crew and lenses saved into “{name}”; they will be filled in automatically next time.',
+  'copy.talentRemembered':
+    'Crew and lenses saved into “{name}”; they will be filled in automatically next time.',
   'copy.resetToParent': 'Reset to parent values',
   'copy.cardLabel': 'Card / reel',
   'copy.cardLabelAuto': 'Leave empty to use the source volume name',
@@ -730,21 +801,25 @@ export const en: Record<MessageKey, string> = {
   'crew.role.editor': 'Editor',
 
   'parent.title': 'Parent projects',
-  'parent.subtitle': 'One parent project per production. Pick it when copying and camera, lenses and crew carry over automatically — reports and manifests record the affiliation too.',
+  'parent.subtitle':
+    'One parent project per production. Pick it when copying and camera, lenses and crew carry over automatically — reports and manifests record the affiliation too.',
   'parent.pick': 'Select parent project',
   'parent.create': 'New parent project',
   'parent.createHint': 'For example “The Mother”. Create it, then select it on the Copy page.',
   'parent.rename': 'Rename',
   'parent.remove': 'Delete parent project',
   'parent.removeConfirm': 'Delete this parent project?',
-  'parent.removeWarning': 'Its {count} copy jobs will become ungrouped. Job records and the media already copied to disk are not deleted.',
+  'parent.removeWarning':
+    'Its {count} copy jobs will become ungrouped. Job records and the media already copied to disk are not deleted.',
   'parent.jobs': 'Copy jobs in this project',
   'parent.jobsSuffix': 'jobs',
   'parent.noJobs': 'No copy jobs in this parent project yet.',
   'parent.empty': 'No parent projects yet. Create one, for example “The Mother”.',
   'parent.details': 'Parent project information',
-  'parent.detailsHint': 'This content is carried into the next copy and snapshotted into every report.',
-  'parent.snapshotHint': 'Edits never change reports that were already generated — those record what was true at the time.',
+  'parent.detailsHint':
+    'This content is carried into the next copy and snapshotted into every report.',
+  'parent.snapshotHint':
+    'Edits never change reports that were already generated — those record what was true at the time.',
   'parent.created': 'Parent project created',
   'parent.deleted': 'Parent project deleted; its jobs were moved to ungrouped',
   'parent.updated': 'Parent project updated',
@@ -752,7 +827,8 @@ export const en: Record<MessageKey, string> = {
   'parent.ungrouped': 'Ungrouped',
 
   'queue.title': 'Jobs',
-  'queue.subtitle': 'Jobs run in the background; switching pages or closing the window will not stop them.',
+  'queue.subtitle':
+    'Jobs run in the background; switching pages or closing the window will not stop them.',
   'queue.empty': 'No jobs yet. Create one from the Offload page.',
   'queue.pickOne': 'Select a job on the left to inspect its details.',
   'queue.progress': 'Progress',
@@ -780,8 +856,10 @@ export const en: Record<MessageKey, string> = {
   'queue.filesTab': 'Files',
   'queue.logTab': 'Log',
   'queue.noFiles': 'No file records yet.',
-  'queue.confirmDelete': 'Delete this job record? Media already copied to targets will not be deleted.',
-  'queue.notResumable': 'This job has finished and cannot be resumed. Generate a report or start over.',
+  'queue.confirmDelete':
+    'Delete this job record? Media already copied to targets will not be deleted.',
+  'queue.notResumable':
+    'This job has finished and cannot be resumed. Generate a report or start over.',
   'queue.recovered': 'Unfinished jobs from last session',
   'queue.recoveredHint':
     'These can be resumed directly. Partial writes are continued, nothing is copied twice.',
@@ -789,8 +867,10 @@ export const en: Record<MessageKey, string> = {
   'queue.dismiss': 'Dismiss',
 
   'reports.title': 'Report archive',
-  'reports.subtitle': 'Every generation creates a new revision (R001, R002…). Old revisions are never overwritten.',
-  'reports.empty': 'No report for this job yet. One is created automatically when the job ends, or generate it manually.',
+  'reports.subtitle':
+    'Every generation creates a new revision (R001, R002…). Old revisions are never overwritten.',
+  'reports.empty':
+    'No report for this job yet. One is created automatically when the job ends, or generate it manually.',
   'reports.selectJob': 'Select job',
   'reports.revision': 'Revision',
   'reports.createdAt': 'Created',
@@ -825,12 +905,15 @@ export const en: Record<MessageKey, string> = {
   'hde.decision': 'Decision',
   'hde.needsTranscoder': 'Official transcoder',
   'hde.degraded': 'Degraded',
-  'hde.zeroByte': 'These files showing 0 bytes in Finder is expected; the VFS restores the real data on read.',
-  'hde.zeroByteWindows': 'These files showing 0 bytes in Explorer is expected; the VFS restores the real data on read.',
+  'hde.zeroByte':
+    'These files showing 0 bytes in Finder is expected; the VFS restores the real data on read.',
+  'hde.zeroByteWindows':
+    'These files showing 0 bytes in Explorer is expected; the VFS restores the real data on read.',
   'hde.compliance': 'Compliance',
   'hde.complianceBody':
     'HDE encoding is provided by the official, free ARRI / CODEX tools. SecureReel DIT only detects and parameterises those tools. It never implements the encoding algorithm, and never bundles any proprietary CODEX / ARRI binary. When the official tool is missing, the app only explains why, and degrades to plain ARRIRAW copy + hash verification after your explicit confirmation.',
-  'hde.acceptDowngrade': 'I understand, allow degrading to a plain copy when official tools are missing',
+  'hde.acceptDowngrade':
+    'I understand, allow degrading to a plain copy when official tools are missing',
   'hde.help': 'Show official tool help',
   'hde.helpUnavailable': 'Official tool not detected, no help text available.',
 
@@ -864,7 +947,8 @@ export const en: Record<MessageKey, string> = {
   'project.infoHint': 'This record belongs to this copy only.',
   'queue.infoTab': 'Copy info',
   'queue.assignedParent': 'Parent project',
-  'queue.snapshotHint': 'The following was snapshotted from the parent project; editing the parent will not change this.',
+  'queue.snapshotHint':
+    'The following was snapshotted from the parent project; editing the parent will not change this.',
   'queue.inherited': 'Information captured at the time',
   'queue.noProjectInfo': 'This job has no project information yet.',
 
@@ -890,7 +974,8 @@ export const en: Record<MessageKey, string> = {
   'settings.shutdown': 'Shut down when everything finishes',
   'settings.shutdownHint': 'Only on success, after ejecting; a 60-second countdown you can cancel.',
   'settings.performanceMode': 'Performance mode',
-  'settings.performanceModeHint': 'Applies the settings below in one click; open Advanced to fine-tune.',
+  'settings.performanceModeHint':
+    'Applies the settings below in one click; open Advanced to fine-tune.',
   'settings.advanced': 'Advanced',
   'perf.quiet': 'Quiet',
   'perf.standard': 'Standard',
@@ -1004,6 +1089,5 @@ export const en: Record<MessageKey, string> = {
     'Decoding is provided by FFmpeg. Some codecs (such as H.264 / HEVC) may be covered by third-party patents; this project grants no patent licence, and users should confirm compliance for their own use.',
   'help.privacy': 'Privacy & disclaimer',
   'help.privacyBody':
-    'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.',
-
+    'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.'
 }

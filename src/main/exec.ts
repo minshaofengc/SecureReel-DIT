@@ -11,6 +11,7 @@
  *   · 输出有上限，防止异常程序刷爆内存
  */
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import { isExecutableFile } from './fs-utils'
 
 export interface RunOptions {
@@ -21,6 +22,8 @@ export interface RunOptions {
   maxStderrBytes?: number
   signal?: AbortSignal
   env?: NodeJS.ProcessEnv
+  /** Complete stdout lines, including a trailing unterminated line. */
+  onStdoutLine?: (line: string) => void
 }
 
 export interface RunResult {
@@ -40,7 +43,9 @@ const DEFAULT_MAX_OUTPUT = 4 * 1024 * 1024
  *
  * 这是"参数化调用"的前提：只有确认过是真实可执行文件，才会把它交给 spawn。
  */
-export async function resolveExecutable(candidate: string | null | undefined): Promise<string | null> {
+export async function resolveExecutable(
+  candidate: string | null | undefined
+): Promise<string | null> {
   if (candidate === null || candidate === undefined || candidate.trim() === '') return null
   if (candidate.includes('\0')) return null
   return (await isExecutableFile(candidate)) ? candidate : null
@@ -57,6 +62,15 @@ export function runCommand(
   args: readonly string[],
   options: RunOptions = {}
 ): Promise<RunResult> {
+  if (options.signal?.aborted) {
+    return Promise.resolve({
+      code: null,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+      spawnError: null
+    })
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT
   const maxStdout = options.maxStdoutBytes ?? DEFAULT_MAX_OUTPUT
   const maxStderr = options.maxStderrBytes ?? DEFAULT_MAX_OUTPUT
@@ -66,6 +80,12 @@ export function runCommand(
     let timedOut = false
     let stdout = ''
     let stderr = ''
+    let pendingLine = ''
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
+    const lineDecoder = new StringDecoder('utf8')
 
     let child: ReturnType<typeof spawn>
     try {
@@ -95,20 +115,34 @@ export function runCommand(
       child.kill('SIGKILL')
     }
     options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
 
     const finish = (code: number | null, spawnError: string | null): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       options.signal?.removeEventListener('abort', onAbort)
+      if (pendingLine) options.onStdoutLine?.(pendingLine)
       resolve({ code, stdout, stderr, timedOut, spawnError })
     }
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (stdout.length < maxStdout) stdout += chunk.toString('utf8')
+      const remaining = Math.max(0, maxStdout - stdoutBytes)
+      stdout += stdoutDecoder.write(chunk.subarray(0, remaining))
+      stdoutBytes += Math.min(remaining, chunk.length)
+      if (options.onStdoutLine) {
+        pendingLine += lineDecoder.write(chunk)
+        const lines = pendingLine.split(/\r?\n/)
+        pendingLine = lines.pop() ?? ''
+        for (const line of lines) options.onStdoutLine(line)
+        // Bound a broken tool's unterminated progress line.
+        if (pendingLine.length > 65536) pendingLine = pendingLine.slice(-65536)
+      }
     })
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < maxStderr) stderr += chunk.toString('utf8')
+      const remaining = Math.max(0, maxStderr - stderrBytes)
+      stderr += stderrDecoder.write(chunk.subarray(0, remaining))
+      stderrBytes += Math.min(remaining, chunk.length)
     })
     child.on('error', (error) => finish(null, error.message))
     child.on('close', (code) => finish(code, null))
