@@ -634,6 +634,7 @@ export class ReportStore {
         : null
 
     return {
+      backupSafety: job.backupSafety,
       theme: input.theme ?? 'delivery',
       jobId: job.id,
       jobName: job.name,

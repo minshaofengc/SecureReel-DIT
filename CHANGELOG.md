@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.0.8 — Storage safety and desktop / Android companion (local candidate)
+
+- Identify filesystems, physical-device groups and shared capacity pools before writing; aggregate requirements across targets sharing capacity, including APFS containers. Unknown topology is shown explicitly.
+- Require explicit acknowledgement for same-device backups and known insufficient capacity. Missing devices, failed capacity checks and source/target filesystem overlap continue to block copying. Recheck devices before queued writes, recovery, retries and target changes.
+- Persist task safety evidence and distinguish content verification from physical independence in new report revisions. Historical reports remain unchanged and missing historical evidence is shown as unknown.
+- Add authorized-folder-only LAN preflight, per-device and per-folder revocation, and actual authenticated last-contact information. Older companions can monitor but must upgrade before creating tasks without preflight support.
+- Improve workbench, copy, monitoring, report delivery, HDE setup, project defaults, settings, narrow windows, keyboard focus and reduced-motion behavior.
+- Align macOS, Windows and Android display versions to 2.0.8; Android uses version code 209 and retains the existing beta application identity. Preserve local-copy / desktop-companion modes, drafts, durable requests, notifications and archived reports.
+- Build local macOS Universal, Windows x64 and Android ARM64 candidates. Real Windows installation, Intel Mac launch, independent physical disks, Android USB/SD, optical QR and manufacturer background endurance still require hardware acceptance. Public release and store submission are separate.
+
 ## 2.0.7 — Workbench, reports and reliable proxies
 
 - Redesign task setup, monitoring and delivery with searchable paginated file lists.

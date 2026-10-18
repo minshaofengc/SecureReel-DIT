@@ -43,6 +43,35 @@ beforeEach(async () => {
     logger,
     paths,
     reportStore,
+    // Report/finalization fixtures simulate device evidence at the OS boundary.
+    // Actual storage blocking, consent and replacement are tested independently.
+    storagePreflight: async (input) => ({
+      fingerprint: 'report-fixture-devices',
+      checkedAt: new Date().toISOString(),
+      source: {
+        path: input.sourcePath,
+        label: 'Source',
+        filesystemId: 'source',
+        physicalDeviceIds: ['source-disk'],
+        capacityPoolId: 'source',
+        availableBytes: 1000000000,
+        present: true
+      },
+      targets: input.targets.map((path, index) => ({
+        path,
+        label: 'Backup',
+        filesystemId: `target-${index}`,
+        physicalDeviceIds: [`target-disk-${index}`],
+        capacityPoolId: `target-${index}`,
+        availableBytes: 1000000000,
+        present: true
+      })),
+      groups: [],
+      risks: [],
+      blockingReasons: [],
+      requiredBytes: input.requiredBytes,
+      independentDeviceGroups: input.targets.length
+    }),
     // generateReports 用不到这两个；真跑引擎的那条用例另见 start() 路径
     probeRunner: {
       setFrameOutputDir: () => undefined,
@@ -434,4 +463,37 @@ it('手动弹盘等待系统响应期间禁止启动任务或生成报告，并�
   release()
   await rejected
   expect(manager.canEject).toBe(true)
+})
+
+it('archives physical-independence evidence with the revision and never retrofits an older report', async () => {
+  const { job } = await seedFinishedJob('completed', 'copy')
+  const identity = {
+    path: '/backup',
+    label: 'Backup',
+    filesystemId: 'backup',
+    physicalDeviceIds: ['one-disk'],
+    capacityPoolId: 'backup',
+    availableBytes: 1000,
+    present: true
+  }
+  const evidence = {
+    fingerprint: 'original-device',
+    checkedAt: '2026-10-18T00:00:00.000Z',
+    source: { ...identity, path: '/source', filesystemId: 'source' },
+    targets: [identity],
+    groups: [],
+    risks: [{ code: 'shared-device' as const, paths: ['/backup'] }],
+    blockingReasons: [],
+    requiredBytes: 200,
+    independentDeviceGroups: 1
+  }
+  store.saveJobSafety(job.id, evidence)
+  await manager.generateReports(job.id)
+  const first = store.listReports(job.id)[0]!
+  const saved = await readFile(first.files.json!, 'utf8')
+  expect(JSON.parse(saved).summary.backupSafety.fingerprint).toBe('original-device')
+  expect(await readFile(first.files.html!, 'utf8')).toContain('物理独立性')
+  store.saveJobSafety(job.id, { ...evidence, fingerprint: 'different-device' })
+  await manager.generateReports(job.id)
+  expect(await readFile(first.files.json!, 'utf8')).toBe(saved)
 })

@@ -1,7 +1,7 @@
 #!/bin/sh
 # 打 Windows 版安装包，产物直接落到工作区根的「03-Windows 版」文件夹。
 #
-#   sh scripts/dist-win.sh
+#   SECUREREEL_OUTPUT_DIR=/absolute/candidate sh scripts/dist-win.sh
 #
 # 📁 目录层级（2026-10-04 工作区重排后）：
 #   工作区根/
@@ -24,10 +24,48 @@
 # 万一哪天构建日志里出现了 wine，说明版本变了，回来重新审这一步。
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$(cd "$ROOT/../.." && pwd)/03-Windows 版"
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 1
 
-# 国内镜像：没设才设，已设的尊重调用方
+# Linked worktrees live at another depth; never infer release destinations there.
+# The override also lets a normal checkout build candidates without touching releases.
+if [ "${SECUREREEL_OUTPUT_DIR+x}" = x ]; then
+  OUT_DIR="$SECUREREEL_OUTPUT_DIR"
+  case "$OUT_DIR" in
+    /*) ;;
+    *) echo "✗ SECUREREEL_OUTPUT_DIR 必须是非空绝对目录。" >&2; exit 1 ;;
+  esac
+elif [ -f "$ROOT/.git" ]; then
+  echo "✗ 隔离工作树必须显式设置 SECUREREEL_OUTPUT_DIR 指向候选产物目录。" >&2
+  exit 1
+else
+  OUT_DIR="$(cd "$ROOT/../.." && pwd -P)/03-Windows 版"
+fi
+
+# Resolve existing ancestors without creating output, including symlink aliases.
+# Reject traversal, files, dangling links, repository paths and their ancestors.
+case "/$OUT_DIR/" in
+  *'/../'*|*'/./'*) echo "✗ 产物目录不能包含 . 或 .. 路径段。" >&2; exit 1 ;;
+esac
+OUT_ANCESTOR="$OUT_DIR"
+OUT_SUFFIX=''
+while [ ! -d "$OUT_ANCESTOR" ]; do
+  if [ -e "$OUT_ANCESTOR" ] || [ -L "$OUT_ANCESTOR" ]; then
+    echo "✗ 产物路径不是可用目录。" >&2
+    exit 1
+  fi
+  OUT_SUFFIX="/$(basename "$OUT_ANCESTOR")$OUT_SUFFIX"
+  OUT_ANCESTOR="$(dirname "$OUT_ANCESTOR")"
+done
+OUT_ANCESTOR="$(cd "$OUT_ANCESTOR" && pwd -P)" || exit 1
+OUT_DIR="${OUT_ANCESTOR%/}$OUT_SUFFIX"
+case "$OUT_DIR" in
+  ''|/|"$ROOT"|"$ROOT"/*|*/.git|*/.git/*)
+    echo "✗ 产物目录不能是根目录或源码目录。" >&2; exit 1 ;;
+esac
+case "$ROOT/" in
+  "$OUT_DIR/"*) echo "✗ 产物目录不能包含源码目录。" >&2; exit 1 ;;
+esac
+
 # 国内镜像：没设才设，已设的尊重调用方。
 #
 # ⚠️ 必须用 registry.npmmirror.com/-/binary/，**不是** npmmirror.com/mirrors/。

@@ -200,7 +200,7 @@ html[data-mode='dark'] {
   --hard-line: rgba(236, 238, 240, 0.18); /* 需要收口的地方（输入框、表格头） */
   --text: #eceef0;
   --text-muted: #a9adb3;
-  --text-faint: #767b82;
+  --text-faint: #92969d; /* >= 5:1 versus the associated surface in both themes */
 
   --band: #26292d;         /* 日志面板这类"深色面" */
   --band-ink: #eceef0;
@@ -263,7 +263,7 @@ html[data-mode='light'] {
   --hard-line: rgba(22, 24, 26, 0.2);
   --text: #16181a;
   --text-muted: #50545a;
-  --text-faint: #7f858c;
+  --text-faint: #656b72; /* >= 5:1 versus the associated surface in both themes */
 
   --band: #23262b;
   --band-ink: #f3f4f6;
@@ -332,7 +332,7 @@ html[data-skin='steel'][data-mode='light'] {
   --hard-line: rgba(18, 24, 32, 0.2);
   --text: #121820;
   --text-muted: #4b5563;
-  --text-faint: #7b8593;
+  --text-faint: #686f78; /* >= 5:1 versus the associated surface in both themes */
   --band: #1c2530;
   --band-ink: #eef2f7;
   --band-ink-dim: rgba(238, 242, 247, 0.62);
@@ -377,7 +377,7 @@ html[data-skin='steel'][data-mode='dark'] {
   --hard-line: rgba(238, 242, 247, 0.18);
   --text: #eef2f7;
   --text-muted: #aeb6c1;
-  --text-faint: #78818d;
+  --text-faint: #929ca7; /* >= 5:1 versus the associated surface in both themes */
   --band: #222a35;
   --band-ink: #eef2f7;
   --band-ink-dim: rgba(238, 242, 247, 0.58);
@@ -433,7 +433,7 @@ html[data-skin='sand'][data-mode='light'] {
   --hard-line: rgba(38, 30, 20, 0.22);
   --text: #221c14;
   --text-muted: #5c5346;
-  --text-faint: #8b8172;
+  --text-faint: #766c60; /* >= 5:1 versus the associated surface in both themes */
   --band: #2a231a;
   --band-ink: #f7f2e9;
   --band-ink-dim: rgba(247, 242, 233, 0.6);
@@ -478,7 +478,7 @@ html[data-skin='sand'][data-mode='dark'] {
   --hard-line: rgba(242, 236, 224, 0.18);
   --text: #f2ece0;
   --text-muted: #b8ad9c;
-  --text-faint: #857b6b;
+  --text-faint: #a69b8a; /* >= 5:1 versus the associated surface in both themes */
   --band: #2a2318;
   --band-ink: #f2ece0;
   --band-ink-dim: rgba(242, 236, 224, 0.56);

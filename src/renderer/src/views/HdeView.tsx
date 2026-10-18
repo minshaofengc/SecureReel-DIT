@@ -140,6 +140,7 @@ export function HdeView(): ReactNode {
               </table>
             </div>
 
+            <p className="hde-next-action">{t(status.vfsAvailable || status.transcoderPath !== null ? 'hde.nextReady' : 'hde.nextMissing')}</p>
             <Note tone={status.requiresUserConfirmation ? 'warn' : undefined}>
               <pre>{status.message}</pre>
             </Note>
@@ -168,10 +169,10 @@ export function HdeView(): ReactNode {
             onPick={() => {
               void (async () => {
                 const picked = await window.securereel.volumes.pickPath('directory', t('copy.pickSource'))
-                if (picked.ok && picked.data !== null) setSourcePath(picked.data)
+                if (picked.ok && picked.data !== null) { setSourcePath(picked.data); setDecision(null) }
               })()
             }}
-            onChange={setSourcePath}
+            onChange={(path) => { setSourcePath(path); setDecision(null) }}
           />
         </div>
 
@@ -181,7 +182,7 @@ export function HdeView(): ReactNode {
             value={model}
             ariaLabel={t('hde.model')}
             options={modelOptions}
-            onChange={setModel}
+            onChange={(next) => { setModel(next); setDecision(null) }}
           />
         </div>
 
@@ -207,11 +208,14 @@ export function HdeView(): ReactNode {
         )}
       </Card>
 
+      <details className="workbench-disclosure workbench-disclosure--panel">
+        <summary>{t('hde.compliance')}</summary>
       <Card title={t('hde.compliance')}>
         <pre className="faint" style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>
           {t('hde.complianceBody')}
         </pre>
       </Card>
+      </details>
     </div>
   )
 }

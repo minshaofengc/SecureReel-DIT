@@ -126,6 +126,9 @@ function Shell(): ReactNode {
               {t('top.running')} · {runningCount}
             </span>
           )}
+          <div className="topbar__viewmode">
+            <ViewSwitch value={viewMode} onChange={changeView} />
+          </div>
           {TOOL_PAGES.map((tool) => (
             <button
               key={tool}
@@ -214,7 +217,6 @@ function Shell(): ReactNode {
           </div>
         ))}
 
-        <ViewSwitch value={viewMode} onChange={changeView} />
       </div>
     </div>
   )

@@ -140,6 +140,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   parent_project_id  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS job_safety (
+  job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+  evidence_json TEXT NOT NULL,
+  confirmation_json TEXT
+);
+
 CREATE TABLE IF NOT EXISTS job_targets (
   job_id       TEXT NOT NULL,
   id           TEXT NOT NULL,

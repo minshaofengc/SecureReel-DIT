@@ -20,6 +20,7 @@ export default tseslint.config(
       'release/**',
       'node_modules/**',
       '.worktrees/**',
+      'packages/**',
       '.verify-output/**',
       '*.config.js',
       'electron.vite.config.*.mjs',

@@ -112,7 +112,32 @@ export const projectInfoSchema = projectDraftSchema.extend({
  * 项目信息随创建一次带全（而不是创建成功后再调一次保存）：
  * 少一次 IPC，且不存在"整包覆盖"把主进程按来源盘推出的卡号冲掉的坑。
  */
+export const preflightConfirmationSchema = z
+  .object({
+    fingerprint: z.string().min(1).max(256),
+    acceptRisks: z.boolean()
+  })
+  .strict()
+export const jobPreflightSchema = z
+  .object({
+    sourcePath: absolutePathSchema,
+    targets: z
+      .array(z.object({ path: absolutePathSchema }))
+      .min(1)
+      .max(8),
+    mode: z.enum(JOB_MODES),
+    proxyEnabled: z.boolean().optional()
+  })
+  .strict()
+export const jobSafetyActionSchema = z
+  .object({
+    jobId: jobIdSchema,
+    preflightConfirmation: preflightConfirmationSchema.optional()
+  })
+  .strict()
+
 export const createJobSchema = z.object({
+  preflightConfirmation: preflightConfirmationSchema.optional(),
   name: z.string().min(1, '请填写任务名称').max(120, '任务名称过长'),
   sourcePath: absolutePathSchema,
   targets: z

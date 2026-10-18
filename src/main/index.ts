@@ -18,6 +18,9 @@ import { HdeAdapter } from './adapters/hde'
 import { ReportStore } from './reports/report-store'
 import { JobManager, TOOL_NAME } from './core/job-manager'
 import { emitToWindows, registerIpcHandlers } from './ipc/handlers'
+import { MobileCompanion } from './mobile-companion/server'
+import { desktopAdapter } from './mobile-companion/adapter'
+import { registerCompanionIpc } from './mobile-companion/ipc'
 import { ensureDir } from './fs-utils'
 import { IS_MAC, IS_WINDOWS, TITLE_BAR_HEIGHT, USE_OVERLAY_TITLEBAR } from './platform'
 import { registerFrameProtocol, registerFrameScheme } from './protocol'
@@ -384,6 +387,18 @@ async function bootstrap(): Promise<void> {
       isStarted: (id) => powerSaveBlocker.isStarted(id)
     }
   })
+
+  // Local-network companion is opt-in; no LAN listener exists until the user enables it.
+  try {
+    const companion = await MobileCompanion.open({
+      directory: join(paths.userDataDir, 'mobile-companion'),
+      adapter: desktopAdapter(jobManager, store, paths.reportsDir)
+    })
+    registerCompanionIpc(companion, () => mainWindow)
+    app.on('before-quit', () => { void companion.stop() })
+  } catch {
+    logger.warn('companion', 'Mobile companion authority unavailable; remote access remains disabled.')
+  }
 
   registerIpcHandlers({
     store,

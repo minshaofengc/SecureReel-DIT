@@ -1,3 +1,4 @@
+import type { TargetPreflightResult } from './storage-safety'
 /**
  * SecureReel DIT —— 跨进程共享的领域模型。
  *
@@ -444,6 +445,8 @@ export interface FileStateDelta {
  * ------------------------------------------------------------------ */
 
 export interface CopyJob {
+  /** Recorded evidence, never a claim about current mounted media. */
+  backupSafety?: TargetPreflightResult
   id: string
   name: string
   /** 任务模式：copy = 拷贝 + 校验；verify = 仅校验，不写目标盘 */
@@ -687,6 +690,7 @@ export interface FileQueryFilter {
 }
 
 export interface ReportSummary {
+  backupSafety?: TargetPreflightResult
   delivery?: ReportDelivery[]
   theme?: ReportTheme
   jobId: string
@@ -1104,6 +1108,10 @@ export interface DriveUsage {
   freeBytes: number
   requiredBytes: number | null
   sufficient: boolean | null
+  /** statfs actually succeeded. false means zero is a fallback, NOT measured free space. */
+  measured: boolean
+  /** true only when the selected path was definitively absent (ENOENT). */
+  missing?: boolean
 }
 
 /* ------------------------------------------------------------------ *

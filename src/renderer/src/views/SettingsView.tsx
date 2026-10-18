@@ -1,3 +1,4 @@
+import { MobileCompanionSettings } from './MobileCompanionSettings'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   HASH_ALGORITHMS,
@@ -48,12 +49,14 @@ function NumberSetting({
   value,
   min,
   max,
-  onCommit
+  onCommit,
+  label
 }: {
   value: number
   min: number
   max: number
   onCommit: (next: number) => void
+  label: string
 }): ReactNode {
   const [draft, setDraft] = useState(String(value))
   const [focused, setFocused] = useState(false)
@@ -72,6 +75,7 @@ function NumberSetting({
     <input
       className="input"
       type="number"
+      aria-label={label}
       min={min}
       max={max}
       value={display}
@@ -207,13 +211,14 @@ export function SettingsView(): ReactNode {
   }, [t, encoders])
 
   return (
-    <div className="page">
+    <div className="page settings-page">
       <PageHead
         index={PAGE_INDEX.settings}
         kicker={t('nav.settings')}
         title={t('settings.title')}
       />
 
+      <Note>{t('settings.scope')}</Note>
       <Card title={t('settings.appearance')}>
         <Field label={t('settings.skin')} hint={t('settings.skinHint')}>
           <SelectBox<ThemeId>
@@ -347,6 +352,7 @@ export function SettingsView(): ReactNode {
 
             <Field label={t('settings.maxParallelTargets')} hint={t('settings.parallelHint')}>
               <NumberSetting
+                label={t('settings.maxParallelTargets')}
                 value={settings.maxParallelTargets}
                 min={1}
                 max={8}
@@ -494,6 +500,7 @@ export function SettingsView(): ReactNode {
 
             <Field label={t('settings.proxyConcurrency')} hint={t('settings.proxyConcurrencyHint')}>
               <NumberSetting
+                label={t('settings.proxyConcurrency')}
                 value={settings.proxyConcurrency}
                 min={1}
                 max={4}
@@ -519,6 +526,7 @@ export function SettingsView(): ReactNode {
           <>
             <Field label={t('settings.maxFrames')} hint={t('settings.maxFramesHint')}>
               <NumberSetting
+                label={t('settings.maxFrames')}
                 value={settings.maxFrameExtractions}
                 min={0}
                 max={100000}
@@ -533,6 +541,7 @@ export function SettingsView(): ReactNode {
 
             <Field label={t('settings.frameConcurrency')} hint={t('settings.frameConcurrencyHint')}>
               <NumberSetting
+                label={t('settings.frameConcurrency')}
                 value={settings.frameConcurrency}
                 min={1}
                 max={8}
@@ -542,6 +551,7 @@ export function SettingsView(): ReactNode {
 
             <Field label={t('settings.stillFrames')} hint={t('settings.stillFramesHint')}>
               <NumberSetting
+                label={t('settings.stillFrames')}
                 value={settings.stillFrameCount}
                 min={0}
                 max={4}
@@ -652,6 +662,7 @@ export function SettingsView(): ReactNode {
           <Note>{t('settings.privacy')}</Note>
         </Card>
       </BlockGrid>
+      <MobileCompanionSettings />
     </div>
   )
 }

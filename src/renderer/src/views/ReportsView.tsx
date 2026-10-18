@@ -1,3 +1,4 @@
+import { StorageSafetyPanel } from '../components/StorageSafetyPanel'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { CopyJob, ReportRevision, ReportTheme } from '@shared/types'
 import { isJobLive, REPORT_THEMES } from '@shared/types'
@@ -231,6 +232,48 @@ export function ReportsView(): ReactNode {
           />
         </section>
       )}
+      {selectedRevision !== undefined && (() => {
+        const summary = selectedRevision.summary
+        const targetsComplete = summary.totalFiles > 0 &&
+          summary.targets.length > 0 &&
+          summary.targets.every((target) =>
+            target.filesFailed === 0 && target.filesCopied === summary.totalFiles
+          )
+        const deliveryComplete = selectedRevision.delivery?.every((target) =>
+          target.state === 'published'
+        ) ?? true
+        const verified = summary.jobState === 'completed' && summary.failedFiles === 0 &&
+          summary.verifiedFiles === summary.totalFiles && targetsComplete && deliveryComplete
+        return (
+          <section className={'delivery-conclusion' + (verified ? ' delivery-conclusion--ok' : ' delivery-conclusion--issue')} aria-label={t('p1.deliverySummary')}>
+            <div className="delivery-conclusion__head">
+              <span className="delivery-conclusion__label">{t('p1.deliverySummary')}</span>
+              <strong>{verified ? t('p1.deliveryVerified') : t('p1.deliveryCheckRequired')}</strong>
+              <span className="delivery-conclusion__revision">{selectedRevision.revision}</span>
+            </div>
+            <div className="delivery-conclusion__targets">
+              {summary.targets.map((target) => {
+                const passed = target.filesFailed === 0 && summary.totalFiles > 0 &&
+                  target.filesCopied === summary.totalFiles
+                return (
+                  <div key={target.targetId} className="delivery-conclusion__row">
+                    <span title={target.path}>{target.label} · {target.path}</span>
+                    <strong className={passed ? 'delivery-conclusion__success' : 'delivery-conclusion__failure'}>
+                      {passed ? t('p0.targetVerified') :
+                        target.filesFailed > 0
+                          ? t('p0.targetHasFailures', { count: target.filesFailed })
+                          : t('p0.resultUnavailable')}
+                    </strong>
+                  </div>
+                )
+              })}
+            </div>
+            <p>{t('p1.deliveryReadFromRevision')}</p>
+            <p>{t('safety.allTargetsCount')}</p>
+            <StorageSafetyPanel result={summary.backupSafety} historical />
+          </section>
+        )
+      })()}
       <div className="delivery-workbench">
         <aside className="delivery-revisions" aria-label={t('reports.revision')}>
           <div className="pane-h">

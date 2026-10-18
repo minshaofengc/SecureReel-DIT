@@ -24,6 +24,9 @@ import { msg, type MsgKey } from '@shared/messages'
 import { APP_VERSION } from '@shared/version'
 import {
   absolutePathSchema,
+  jobPreflightSchema,
+  jobSafetyActionSchema,
+  preflightConfirmationSchema,
   fileQuerySchema,
   reportRequestSchema,
   createJobSchema,
@@ -291,6 +294,10 @@ export function registerIpcHandlers(services: Services): void {
 
   /* ---------------- 任务 ---------------- */
 
+  register(IPC.jobPreflight, async (payload) =>
+    jobManager.preflight(jobPreflightSchema.parse(payload))
+  )
+
   register(IPC.jobCreate, async (payload) => {
     const request = parseOrThrow<Parameters<JobManager['createJob']>[0]>(createJobSchema, payload)
     return jobManager.createJob(request)
@@ -322,13 +329,13 @@ export function registerIpcHandlers(services: Services): void {
     return store.countFiles(jobId, filter)
   })
   register(IPC.jobRetryProxies, (payload) => {
-    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
-    return jobManager.retryProxies(jobId)
+    const { jobId, preflightConfirmation } = jobSafetyActionSchema.parse(payload)
+    return jobManager.retryProxies(jobId, preflightConfirmation)
   })
 
   register(IPC.jobStart, async (payload) => {
-    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
-    return jobManager.start(jobId)
+    const { jobId, preflightConfirmation } = jobSafetyActionSchema.parse(payload)
+    return jobManager.start(jobId, false, preflightConfirmation)
   })
 
   register(IPC.jobPause, (payload) => {
@@ -337,13 +344,13 @@ export function registerIpcHandlers(services: Services): void {
   })
 
   register(IPC.jobResume, (payload) => {
-    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
-    return jobManager.resume(jobId)
+    const { jobId, preflightConfirmation } = jobSafetyActionSchema.parse(payload)
+    return jobManager.resume(jobId, preflightConfirmation)
   })
 
   register(IPC.jobRetryFailed, async (payload) => {
-    const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, payload)
-    return jobManager.retryFailed(jobId)
+    const { jobId, preflightConfirmation } = jobSafetyActionSchema.parse(payload)
+    return jobManager.retryFailed(jobId, preflightConfirmation)
   })
 
   register(IPC.jobCancel, (payload) => {
@@ -371,7 +378,13 @@ export function registerIpcHandlers(services: Services): void {
     const { jobId } = parseOrThrow<{ jobId: string }>({ safeParse: idOnly }, { jobId: body?.jobId })
     const parsed = absolutePathSchema.safeParse(body?.path)
     if (!parsed.success) throw new Error(m('ipc.invalidTargetPath'))
-    return jobManager.addTarget(jobId, parsed.data)
+    return jobManager.addTarget(
+      jobId,
+      parsed.data,
+      preflightConfirmationSchema
+        .optional()
+        .parse((payload as { preflightConfirmation?: unknown }).preflightConfirmation)
+    )
   })
 
   register(IPC.jobProgress, (payload) => {

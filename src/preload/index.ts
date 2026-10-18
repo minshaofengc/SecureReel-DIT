@@ -13,6 +13,17 @@ const invoke = <T>(channel: string, payload?: unknown): Promise<T> =>
   ipcRenderer.invoke(channel, payload) as Promise<T>
 
 const api: SecureReelApi = {
+  companion: {
+    status: () => invoke(IPC.companionStatus, {}),
+    start: () => invoke(IPC.companionStart, {}),
+    stop: () => invoke(IPC.companionStop, {}),
+    pairing: () => invoke(IPC.companionPairing, {}),
+    revoke: () => invoke(IPC.companionRevoke, {}),
+    revokeClient: (clientId) => invoke(IPC.companionRevokeClient, { clientId }),
+    removeRoot: (rootId) => invoke(IPC.companionRemoveRoot, { rootId }),
+    approveRoot: (role) => invoke(IPC.companionApproveRoot, { role }),
+    clearRoots: () => invoke(IPC.companionClearRoots, {})
+  },
   app: {
     info: () => invoke(IPC.appInfo)
   },
@@ -32,22 +43,25 @@ const api: SecureReelApi = {
     pickPath: (kind, title) => invoke(IPC.pathPick, { kind, title })
   },
   jobs: {
+    preflight: (request) => invoke(IPC.jobPreflight, request),
     create: (request: CreateJobRequest) => invoke(IPC.jobCreate, request),
     list: () => invoke(IPC.jobList),
     get: (jobId) => invoke(IPC.jobGet, { jobId }),
     files: (jobId, limit, offset, filter) => invoke(IPC.jobFiles, { jobId, limit, offset, filter }),
     fileCount: (jobId, filter) => invoke(IPC.jobFileCount, { jobId, filter }),
-    retryProxies: (jobId) => invoke(IPC.jobRetryProxies, { jobId }),
+    retryProxies: (jobId, preflightConfirmation) => invoke(IPC.jobRetryProxies, { jobId, preflightConfirmation }),
     progress: (jobId) => invoke(IPC.jobProgress, { jobId }),
-    start: (jobId) => invoke(IPC.jobStart, { jobId }),
+    start: (jobId, preflightConfirmation) => invoke(IPC.jobStart, { jobId, preflightConfirmation }),
     pause: (jobId) => invoke(IPC.jobPause, { jobId }),
-    resume: (jobId) => invoke(IPC.jobResume, { jobId }),
-    retryFailed: (jobId) => invoke(IPC.jobRetryFailed, { jobId }),
+    resume: (jobId, preflightConfirmation) =>
+      invoke(IPC.jobResume, { jobId, preflightConfirmation }),
+    retryFailed: (jobId, preflightConfirmation) => invoke(IPC.jobRetryFailed, { jobId, preflightConfirmation }),
     cancel: (jobId) => invoke(IPC.jobCancel, { jobId }),
     remove: (jobId) => invoke(IPC.jobDelete, { jobId }),
     recoverable: () => invoke(IPC.jobRecoverable),
     lastDraft: () => invoke(IPC.jobLastDraft),
-    addTarget: (jobId, path) => invoke(IPC.jobAddTarget, { jobId, path }),
+    addTarget: (jobId, path, preflightConfirmation) =>
+      invoke(IPC.jobAddTarget, { jobId, path, preflightConfirmation }),
     setParent: (jobId, parentProjectId) => invoke(IPC.jobSetParent, { jobId, parentProjectId })
   },
   project: {

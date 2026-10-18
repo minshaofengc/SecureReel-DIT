@@ -1,3 +1,4 @@
+import type { TargetPreflightResult, PreflightConfirmation } from './storage-safety'
 /**
  * IPC 通道常量与请求/响应形状。
  *
@@ -28,6 +29,15 @@ import type {
 
 export const IPC = {
   appInfo: 'app:info',
+  companionStatus: 'companion:status',
+  companionStart: 'companion:start',
+  companionStop: 'companion:stop',
+  companionPairing: 'companion:pairing',
+  companionRevoke: 'companion:revoke',
+  companionRevokeClient: 'companion:revoke-client',
+  companionRemoveRoot: 'companion:remove-root',
+  companionApproveRoot: 'companion:approve-root',
+  companionClearRoots: 'companion:clear-roots',
 
   /** 本机可用的代理编码器（探测结果）。只读。 */
   mediaEncoders: 'media:encoders',
@@ -42,6 +52,7 @@ export const IPC = {
   volumesEject: 'volumes:eject',
   pathPick: 'path:pick',
 
+  jobPreflight: 'job:preflight',
   jobCreate: 'job:create',
   jobList: 'job:list',
   jobGet: 'job:get',
@@ -137,7 +148,15 @@ export interface EncodersInfo {
   h265Hardware: boolean
 }
 
+export interface JobPreflightRequest {
+  sourcePath: string
+  targets: { path: string }[]
+  mode: 'copy' | 'verify'
+  proxyEnabled?: boolean
+}
+
 export interface CreateJobRequest {
+  preflightConfirmation?: PreflightConfirmation
   name: string
   sourcePath: string
   targets: { path: string }[]
@@ -164,8 +183,36 @@ export interface CreateJobResponse {
   scan: ScanResult
 }
 
+export interface CompanionStatus {
+  desktopName: string
+  running: boolean
+  port: number | null
+  fingerprint: string
+  clients: { id: string; deviceName: string; lastSeenAt: string | null }[]
+  roots: { id: string; label: string; role: 'source' | 'target' }[]
+}
+export interface CompanionSetup {
+  desktopName: string
+  version: 1
+  url: string
+  fingerprint: string
+  pairingCode: string
+  expiresAt: number
+}
+
 /** 预加载脚本暴露给渲染进程的 API 形状。 */
 export interface SecureReelApi {
+  companion: {
+    status(): Promise<IpcResult<CompanionStatus>>
+    start(): Promise<IpcResult<CompanionStatus>>
+    stop(): Promise<IpcResult<CompanionStatus>>
+    pairing(): Promise<IpcResult<CompanionSetup>>
+    revoke(): Promise<IpcResult<CompanionStatus>>
+    revokeClient(clientId: string): Promise<IpcResult<CompanionStatus>>
+    removeRoot(rootId: string): Promise<IpcResult<CompanionStatus>>
+    approveRoot(role: 'source' | 'target'): Promise<IpcResult<CompanionStatus>>
+    clearRoots(): Promise<IpcResult<CompanionStatus>>
+  }
   app: {
     info(): Promise<IpcResult<AppInfo>>
   }
@@ -186,6 +233,7 @@ export interface SecureReelApi {
     pickPath(kind: 'directory' | 'file', title?: string): Promise<IpcResult<string | null>>
   }
   jobs: {
+    preflight(req: JobPreflightRequest): Promise<IpcResult<TargetPreflightResult>>
     create(req: CreateJobRequest): Promise<IpcResult<CreateJobResponse>>
     list(): Promise<IpcResult<CopyJob[]>>
     get(jobId: string): Promise<IpcResult<CopyJob>>
@@ -197,11 +245,14 @@ export interface SecureReelApi {
     ): Promise<IpcResult<CopyJobFile[]>>
     /** 读取任务当前已落库的进度（任务结束后进度事件不再推送，界面需要主动拉） */
     fileCount(jobId: string, filter?: FileQueryFilter): Promise<IpcResult<number>>
-    retryProxies(jobId: string): Promise<IpcResult<CopyJob>>
+    retryProxies(jobId: string, preflightConfirmation?: PreflightConfirmation): Promise<IpcResult<CopyJob>>
     progress(jobId: string): Promise<IpcResult<JobProgress>>
-    start(jobId: string): Promise<IpcResult<CopyJob>>
+    start(jobId: string, preflightConfirmation?: PreflightConfirmation): Promise<IpcResult<CopyJob>>
     pause(jobId: string): Promise<IpcResult<CopyJob>>
-    resume(jobId: string): Promise<IpcResult<CopyJob>>
+    resume(
+      jobId: string,
+      preflightConfirmation?: PreflightConfirmation
+    ): Promise<IpcResult<CopyJob>>
     /**
      * 重试失败项：只把上次失败的文件放回待处理再跑。
      *
@@ -209,13 +260,17 @@ export interface SecureReelApi {
      * 这里显式重置失败文件。已经校验通过的目标不会被重拷 ——
      * 引擎按目标盘上的成品/分片决定 adopt / 续传 / 写入。
      */
-    retryFailed(jobId: string): Promise<IpcResult<CopyJob>>
+    retryFailed(jobId: string, preflightConfirmation?: PreflightConfirmation): Promise<IpcResult<CopyJob>>
     cancel(jobId: string): Promise<IpcResult<CopyJob>>
     remove(jobId: string): Promise<IpcResult<boolean>>
     recoverable(): Promise<IpcResult<CopyJob[]>>
     /** 上次任务用过的来源 / 目标 / 选项，用于拷贝页预填；从未建过任务时为 null */
     lastDraft(): Promise<IpcResult<LastJobDraft | null>>
-    addTarget(jobId: string, path: string): Promise<IpcResult<CopyTarget[]>>
+    addTarget(
+      jobId: string,
+      path: string,
+      preflightConfirmation?: PreflightConfirmation
+    ): Promise<IpcResult<CopyTarget[]>>
     /** 改任务的母项目归属；传 null = 移出到未分组 */
     setParent(jobId: string, parentProjectId: string | null): Promise<IpcResult<CopyJob>>
   }

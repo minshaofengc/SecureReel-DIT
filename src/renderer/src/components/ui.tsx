@@ -284,6 +284,7 @@ export function PathPicker({
         className="input"
         value={value}
         placeholder={placeholder}
+        aria-label={buttonLabel}
         disabled={disabled}
         spellCheck={false}
         onChange={(event: ChangeEvent<HTMLInputElement>) => onChange?.(event.target.value)}

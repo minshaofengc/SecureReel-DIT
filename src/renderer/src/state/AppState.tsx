@@ -30,6 +30,9 @@ import type {
   MainEvent,
   ParentProject,
   ProjectDraft,
+  ProxyCodec,
+  ProxyProfile,
+  ProxyResolution,
   ReportRevision
 } from '@shared/types'
 import {
@@ -41,6 +44,39 @@ import {
 import { translate } from '../i18n'
 import { playCue, unlockAudio } from '../sound'
 import { updateVisibleFilePage } from './file-page'
+
+/**
+ * Unsaved job inputs are a page-independent, in-memory draft.
+ * Validation evidence (scans, volume capacity, mount state, acknowledgements)
+ * MUST NOT be stored here or assumed current after navigation.
+ * No disk storage: closing the app intentionally discards this draft.
+ */
+export interface CopyInputDraft {
+  jobName: string
+  sourcePath: string
+  targets: string[]
+  parentId: string | null
+  verifyOnlyMode: boolean
+  proxyOn: boolean
+  proxyResolution: ProxyResolution
+  proxyCodec: ProxyCodec
+  proxyProfile: ProxyProfile
+  proxyLutPath: string
+  newParentOpen: boolean
+  newParentName: string
+  /** Job successfully created, but requested start failed. Retries must start THIS job. */
+  pendingJobId: string | null
+}
+
+export function defaultCopyInput(settings: AppSettings): CopyInputDraft {
+  return {
+    jobName: '', sourcePath: '', targets: [], parentId: null,
+    verifyOnlyMode: false, proxyOn: settings.proxyEnabled,
+    proxyResolution: settings.proxyResolution, proxyCodec: settings.proxyCodec,
+    proxyProfile: settings.proxyProfile, proxyLutPath: settings.proxyLutPath ?? '',
+    newParentOpen: false, newParentName: '', pendingJobId: null
+  }
+}
 
 export interface Toast {
   id: number
@@ -67,6 +103,8 @@ interface AppStateValue {
    * 填了一半的机型、镜头、人员全部丢掉 —— 现场丢这个很难受。
    */
   projectDraft: ProjectDraft | null
+  copyDraft: CopyInputDraft | null
+  setCopyDraft: Dispatch<SetStateAction<CopyInputDraft | null>>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   refreshParents: () => Promise<void>
   setProjectDraft: Dispatch<SetStateAction<ProjectDraft | null>>
@@ -115,6 +153,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
   const [recovered, setRecovered] = useState<CopyJob[]>([])
   const [parents, setParents] = useState<ParentProject[]>([])
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
+  const [copyDraft, setCopyDraft] = useState<CopyInputDraft | null>(null)
   const toastSeq = useRef(1)
   /**
    * 每个任务的 relPath → 行下标。
@@ -501,6 +540,8 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
       recovered,
       parents,
       projectDraft,
+      copyDraft,
+      setCopyDraft,
       updateSettings,
       refreshParents,
       setProjectDraft,
@@ -525,6 +566,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
       recovered,
       parents,
       projectDraft,
+      copyDraft,
       updateSettings,
       refreshParents,
       refreshJobs,

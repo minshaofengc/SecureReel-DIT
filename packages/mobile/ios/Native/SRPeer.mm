@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#import "SRPeer.h"
+#import "SRStore.h"
+#import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
+#include "SRPolicy.hpp"
+static NSError *PeerError(){return [NSError errorWithDomain:@"SecureReel" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Secure connection failed"}];}
+@implementation SRPeer {NSDictionary *_setup;NSString *_clientId;NSString *_token;NSURLSession *_session;NSString *_pendingFingerprint;}
+- (instancetype)init{if((self=[super init])){NSDictionary *query=@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,(__bridge id)kSecAttrService:@"com.securereel.peer",(__bridge id)kSecAttrAccount:@"active",(__bridge id)kSecReturnData:@YES,(__bridge id)kSecMatchLimit:(__bridge id)kSecMatchLimitOne};CFTypeRef result=nullptr;if(SecItemCopyMatching((__bridge CFDictionaryRef)query,&result)==errSecSuccess){NSData *data=CFBridgingRelease(result);NSDictionary *saved=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];_setup=saved[@"setup"];_clientId=saved[@"clientId"];_token=saved[@"token"];}}return self;}
+- (NSDictionary*)info{@synchronized(self){if(!_setup)return @{};return @{ @"setup":_setup,@"clientId":_clientId?:@""};}}
+- (void)forget{@synchronized(self){[_session invalidateAndCancel];_session=nil;_setup=nil;_token=nil;_clientId=nil;SecItemDelete((__bridge CFDictionaryRef)@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,(__bridge id)kSecAttrService:@"com.securereel.peer",(__bridge id)kSecAttrAccount:@"active"});}}
+- (BOOL)validate:(NSDictionary*)setup {
+ NSURLComponents *u=[NSURLComponents componentsWithString:setup[@"url"]];NSString *pin=setup[@"fingerprint"];
+ if(![setup[@"version"]isEqual:@1]||![pin isKindOfClass:NSString.class]||pin.length!=64||!u||![u.scheme isEqual:@"https"]||!u.host||!sr::privateIPv4(u.host.UTF8String)||u.user||u.password||u.query||u.fragment||(u.path.length&&![u.path isEqual:@"/"])||(u.port&&(u.port.integerValue<1||u.port.integerValue>65535)))return NO;
+ for(NSUInteger i=0;i<pin.length;i++){unichar c=[pin characterAtIndex:i];if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return NO;}
+ id expires=setup[@"expiresAt"];NSDate *date=nil;if([expires isKindOfClass:NSNumber.class])date=[NSDate dateWithTimeIntervalSince1970:[expires doubleValue]/1000.0];else if([expires isKindOfClass:NSString.class]){NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];formatter.formatOptions=NSISO8601DateFormatWithInternetDateTime|NSISO8601DateFormatWithFractionalSeconds;date=[formatter dateFromString:expires];if(!date){formatter.formatOptions=NSISO8601DateFormatWithInternetDateTime;date=[formatter dateFromString:expires];}}return date&&[date timeIntervalSinceNow]>0;
+}
+- (NSURLSession*)session {NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;config.timeoutIntervalForRequest=30;config.timeoutIntervalForResource=120;config.URLCache=nil;config.HTTPCookieStorage=nil;config.requestCachePolicy=NSURLRequestReloadIgnoringLocalCacheData;return [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];}
+- (void)pair:(NSDictionary*)setup device:(NSString*)name completion:(void(^)(NSString*,NSError*))completion {
+ @synchronized(self){if(![self validate:setup]||![setup[@"pairingCode"]isKindOfClass:NSString.class]||name.length>120){completion(nil,PeerError());return;}if(_pendingFingerprint){completion(nil,PeerError());return;}[_session invalidateAndCancel];_session=nil;_pendingFingerprint=[setup[@"fingerprint"]copy];}
+ NSURLSession *session=[self session];NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[setup[@"url"]stringByAppendingString:@"/api/v1/pair"]]];request.HTTPMethod=@"POST";[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];request.HTTPBody=[SRJSON(@{@"pairingCode":setup[@"pairingCode"],@"deviceName":name?:@"SecureReel Mobile"})dataUsingEncoding:NSUTF8StringEncoding];
+ [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){@synchronized(self){self->_pendingFingerprint=nil;}NSDictionary *envelope=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;NSDictionary *credentials=envelope[@"data"];if(error||[(NSHTTPURLResponse*)response statusCode]!=200||![envelope[@"version"]isEqual:@1]||![envelope[@"ok"]isEqual:@YES]||![credentials[@"clientId"]isKindOfClass:NSString.class]||![credentials[@"token"]isKindOfClass:NSString.class]){[session finishTasksAndInvalidate];completion(nil,PeerError());return;}
+  NSMutableDictionary *publicSetup=[setup mutableCopy];[publicSetup removeObjectForKey:@"pairingCode"];[publicSetup removeObjectForKey:@"expiresAt"];
+  NSDictionary *saved=@{@"setup":publicSetup,@"clientId":credentials[@"clientId"],@"token":credentials[@"token"]};NSData *secret=[SRJSON(saved)dataUsingEncoding:NSUTF8StringEncoding];NSMutableDictionary *key=[@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,(__bridge id)kSecAttrService:@"com.securereel.peer",(__bridge id)kSecAttrAccount:@"active"}mutableCopy];SecItemDelete((__bridge CFDictionaryRef)key);key[(__bridge id)kSecValueData]=secret;key[(__bridge id)kSecAttrAccessible]=(__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+  if(SecItemAdd((__bridge CFDictionaryRef)key,nullptr)!=errSecSuccess){[session finishTasksAndInvalidate];completion(nil,PeerError());return;}
+  @synchronized(self){self->_setup=publicSetup;self->_clientId=credentials[@"clientId"];self->_token=credentials[@"token"];[self->_session invalidateAndCancel];self->_session=[self session];}
+  [session finishTasksAndInvalidate];completion(SRJSON([self info]),nil);
+ }]resume];
+}
+- (void)request:(NSString*)method path:(NSString*)path body:(NSString*)body completion:(void(^)(NSData*,NSError*))completion {
+ if(!sr::allowedRoute(method.UTF8String,path.UTF8String)||body.length>1024*1024){completion(nil,PeerError());return;}
+ @synchronized(self){if(!_setup||!_token||_pendingFingerprint){completion(nil,PeerError());return;}if(!_session)_session=[self session];NSString *url=[_setup[@"url"]stringByAppendingString:path];NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];request.HTTPMethod=method;[request setValue:[@"Bearer "stringByAppendingString:_token]forHTTPHeaderField:@"Authorization"];[request setValue:@"application/json"forHTTPHeaderField:@"Content-Type"];if(![method isEqual:@"GET"])request.HTTPBody=[body dataUsingEncoding:NSUTF8StringEncoding];
+  [[_session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){if(error||[(NSHTTPURLResponse*)response statusCode]<200||[(NSHTTPURLResponse*)response statusCode]>=300||data.length>64*1024*1024){completion(nil,PeerError());return;}completion(data,nil);}]resume];
+ }
+}
+- (void)URLSession:(NSURLSession*)session didReceiveChallenge:(NSURLAuthenticationChallenge*)challenge completionHandler:(void(^)(NSURLSessionAuthChallengeDisposition,NSURLCredential*))completion {
+ if(![challenge.protectionSpace.authenticationMethod isEqual:NSURLAuthenticationMethodServerTrust]){completion(NSURLSessionAuthChallengeCancelAuthenticationChallenge,nil);return;}SecTrustRef trust=challenge.protectionSpace.serverTrust;NSArray *chain=trust?CFBridgingRelease(SecTrustCopyCertificateChain(trust)):nil;SecCertificateRef leaf=chain.count?(__bridge SecCertificateRef)chain.firstObject:nullptr;NSData *der=leaf?CFBridgingRelease(SecCertificateCopyData(leaf)):nil;unsigned char digest[CC_SHA256_DIGEST_LENGTH];if(!der){completion(NSURLSessionAuthChallengeCancelAuthenticationChallenge,nil);return;}CC_SHA256(der.bytes,(CC_LONG)der.length,digest);NSMutableString *pin=[NSMutableString string];for(unsigned char c:digest)[pin appendFormat:@"%02x",c];NSString *expected;@synchronized(self){expected=(_pendingFingerprint?:_setup[@"fingerprint"]);}
+ if(expected&&[pin isEqual:expected])completion(NSURLSessionAuthChallengeUseCredential,[NSURLCredential credentialForTrust:trust]);else completion(NSURLSessionAuthChallengeCancelAuthenticationChallenge,nil);
+}
+- (void)URLSession:(NSURLSession*)session task:(NSURLSessionTask*)task willPerformHTTPRedirection:(NSHTTPURLResponse*)response newRequest:(NSURLRequest*)request completionHandler:(void(^)(NSURLRequest*))completion {completion(nil);}
+@end

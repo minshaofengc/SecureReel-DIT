@@ -1,3 +1,4 @@
+import type { TargetPreflightResult, PreflightConfirmation } from '@shared/storage-safety'
 /**
  * 任务数据库的门面。
  *
@@ -451,6 +452,40 @@ export class Store {
     this.db.prepare(`UPDATE jobs SET ${columns.join(', ')} WHERE id = ?`).run(...values)
   }
 
+  saveJobSafety(
+    jobId: string,
+    evidence: TargetPreflightResult,
+    confirmation?: PreflightConfirmation
+  ): void {
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO job_safety (job_id, evidence_json, confirmation_json) VALUES (?, ?, ?)'
+      )
+      .run(jobId, JSON.stringify(evidence), confirmation ? JSON.stringify(confirmation) : null)
+  }
+
+  private getJobSafety(jobId: string): TargetPreflightResult | undefined {
+    const row = this.db.prepare('SELECT evidence_json FROM job_safety WHERE job_id = ?').get(jobId)
+    if (!row) return undefined
+    try {
+      return JSON.parse(asString(row.evidence_json)) as TargetPreflightResult
+    } catch {
+      return undefined
+    }
+  }
+
+  getJobSafetyConfirmation(jobId: string): PreflightConfirmation | undefined {
+    const row = this.db
+      .prepare('SELECT confirmation_json FROM job_safety WHERE job_id = ?')
+      .get(jobId)
+    if (!row?.confirmation_json) return undefined
+    try {
+      return JSON.parse(asString(row.confirmation_json)) as PreflightConfirmation
+    } catch {
+      return undefined
+    }
+  }
+
   deleteJob(jobId: string): void {
     this.db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId)
   }
@@ -458,6 +493,7 @@ export class Store {
   private mapJob(row: Row, targets: CopyTarget[]): CopyJob {
     return {
       id: asString(row.id),
+      backupSafety: this.getJobSafety(asString(row.id)),
       name: asString(row.name),
       mode: pick(JOB_MODES, row.mode, 'copy'),
       sourcePath: asString(row.source_path),

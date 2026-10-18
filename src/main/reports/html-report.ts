@@ -349,6 +349,14 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
 
 ${interruptionNote}
 
+<h2>存储预检与物理独立性</h2>
+<p class="small">${
+    summary.backupSafety
+      ? `目标目录 ${summary.backupSafety.targets.length} 个 · 已确认物理设备组 ${summary.backupSafety.independentDeviceGroups === null ? '未确认' : summary.backupSafety.independentDeviceGroups} · 证据时间 ${escapeXml(reportTimestamp(summary.backupSafety.checkedAt))}。文件校验通过不代表副本位于独立物理设备；同盘副本不能算作多份独立物理备份。`
+      : '历史任务未记录设备拓扑证据，物理独立性未确认。文件校验结果与备份物理冗余应分别核对。'
+  }</p>
+${summary.backupSafety?.risks.length ? `<p class="bad small">预检风险：${summary.backupSafety.risks.map((risk) => escapeXml({ 'shared-filesystem': '目标共用文件系统', 'shared-device': '目标共用物理设备', 'independence-unknown': '物理独立性未确认', 'insufficient-space': '原片总量的保守空间预检不足', 'source-device': '来源与目标共用物理设备' }[risk.code])).join('；')}</p>` : ''}
+
 <h2>总体情况</h2>
 <div class="grid">
   <div class="card"><div class="label">来源</div><div class="value">${escapeXml(summary.sourceLabel)}</div>

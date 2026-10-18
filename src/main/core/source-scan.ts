@@ -7,6 +7,7 @@
  *   3. 目标盘放得下吗？
  */
 import { basename } from 'node:path'
+import { stat } from 'node:fs/promises'
 import type { DriveUsage, ScanResult, SourceDrive, VolumeKind } from '@shared/types'
 import { describeVolume, stripTrailingSeparators, volumeUsage, walkFiles } from '@main/fs-utils'
 import { HOST } from '@main/platform'
@@ -130,6 +131,16 @@ export async function usageForTargets(
   for (const target of targets) {
     const usage = await volumeUsage(target.path)
     const description = await describeVolume(target.path)
+    // A disconnected/missing path is different from a mounted volume whose
+    // capacity API is unavailable. Only ENOENT may be labelled "missing".
+    let missing = false
+    if (usage === null) {
+      try {
+        await stat(target.path)
+      } catch (error) {
+        missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
+      }
+    }
     const freeBytes = usage?.availableBytes ?? 0
     results.push({
       path: target.path,
@@ -137,6 +148,8 @@ export async function usageForTargets(
       totalBytes: usage?.totalBytes ?? 0,
       freeBytes,
       requiredBytes,
+      measured: usage !== null,
+      missing,
       sufficient: requiredBytes === null ? null : freeBytes >= requiredBytes
     })
   }

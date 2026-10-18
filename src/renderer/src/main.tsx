@@ -14,6 +14,7 @@ import './styles/app.css'
 import './styles/shell.css'
 import './styles/workbench.css'
 import './styles/monitor.css'
+import './styles/operations.css'
 
 const container = document.getElementById('root')
 if (container === null) {

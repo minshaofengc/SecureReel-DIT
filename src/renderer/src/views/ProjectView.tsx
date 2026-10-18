@@ -291,9 +291,11 @@ export function ProjectView(): ReactNode {
               </span>
             }
           >
+            <p className="hint">{t('p1.projectScope')}</p>
             <ProjectInfoFields
               value={details}
               sections={['basic', 'lenses', 'crew', 'notes']}
+              collapsedSections={['lenses', 'crew', 'notes']}
               // 拍摄日不在这里：它属于"这一次拷贝"，拷贝页每次都重置成当天。
               // 留一个拷贝页根本不读的字段，比不显示更让人困惑。
               showShootDay={false}

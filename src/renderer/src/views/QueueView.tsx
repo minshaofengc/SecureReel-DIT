@@ -1,3 +1,6 @@
+import { storageEvidenceView } from '../state/storage-evidence'
+import { StorageSafetyPanel } from '../components/StorageSafetyPanel'
+import { useStoragePreflight } from '../hooks/useStoragePreflight'
 import {
   Fragment,
   memo,
@@ -18,6 +21,7 @@ import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { useNav } from '../state/NavState'
 import { unwrap, useAppState } from '../state/AppState'
 import { useI18n } from '../i18n'
+import { destinationOutcome, classifyJobIssue } from '@shared/target-verification'
 
 /**
  * 右栏的两个标签。
@@ -126,7 +130,7 @@ const FileRow = memo(function FileRow({
         )}
       </td>
       <td className="mono">
-        <button type="button" className="file-path-button" onClick={() => onSelect(file.relPath)}>
+        <button type="button" className="file-path-button" title={file.relPath} onClick={() => onSelect(file.relPath)}>
           {file.relPath}
         </button>
       </td>
@@ -137,7 +141,7 @@ const FileRow = memo(function FileRow({
       <td>
         <FileStateBadge state={file.state} />
       </td>
-      <td className="mono faint">{file.sourceHash ?? dash}</td>
+      <td className="mono faint" title={file.sourceHash ?? undefined}>{file.sourceHash ?? dash}</td>
       <td>
         {file.probe?.proxy == null ? (
           dash
@@ -209,6 +213,7 @@ export function QueueView(): ReactNode {
   } = useAppState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('info')
+  const [queueExpanded, setQueueExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
   const [filePage, setFilePage] = useState(0)
   const [fileSearch, setFileSearch] = useState('')
@@ -250,6 +255,11 @@ export function QueueView(): ReactNode {
     () => jobs.find((job) => job.id === selectedId) ?? null,
     [jobs, selectedId]
   )
+  const storage = useStoragePreflight(selected === null ? null : { sourcePath: selected.sourcePath, targets: selected.targets.map(({ path }) => ({ path })), mode: selected.mode, proxyEnabled: selected.proxyEnabled })
+  const [metadataExpanded, setMetadataExpanded] = useState(false)
+  useEffect(() => {
+    if (metadataExpanded) document.getElementById('monitor-metadata')?.scrollIntoView({ block: 'nearest' })
+  }, [metadataExpanded])
   const selectedJobId = selected?.id ?? null
   const selectedState = selected?.state
 
@@ -399,6 +409,11 @@ export function QueueView(): ReactNode {
   const showGroupHeaders = groups.length > 1 || (groups[0]?.key ?? '') !== ''
 
   const jobProgress = selected === null ? undefined : progress[selected.id]
+  const issueKind = classifyJobIssue(
+    selected?.state ?? null,
+    selected?.filesFailed ?? 0,
+    jobProgress?.proxy?.failed ?? null
+  )
 
   /**
    * 目标状态徽标。
@@ -435,15 +450,25 @@ export function QueueView(): ReactNode {
       if (selected === null) return
       setBusy(true)
       try {
-        await unwrap(window.securereel.jobs[action](selected.id))
+        if (action === 'start' || action === 'resume') {
+          if (!storage.ready) {
+            if (storage.result === null) await storage.check()
+            pushToast('warn', t('safety.needAck'))
+            return
+          }
+          await unwrap(window.securereel.jobs[action](selected.id, storage.confirmation))
+        } else {
+          await unwrap(window.securereel.jobs[action](selected.id))
+        }
         await refreshJobs()
       } catch (error) {
+        if (action === 'start' || action === 'resume') storage.invalidate()
         pushToast('error', error instanceof Error ? error.message : String(error))
       } finally {
         setBusy(false)
       }
     },
-    [pushToast, refreshJobs, selected]
+    [pushToast, refreshJobs, selected, storage, t]
   )
 
   const remove = useCallback(async () => {
@@ -482,15 +507,11 @@ export function QueueView(): ReactNode {
   }, [pushToast, refreshReports, selected, t])
 
   const resumeAll = useCallback(async () => {
-    for (const job of recovered) {
-      try {
-        await unwrap(window.securereel.jobs.start(job.id))
-      } catch {
-        /* 单个失败不阻塞其余 */
-      }
-    }
-    await refreshJobs()
-  }, [recovered, refreshJobs])
+    // Each recovered job needs its own saved paths, evidence and acknowledgement.
+    // Open the first one rather than bypassing the device review with a bulk start.
+    if (recovered[0]) setSelectedId(recovered[0].id)
+    pushToast('info', t('safety.needAck'))
+  }, [recovered, pushToast, t])
 
   /**
    * 重试失败项：只把 failed 的文件放回待处理，已校验通过的目标不重拷。
@@ -502,38 +523,55 @@ export function QueueView(): ReactNode {
     if (selected === null) return
     setBusy(true)
     try {
-      await unwrap(window.securereel.jobs.retryFailed(selected.id))
+      if (!storage.ready) {
+        if (storage.result === null) await storage.check()
+        pushToast('warn', t('safety.needAck'))
+        return
+      }
+      await unwrap(window.securereel.jobs.retryFailed(selected.id, storage.confirmation))
       await refreshJobs()
       await loadFiles(selected.id)
     } catch (error) {
+      storage.invalidate()
       pushToast('error', error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
     }
-  }, [loadFiles, pushToast, refreshJobs, selected])
+  }, [loadFiles, pushToast, refreshJobs, selected, storage, t])
 
   const retryProxies = useCallback(async () => {
     if (selected === null || isJobLive(selected.state)) return
     setBusy(true)
     try {
-      await unwrap(window.securereel.jobs.retryProxies(selected.id))
+      if (!storage.ready) {
+        if (storage.result === null) await storage.check()
+        pushToast('warn', t('safety.needAck'))
+        return
+      }
+      await unwrap(window.securereel.jobs.retryProxies(selected.id, storage.confirmation))
       await refreshJobs()
       await loadFiles(selected.id)
     } catch (error) {
+      storage.invalidate()
       pushToast('error', error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
     }
-  }, [loadFiles, pushToast, refreshJobs, selected])
+  }, [loadFiles, pushToast, refreshJobs, selected, storage, t])
 
   return (
     <div className="page page--monitor">
-      <div className="monitor">
+      <div className={jobs.length === 0 ? "monitor monitor--no-jobs" : "monitor"}>
         {/* ==================== 左：有哪些任务 ==================== */}
-        <aside className="monitor__list">
+        <aside className={queueExpanded ? 'monitor__list monitor__list--expanded' : 'monitor__list'}>
           <div className="pane-h">
             {t('queue.title')}
             <span className="pane-h__n">{jobs.length}</span>
+            <button type="button" className="monitor__queue-toggle"
+              aria-expanded={queueExpanded}
+              onClick={() => setQueueExpanded((value) => !value)}>
+              {queueExpanded ? t('p1.hideQueue') : t('p1.showQueue')}
+            </button>
           </div>
           <div className="monitor__scroll">
             {recovered.length > 0 && (
@@ -545,7 +583,7 @@ export function QueueView(): ReactNode {
                     className="btn btn-sm btn-primary"
                     onClick={() => void resumeAll()}
                   >
-                    {t('queue.resumeAll')}
+                    {t('safety.reviewRecovered')}
                   </button>
                 </div>
                 {recovered.map((job) => (
@@ -596,7 +634,7 @@ export function QueueView(): ReactNode {
                       type="button"
                       className="qrow"
                       aria-current={job.id === selectedId ? 'true' : undefined}
-                      onClick={() => setSelectedId(job.id)}
+                      onClick={() => { setSelectedId(job.id); setQueueExpanded(false) }}
                     >
                       <span className="dot" data-tone={dotTone(job.state)} aria-hidden="true" />
                       <span className="qrow__id">
@@ -631,7 +669,10 @@ export function QueueView(): ReactNode {
         <section className="monitor__main">
           {selected === null ? (
             <div className="monitor__empty">
-              <p className="faint">{t('queue.pickOne')}</p>
+              <span className="ops__eyebrow">{t('p0.monitorEmptyEyebrow')}</span>
+              <h2>{t('p0.monitorEmptyTitle')}</h2>
+              <p>{t('p0.monitorEmptyHint')}</p>
+              <button type="button" className="btn btn-primary" onClick={() => navigate('copy')}>{t('ops.newJob')}</button>
             </div>
           ) : (
             <>
@@ -649,6 +690,7 @@ export function QueueView(): ReactNode {
                   </div>
                 </div>
                 <div className="mhead__acts">
+                  <button type="button" className="btn btn-sm monitor__metadata-toggle" aria-controls="monitor-metadata" aria-expanded={metadataExpanded} onClick={() => setMetadataExpanded(!metadataExpanded)}>{t('p1.metadataToggle')}</button>
                   {(selected.state === 'draft' ||
                     selected.state === 'cancelled' ||
                     selected.state === 'failed') &&
@@ -730,6 +772,44 @@ export function QueueView(): ReactNode {
                 </div>
               </header>
 
+                    {storageEvidenceView(storage.result, false, selected.state).reviewAvailable &&
+                      <StorageSafetyPanel result={storage.result} checking={storage.checking} error={storage.error}
+                        onCheck={() => void storage.check()} acknowledged={storage.acknowledged} onAcknowledge={storage.acknowledge} disabled={busy} />}
+
+              {issueKind !== null && (
+                <div className="monitor-issue" role="alert" data-issue={issueKind}>
+                  <span className="dot" data-tone="danger" aria-hidden="true" />
+                  <div>
+                    <strong>{issueKind === 'media'
+                      ? t('p0.mediaIssueTitle')
+                      : issueKind === 'proxy'
+                        ? t('p0.proxyIssueTitle')
+                        : t('p0.otherIssueTitle')}</strong>
+                    <p>{issueKind === 'media'
+                      ? t('p0.mediaIssueDetail', { count: selected.filesFailed })
+                      : issueKind === 'proxy'
+                        ? t('p0.proxyIssueDetail', { count: jobProgress?.proxy?.failed ?? 0 })
+                        : t('p0.otherIssueDetail')}</p>
+                  </div>
+                  <button type="button" className="btn btn-sm"
+                    disabled={busy && issueKind === 'proxy'}
+                    onClick={() => {
+                      if (issueKind === 'media') {
+                        setFileState('failed')
+                        setFilePage(0)
+                      } else if (issueKind === 'proxy') {
+                        void retryProxies()
+                      } else {
+                        setTab('log')
+                      }
+                    }}>
+                    {issueKind === 'media' ? t('p0.filterFailures')
+                      : issueKind === 'proxy' ? t('p0.retryProxyFailures')
+                        : t('p0.inspectLog')}
+                  </button>
+                </div>
+              )}
+
               {(() => {
                 const done = jobProgress?.filesDone ?? selected.filesDone
                 const failed = jobProgress?.filesFailed ?? selected.filesFailed
@@ -779,13 +859,18 @@ export function QueueView(): ReactNode {
                      * 又空又乱的主要来源。
                      */}
                     <div className="pipeline" aria-label={t('workbench.pipeline')}>
-                      {(['copying', 'verifying', 'proxying', 'reporting'] as const).map((stage) => (
+                      {(['copying', 'verifying', 'analyzing', 'proxying', 'reporting', 'finalizing'] as const)
+                        .filter((stage) =>
+                          (stage !== 'copying' || selected.mode !== 'verify') &&
+                          (stage !== 'analyzing' || phase === 'analyzing' || (jobProgress?.analyzeTotal ?? 0) > 0 || selected.proxyEnabled) &&
+                          (stage !== 'proxying' || phase === 'proxying' || selected.proxyEnabled || (jobProgress?.proxy?.total ?? 0) > 0))
+                        .map((stage) => (
                         <div
                           key={stage}
                           className="pipeline__stage"
                           data-active={phase === stage || undefined}
                         >
-                          <span>{t(`queue.phase.${stage}`)}</span>
+                          <span>{t(`p0.stage.${stage}`)}</span>
                           {stage === 'proxying' && jobProgress?.proxy !== undefined && (
                             <strong>
                               {jobProgress.proxy.done} / {jobProgress.proxy.total}
@@ -794,7 +879,7 @@ export function QueueView(): ReactNode {
                         </div>
                       ))}
                     </div>
-                    {jobProgress?.proxy !== undefined && (
+                    {jobProgress?.proxy !== undefined && jobProgress.proxy.total > 0 && (
                       <div className="proxy-progress">
                         <span>
                           {t('workbench.proxyStage')} · {jobProgress.proxy.done} /{' '}
@@ -820,11 +905,11 @@ export function QueueView(): ReactNode {
                         )}
                       </div>
                     )}
-                    <div className="progwrap">
+                    <div className={'progwrap' + (!active && issueKind !== null ? ' progwrap--needs-review' : '')}>
                       <div className="progtop">
                         <div>
                           <div className="lb">
-                            {active ? t(`queue.phase.${phase}` as never) : t('queue.progress')}
+                            {active ? t(`queue.phase.${phase}` as never) : t('p0.processingPercent')}
                           </div>
                           <div className="bigrow">
                             <span className="big">{pct.toFixed(1)}</span>
@@ -862,7 +947,7 @@ export function QueueView(): ReactNode {
                           )}
                           {elapsedSeconds !== null && (
                             <div className="st">
-                              <div className="st__k">{t('queue.elapsed')}</div>
+                              <div className="st__k" title={t('p0.elapsedWallHint')}>{t('queue.elapsed')}</div>
                               <div className="st__v">{humanDuration(elapsedSeconds)}</div>
                             </div>
                           )}
@@ -880,8 +965,60 @@ export function QueueView(): ReactNode {
                           )}
                         </div>
                       </div>
-                      <Progress value={pct} tone={failed > 0 ? 'warn' : undefined} />
+                      <Progress value={pct} tone={failed > 0 || selected.state === 'completed-with-errors' ? 'warn' : undefined} />
                     </div>
+
+                    {/* 各目标：行式 + 细进度条，不用表格。
+                        表格在这里是"用四列去装两列的信息" —— 目标数最多 8 个，
+                        但每行只有"写了多少 / 多快 / 什么状态"三件事。 */}
+                    <p className="hint">{t('safety.allTargetsCount')}</p>
+                    <StorageSafetyPanel result={selected.backupSafety} historical />
+                    <div className="sec-h">
+                      {t('queue.targets')} · {selected.targets.length}
+                    </div>
+                    {selected.targets.map((target) => {
+                      const live = jobProgress?.targets.find((item) => item.targetId === target.id)
+                      const state = live?.state
+                      const outcome = destinationOutcome(selected.totalFiles, live)
+                      const hasFailure = outcome === 'failed'
+                      const verified = outcome === 'verified'
+                      return (
+                        <div className="tgt" key={target.id}>
+                          <div className="tgt__id">
+                            <div className="tgt__name">{target.label}</div>
+                            <div className="tgt__path mono">{target.path}</div>
+                          </div>
+                          <div className="tgt__bar">
+{selected.mode === 'verify' ? (
+                              <span className="tgt__await">{t('p0.readOnlyVerification')}</span>
+                            ) : live !== undefined ? (
+                              <Progress value={percent(live.bytesCopied, total)} tone={hasFailure ? 'danger' : undefined} />
+                            ) : (
+                              <span className="tgt__await">{t('p0.resultUnavailable')}</span>
+                            )}
+                          </div>
+                          <div className="tgt__v">
+                            {live === undefined ? '—' : live.filesDone + ' / ' + selected.totalFiles}
+                          </div>
+                          <div className="tgt__v">{selected.mode === 'verify' ? t('p0.noWrites') : live === undefined ? '—' : humanBytes(live.bytesCopied)}</div>
+                          <span className={'badge ' + (hasFailure ? 'danger' : verified ? 'ok' : state === undefined ? '' : state === 'completed' ? '' : targetTone[state])}>
+                            {hasFailure
+                              ? (live?.filesFailed ?? 0) > 0 ? t('p0.targetHasFailures', { count: live?.filesFailed ?? 0 }) : t('p0.targetFailed')
+                              : verified
+                                ? t('p0.targetVerified')
+                                : state === 'completed'
+                                  ? t('p0.resultUnavailable')
+                                  : state === undefined
+                                    ? t('p0.resultUnavailable')
+                                    : targetText[state]}
+                          </span>
+                          {live?.error != null && (
+                            <div className="tgt__err danger">{live.error}</div>
+                          )}
+                        </div>
+                      )
+                    })}
+
 
                     {/* 写入速度波形图。
                         单个速度数字看不出"盘是稳定跑还是越跑越慢"，
@@ -936,39 +1073,6 @@ export function QueueView(): ReactNode {
                     {selected.degradationNotice !== null && (
                       <Note tone="warn">{selected.degradationNotice}</Note>
                     )}
-
-                    {/* 各目标：行式 + 细进度条，不用表格。
-                        表格在这里是"用四列去装两列的信息" —— 目标数最多 8 个，
-                        但每行只有"写了多少 / 多快 / 什么状态"三件事。 */}
-                    <div className="sec-h">
-                      {t('queue.targets')} · {selected.targets.length}
-                    </div>
-                    {selected.targets.map((target) => {
-                      const live = jobProgress?.targets.find((item) => item.targetId === target.id)
-                      const state = live?.state ?? 'pending'
-                      return (
-                        <div className="tgt" key={target.id}>
-                          <div className="tgt__id">
-                            <div className="tgt__name">{target.label}</div>
-                            <div className="tgt__path mono">{target.path}</div>
-                          </div>
-                          <div className="tgt__bar">
-                            <Progress
-                              value={percent(live?.bytesCopied ?? 0, total)}
-                              tone={state === 'failed' ? 'danger' : undefined}
-                            />
-                          </div>
-                          <div className="tgt__v">
-                            {live?.filesDone ?? 0} / {selected.totalFiles}
-                          </div>
-                          <div className="tgt__v">{humanBytes(live?.bytesCopied ?? 0)}</div>
-                          <span className={`badge ${targetTone[state]}`}>{targetText[state]}</span>
-                          {live?.error != null && (
-                            <div className="tgt__err danger">{live.error}</div>
-                          )}
-                        </div>
-                      )
-                    })}
 
                     <div className="sec-h">
                       {t('queue.filesTab')} · {fileCount}
@@ -1059,8 +1163,9 @@ export function QueueView(): ReactNode {
         </section>
 
         {/* ==================== 右：它的参数是什么 ==================== */}
-        <aside className="monitor__meta">
+        <aside tabIndex={-1} id="monitor-metadata" className={metadataExpanded ? "monitor__meta monitor__meta--expanded" : "monitor__meta"}>
           <div className="pane-h">
+            <button type="button" className="btn btn-sm monitor__metadata-toggle" onClick={() => setMetadataExpanded(false)}>{t('common.close')}</button>
             <span className="segmented seg-tight">
               <button
                 type="button"
@@ -1095,6 +1200,19 @@ export function QueueView(): ReactNode {
                         <div>
                           <FileStateBadge state={file.state} /> · {humanBytes(file.sizeBytes)}
                         </div>
+
+                        {file.sourceHash !== null && (
+                          <div className="material-detail__hash">
+                            <div className="field-label">{t('p0.sourceHash')}</div>
+                            <code className="mono" title={file.sourceHash}>{file.sourceHash}</code>
+                            <button type="button" className="btn btn-sm" onClick={() => {
+                              void navigator.clipboard.writeText(file.sourceHash!).then(
+                                () => pushToast('success', t('p0.copied')),
+                                () => pushToast('error', t('p0.clipboardFailed'))
+                              )
+                            }}>{t('p0.copyHash')}</button>
+                          </div>
+                        )}
                         {file.error !== null && <Note tone="danger">{file.error}</Note>}
                         {file.probe?.proxy?.reason != null && (
                           <Note tone={file.probe.proxy.ok ? undefined : 'warn'}>
@@ -1106,6 +1224,20 @@ export function QueueView(): ReactNode {
                             {selected.targets.find((item) => item.id === result.targetId)?.label} ·{' '}
                             {t(`filestate.${result.state}`)}
                             {result.error === null ? '' : ` · ${result.error}`}
+                            {result.hash !== null && (
+                              <div className="material-detail__hash">
+                                <code className="material-detail__hash-value" title={result.hash}>{result.hash}</code>
+                                <button type="button" className="btn btn-sm"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(result.hash!).then(
+                                      () => pushToast('success', t('p0.copied')),
+                                      () => pushToast('error', t('p0.clipboardFailed'))
+                                    )
+                                  }}>
+                                  {t('p0.copyHash')}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </section>

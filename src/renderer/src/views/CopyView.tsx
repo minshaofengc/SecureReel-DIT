@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   DriveUsage,
+  CopyJob,
   HashAlgorithm,
   ManifestFormat,
   ProjectDetails,
@@ -21,6 +22,7 @@ import {
 } from '@shared/types'
 import type { EncodersInfo } from '@shared/ipc'
 import { countExtension, humanBytes, todayLocalDate } from '@shared/format'
+import { obviousSourceTargetOverlap, targetPreflightStatusList, type TargetPreflightState } from '@shared/target-preflight'
 import {
   emptyProjectDetails,
   emptyProjectDraft,
@@ -42,9 +44,12 @@ import { SelectBox, type ComboOption } from '../components/ComboBox'
 import { ProjectInfoFields } from '../components/ProjectInfoFields'
 import { PAGE_INDEX } from '../nav'
 import { useNav } from '../state/NavState'
-import { unwrap, useAppState } from '../state/AppState'
+import { defaultCopyInput, unwrap, useAppState, type CopyInputDraft } from '../state/AppState'
+import { startPersistedJob } from '@shared/created-job-recovery'
 import { useI18n } from '../i18n'
 import { zeroByteNoteKey } from '../platform'
+import { StorageSafetyPanel } from '../components/StorageSafetyPanel'
+import { useStoragePreflight } from '../hooks/useStoragePreflight'
 
 /** 下拉里表示「新建母项目」的哨兵值，不会与真实 ID 冲突 */
 const NEW_PARENT_VALUE = '__new_parent__'
@@ -96,6 +101,23 @@ const KIND_LABEL: Record<VolumeKind, string> = {
   arriraw: 'copy.type.arriraw'
 }
 
+/**
+ * Persist only unsaved USER INPUT in AppState while CopyView unmounts.
+ * Device/scan evidence remains ephemeral and is reacquired after navigation.
+ */
+function useDraftField<K extends keyof CopyInputDraft>(
+  key: K
+): [CopyInputDraft[K], (value: CopyInputDraft[K]) => void] {
+  const { copyDraft, setCopyDraft, settings } = useAppState()
+  const current = copyDraft === null ? defaultCopyInput(settings)[key] : copyDraft[key]
+  const update = useCallback((value: CopyInputDraft[K]) => {
+    setCopyDraft((prev) => ({
+      ...(prev ?? defaultCopyInput(settings)), [key]: value
+    }))
+  }, [key, settings, setCopyDraft])
+  return [current, update]
+}
+
 export function CopyView(): ReactNode {
   const { t } = useI18n()
   /*
@@ -111,25 +133,45 @@ export function CopyView(): ReactNode {
     parents,
     projectDraft,
     setProjectDraft,
+    setCopyDraft,
     pushToast,
     appInfo
   } = useAppState()
 
-  const [jobName, setJobName] = useState('')
-  const [sourcePath, setSourcePath] = useState('')
-  const [targets, setTargets] = useState<string[]>([])
+  const [jobName, setJobName] = useDraftField('jobName')
+  const [sourcePath, setSourcePath] = useDraftField('sourcePath')
+  const [targets, setTargets] = useDraftField('targets')
+  const targetsRef = useRef(targets)
+  targetsRef.current = targets
+  const [pendingJobId, setPendingJobId] = useDraftField('pendingJobId')
+  const [createdJob, setCreatedJob] = useState<CopyJob | null>(null)
+  // The created job is immutable. Display its persisted identity, not the
+  // potentially edited unsaved form after start fails or IPC disconnects.
+  useEffect(() => {
+    if (pendingJobId === null) return
+    let alive = true
+    void window.securereel.jobs.get(pendingJobId).then((answer) => {
+      if (alive) setCreatedJob(answer.ok ? answer.data : null)
+    }).catch(() => { if (alive) setCreatedJob(null) })
+    return () => { alive = false }
+  }, [pendingJobId])
   const [scan, setScan] = useState<ScanResult | null>(null)
+  const [scannedSourcePath, setScannedSourcePath] = useState<string | null>(null)
+  const scanEpoch = useRef(0)
+  const usageEpoch = useRef(0)
   const [scanning, setScanning] = useState(false)
   const [usage, setUsage] = useState<DriveUsage[]>([])
+  const [usageChecking, setUsageChecking] = useState(false)
+  const [usageFailed, setUsageFailed] = useState(false)
   const [busy, setBusy] = useState(false)
+  const submittingRef = useRef(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   /** 仅校验模式：选好源和已有拷贝目录后，只比对校验值，不写任何数据 */
-  const [verifyOnlyMode, setVerifyOnlyMode] = useState(false)
-  /** 用户对"空间可能不足仍要继续"的明确确认（P1 #11：只提醒不拦 → 需明确勾选） */
-  const [spaceAck, setSpaceAck] = useState(false)
+  const [verifyOnlyMode, setVerifyOnlyMode] = useDraftField('verifyOnlyMode')
 
-  const [parentId, setParentId] = useState<string | null>(null)
-  const [newParentOpen, setNewParentOpen] = useState(false)
-  const [newParentName, setNewParentName] = useState('')
+  const [parentId, setParentId] = useDraftField('parentId')
+  const [newParentOpen, setNewParentOpen] = useDraftField('newParentOpen')
+  const [newParentName, setNewParentName] = useDraftField('newParentName')
 
   /*
    * 代理选项 —— **每任务**（初值取自全局设置，提交时作为任务字段传出）。
@@ -138,12 +180,18 @@ export function CopyView(): ReactNode {
    * 而"这次要不要出代理、出多重、用什么编"是**这一次拷贝**的事 —— 同一台机器上，
    * 给剪辑交片和纯备份是两种活。所以照 verifyAfterWrite 的模式做局部 state。
    */
-  const [proxyOn, setProxyOn] = useState(settings.proxyEnabled)
-  const [proxyResolution, setProxyResolution] = useState<ProxyResolution>(settings.proxyResolution)
-  const [proxyCodec, setProxyCodec] = useState<ProxyCodec>(settings.proxyCodec)
-  const [proxyProfile, setProxyProfile] = useState<ProxyProfile>(settings.proxyProfile)
+  const [proxyOn, setProxyOn] = useDraftField('proxyOn')
+  const [proxyResolution, setProxyResolution] = useDraftField('proxyResolution')
+  const [proxyCodec, setProxyCodec] = useDraftField('proxyCodec')
+  const [proxyProfile, setProxyProfile] = useDraftField('proxyProfile')
   /** 本次任务要套的 LUT（.cube 绝对路径）；'' = 不套 */
-  const [proxyLutPath, setProxyLutPath] = useState(settings.proxyLutPath ?? '')
+  const [proxyLutPath, setProxyLutPath] = useDraftField('proxyLutPath')
+
+  const storage = useStoragePreflight(pendingJobId !== null
+    ? (createdJob === null ? null : { sourcePath: createdJob.sourcePath, targets: createdJob.targets.map(({ path }) => ({ path })), mode: createdJob.mode, proxyEnabled: createdJob.proxyEnabled })
+    : { sourcePath, targets: targets.map((path) => ({ path })), mode: verifyOnlyMode ? 'verify' : 'copy', proxyEnabled: !verifyOnlyMode && proxyOn })
+
+  const invalidateStorage = storage.invalidate
 
   /** 本机可用的编码器（决定 H.264/H.265 能不能选）。null = 还在探测 */
   const [encoders, setEncoders] = useState<EncodersInfo | null>(null)
@@ -165,7 +213,9 @@ export function CopyView(): ReactNode {
     }
   }, [])
 
-  const requiredBytes = scan?.totalBytes ?? null
+  // A scan is evidence for exactly one source path. Never reuse it after editing that path.
+  const sourceScanned = scan !== null && scannedSourcePath === sourcePath
+  const requiredBytes = sourceScanned ? scan.totalBytes : null
 
   /*
    * 来源里有没有佳能 Cinema RAW Light（.CRM）。
@@ -222,21 +272,19 @@ export function CopyView(): ReactNode {
               copyNotes: ''
             }
 
-      setProjectDraft(
-        // 上次实际填过的项目名优先：母项目下的任务不会被 template 覆盖到
+      // Async defaults never overwrite any input a DIT already entered.
+      setProjectDraft((current) => current ?? (
         lastDraft !== null && lastDraft.projectName !== ''
           ? { ...base, projectName: lastDraft.projectName }
           : base
-      )
-
-      if (lastDraft !== null) {
-        // 现场常是同一张卡连拷到几块盘，每次都重新选一遍路径纯属浪费。
-        // 目标盘列表也一并带回来 —— 这是最省事的一步。
-        setSourcePath(lastDraft.sourcePath)
-        setTargets(lastDraft.targetPaths)
-      }
+      ))
+      setCopyDraft((current) => current ?? {
+        ...defaultCopyInput(settings),
+        sourcePath: lastDraft?.sourcePath ?? '',
+        targets: lastDraft?.targetPaths ?? []
+      })
     })()
-  }, [projectDraft, setProjectDraft])
+  }, [projectDraft, setProjectDraft, setCopyDraft, settings])
 
   const draft = projectDraft
   const selectedParent = parents.find((project) => project.id === parentId) ?? null
@@ -292,7 +340,7 @@ export function CopyView(): ReactNode {
         pushToast('warn', error instanceof Error ? error.message : String(error))
       }
     },
-    [applyParentDetails, parents, pushToast]
+    [applyParentDetails, parents, pushToast, setParentId]
   )
 
   const createParent = useCallback(async () => {
@@ -315,12 +363,12 @@ export function CopyView(): ReactNode {
     } catch (error) {
       pushToast('error', error instanceof Error ? error.message : String(error))
     }
-  }, [draft, newParentName, pushToast, refreshParents, t])
+  }, [draft, newParentName, pushToast, refreshParents, t, setParentId, setNewParentName, setNewParentOpen])
 
   const clearAll = useCallback(() => {
     setParentId(null)
     setProjectDraft({ ...emptyProjectDraft(), shootDay: freshShootDay() })
-  }, [setProjectDraft])
+  }, [setProjectDraft, setParentId])
 
   /*
    * 开着软件跨过午夜时，把「拍摄日」跟上电脑的日期。
@@ -363,51 +411,117 @@ export function CopyView(): ReactNode {
     }
   }, [setProjectDraft])
 
-  const refreshUsage = useCallback(async (paths: string[], required: number | null) => {
-    if (paths.length === 0) {
+  // A window may lose focus while a card is removed, re-mounted or swapped at
+  // the same path. Never reuse a previously green capacity/scan after return.
+  // This also drops any in-flight IPC answer via the generation counters.
+  useEffect(() => {
+    let leftApp = false
+    const onBlur = (): void => { leftApp = true }
+    const onFocus = (): void => {
+      if (!leftApp || submittingRef.current) return
+      leftApp = false
+      scanEpoch.current++
+      usageEpoch.current++
+      setScan(null)
+      setScannedSourcePath(null)
+      setScanning(false)
       setUsage([])
-      return
+      setUsageChecking(false)
+      setUsageFailed(false)
     }
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
+
+  const refreshUsage = useCallback(async (paths: string[], required: number | null) => {
+    const epoch = ++usageEpoch.current
+    setUsage([])
+    setUsageFailed(false)
+    setUsageChecking(paths.length > 0)
+    if (paths.length === 0) return
     try {
       const result = await window.securereel.volumes.usage(paths)
-      if (result.ok) {
+      if (epoch !== usageEpoch.current) return
+      if (!result.ok) {
+        setUsageFailed(true)
+      } else {
         setUsage(
           result.data.map((item) => ({
             ...item,
             requiredBytes: required,
-            sufficient: required === null ? null : item.freeBytes >= required
+            sufficient: !item.measured || required === null ? null : item.freeBytes >= required
           }))
         )
       }
     } catch {
-      setUsage([])
+      if (epoch === usageEpoch.current) {
+        setUsage([])
+        setUsageFailed(true)
+      }
+    } finally {
+      if (epoch === usageEpoch.current) setUsageChecking(false)
     }
   }, [])
+
+  // Invalidating evidence here also discards any IPC reply from an older scan/usage request.
+  const changeSourcePath = useCallback((next: string) => {
+    scanEpoch.current++
+    usageEpoch.current++
+    setSourcePath(next)
+    setScan(null)
+    setScannedSourcePath(null)
+    setUsage([])
+    setUsageChecking(false)
+    setUsageFailed(false)
+    setScanning(false)
+    setSubmitError(null)
+  }, [setSourcePath])
+
+  const scanSourcePath = useCallback(async (path: string) => {
+    if (path.trim() === '') return
+    invalidateStorage()
+    const epoch = ++scanEpoch.current
+    usageEpoch.current++
+    setScan(null)
+    setScannedSourcePath(null)
+    setUsage([])
+    setUsageChecking(false)
+    setUsageFailed(false)
+    setScanning(true)
+    try {
+      const result = await unwrap(window.securereel.volumes.scan(path))
+      if (epoch !== scanEpoch.current) return
+      setScan(result)
+      setScannedSourcePath(path)
+      await refreshUsage(targetsRef.current, result.totalBytes)
+      if (result.warnings.length > 0 && epoch === scanEpoch.current) {
+        pushToast('warn', result.warnings[0] as string)
+      }
+    } catch (error) {
+      if (epoch !== scanEpoch.current) return
+      setScan(null)
+      setScannedSourcePath(null)
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      if (epoch === scanEpoch.current) setScanning(false)
+    }
+  }, [pushToast, refreshUsage, invalidateStorage])
 
   const pickSource = useCallback(async () => {
     const picked = await window.securereel.volumes.pickPath('directory', t('copy.pickSource'))
     if (!picked.ok || picked.data === null) return
     const path = picked.data
-    setSourcePath(path)
+    changeSourcePath(path)
     if (jobName.trim() === '') {
       const derived = lastPathSegment(path)
       if (derived !== null) setJobName(derived)
     }
-    setScanning(true)
-    try {
-      const result = await unwrap(window.securereel.volumes.scan(path))
-      setScan(result)
-      await refreshUsage(targets, result.totalBytes)
-      if (result.warnings.length > 0) {
-        pushToast('warn', result.warnings[0] as string)
-      }
-    } catch (error) {
-      setScan(null)
-      pushToast('error', error instanceof Error ? error.message : String(error))
-    } finally {
-      setScanning(false)
-    }
-  }, [jobName, pushToast, refreshUsage, t, targets])
+    await scanSourcePath(path)
+  }, [changeSourcePath, jobName, scanSourcePath, t, setJobName])
 
   const addTarget = useCallback(async () => {
     const picked = await window.securereel.volumes.pickPath('directory', t('copy.pickTargetTitle'))
@@ -422,21 +536,55 @@ export function CopyView(): ReactNode {
       return
     }
     const next = [...targets, path]
+    targetsRef.current = next
     setTargets(next)
     await refreshUsage(next, requiredBytes)
-  }, [pushToast, refreshUsage, requiredBytes, t, targets])
+  }, [pushToast, refreshUsage, requiredBytes, t, targets, setTargets])
 
   const removeTarget = useCallback(
     async (path: string) => {
       const next = targets.filter((item) => item !== path)
+      targetsRef.current = next
       setTargets(next)
       await refreshUsage(next, requiredBytes)
     },
-    [refreshUsage, requiredBytes, targets]
+    [refreshUsage, requiredBytes, targets, setTargets]
   )
 
   const submit = useCallback(
     async (start: boolean) => {
+      // Event-loop guard as well as visual busy state: no duplicate creates on double click.
+      if (submittingRef.current) return
+      setSubmitError(null)
+      // Creation succeeded but starting failed: retry the persisted job ID,
+      // NOT another jobs.create call. Existing job records remain immutable.
+      if (pendingJobId !== null) {
+        submittingRef.current = true
+        setBusy(true)
+        try {
+          if (start) {
+            const persisted = await unwrap(window.securereel.jobs.get(pendingJobId))
+            if (persisted.state === 'draft' && !storage.ready) {
+              setCreatedJob(persisted)
+              throw new Error(t('safety.needAck'))
+            }
+            await startPersistedJob(pendingJobId, { ...window.securereel.jobs, start: (id) => window.securereel.jobs.start(id, storage.confirmation) })
+          }
+          await refreshJobs()
+          setCopyDraft(defaultCopyInput(settings))
+          setProjectDraft(null)
+          navigate('queue')
+        } catch (error) {
+          storage.invalidate()
+          const message = error instanceof Error ? error.message : String(error)
+          setSubmitError(message)
+          pushToast('error', message)
+        } finally {
+          setBusy(false)
+          submittingRef.current = false
+        }
+        return
+      }
       if (sourcePath.trim() === '') {
         pushToast('warn', t('copy.sourcePlaceholder'))
         return
@@ -445,10 +593,18 @@ export function CopyView(): ReactNode {
         pushToast('warn', t('copy.noTarget'))
         return
       }
-      // 空间不足不再"只提醒不拦"：必须明确勾选确认才能带着已知风险开跑
-      const hasInsufficient = usage.some((item) => item.sufficient === false)
-      if (!verifyOnlyMode && hasInsufficient && !spaceAck) {
-        pushToast('warn', t('copy.spaceAckRequired'))
+      // UX early warning only: the main process still validates resolved,
+      // symlinked and same-volume paths before creating any copy.
+      if (targets.some((path) => obviousSourceTargetOverlap(sourcePath, path, appInfo?.platform === 'win32'))) {
+        pushToast('warn', t('p0.sourceTargetConflict'))
+        return
+      }
+      if (!sourceScanned || scanning) {
+        pushToast('warn', t('p0.scanBeforeStart'))
+        return
+      }
+      if (!storage.ready) {
+        pushToast('warn', t('safety.needAck'))
         return
       }
       /*
@@ -464,11 +620,14 @@ export function CopyView(): ReactNode {
           lenses: draft.lenses,
           crew: draft.crew
         }).changed
+      submittingRef.current = true
       setBusy(true)
       try {
         // 项目信息随创建一次带全，不在创建后再补一次保存 ——
         // 那样会多一次 IPC，而且整包覆盖容易把主进程按来源盘推出的卡号冲掉。
-        const created = await unwrap(
+        // A previous create can succeed while start fails. Retry that job ID;
+        // never create a second job for the same unsaved draft.
+        const created = pendingJobId === null ? await unwrap(
           window.securereel.jobs.create({
             name:
               jobName.trim() === ''
@@ -480,6 +639,7 @@ export function CopyView(): ReactNode {
             hashAlgorithm: settings.hashAlgorithm,
             manifestFormat: settings.manifestFormat,
             verifyAfterWrite: true,
+            preflightConfirmation: storage.confirmation,
             // 代理是**每任务**的：把这次选的三个值带进任务记录。
             proxyEnabled: !verifyOnlyMode && proxyOn,
             proxyResolution,
@@ -490,9 +650,12 @@ export function CopyView(): ReactNode {
             parentProjectId: parentId,
             ...(draft === null ? {} : { project: draft })
           })
-        )
+        ) : null
+        const jobId = created?.job.id ?? pendingJobId
+        if (jobId === null) throw new Error('Missing created job')
+        if (created !== null) setPendingJobId(jobId)
         if (start) {
-          await unwrap(window.securereel.jobs.start(created.job.id))
+          await startPersistedJob(jobId, { ...window.securereel.jobs, start: (id) => window.securereel.jobs.start(id, storage.confirmation) })
         }
         await refreshJobs()
         pushToast('success', t('copy.created'))
@@ -502,28 +665,33 @@ export function CopyView(): ReactNode {
         if (willRememberTalent && selectedParent !== null) {
           pushToast('info', t('copy.talentRemembered', { name: selectedParent.name }))
         }
-        setJobName('')
-        setSourcePath('')
-        setTargets([])
+        setCopyDraft(defaultCopyInput(settings))
+        scanEpoch.current++
+        usageEpoch.current++
         setScan(null)
+        setScannedSourcePath(null)
         setUsage([])
-        setSpaceAck(false)
         // 母项目选择与项目信息草稿都清掉：下一张卡重新开始，
         // 未分组时下一次会自动沿用这次填的内容（由主进程挑最近一条）。
-        setParentId(null)
         setProjectDraft(null)
         navigate('queue')
       } catch (error) {
-        pushToast('error', error instanceof Error ? error.message : String(error))
+        storage.invalidate()
+        const message = error instanceof Error ? error.message : String(error)
+        setSubmitError(message)
+        pushToast('error', message)
       } finally {
         setBusy(false)
+        submittingRef.current = false
       }
     },
     [
       draft,
+      appInfo?.platform,
       jobName,
       navigate,
       parentId,
+      pendingJobId,
       proxyCodec,
       proxyLutPath,
       proxyOn,
@@ -534,23 +702,46 @@ export function CopyView(): ReactNode {
       refreshParents,
       selectedParent,
       setProjectDraft,
-      settings.hashAlgorithm,
-      settings.manifestFormat,
+      setCopyDraft,
+      setPendingJobId,
+      settings,
       sourcePath,
-      spaceAck,
-      usage,
+      sourceScanned,
+      scanning,
+      storage,
       t,
       targets,
       verifyOnlyMode
     ]
   )
 
-  const insufficient = useMemo(() => usage.filter((item) => item.sufficient === false), [usage])
+  const targetStates = targetPreflightStatusList(targets, {
+    usage, sourceScanned, checking: usageChecking, lookupFailed: usageFailed, verifyOnly: verifyOnlyMode
+  })
+  const overlappingTargets = targets.filter((path) =>
+    obviousSourceTargetOverlap(sourcePath, path, appInfo?.platform === 'win32')
+  )
+  const insufficient = useMemo(
+    () => usage.filter((item) => item.measured && (item.sufficient === false || storage.result?.groups.some((group) => group.sufficient === false && group.paths.includes(item.path)))),
+    [usage, storage.result]
+  )
+  const blockingReasons = [
+    ...(sourcePath.trim() === '' ? [t('p0.needSource')] : []),
+    ...(!sourceScanned ? [t('p0.needSourceScan')] : []),
+    ...(targets.length === 0 ? [t('p0.needTargets')] : []),
+    ...(overlappingTargets.length > 0 ? [t('p0.sourceTargetConflict')] : []),
+    ...(!storage.ready ? [t('safety.needAck')] : [])
+  ]
+  const canSubmit = !busy && !scanning && !usageChecking && blockingReasons.length === 0
 
-  // 目标或扫描结果一变，之前的"空间不足我知晓"确认就作废 —— 必须重新确认
+  // Switching copy/verify changes what the target check means. Old evidence
+  // cannot become green merely because a user toggled the mode.
   useEffect(() => {
-    setSpaceAck(false)
-  }, [usage])
+    usageEpoch.current++
+    setUsage([])
+    setUsageChecking(false)
+    setUsageFailed(false)
+  }, [verifyOnlyMode])
 
   /*
    * 母项目下拉的选项。
@@ -629,15 +820,15 @@ export function CopyView(): ReactNode {
     if (encoders === null) return
     if (proxyCodec === 'h264' && !encoders.h264) setProxyCodec('prores')
     if (proxyCodec === 'h265' && !encoders.h265) setProxyCodec('prores')
-  }, [encoders, proxyCodec])
+  }, [encoders, proxyCodec, setProxyCodec])
 
   return (
-    <div className="page">
+    <div className="page page--copy">
       <PageHead
         index={PAGE_INDEX.copy}
         kicker={t('nav.copy')}
         title={t('copy.title')}
-        subtitle={t('copy.subtitle')}
+        subtitle={verifyOnlyMode ? t('p0.verifyOnlySubtitle') : t('copy.subtitle')}
       />
 
       {/*
@@ -649,13 +840,14 @@ export function CopyView(): ReactNode {
        * 页面一打开就知道从哪儿下手。
        */}
       <div className="copy-workbench">
-        <LeadBlock step={1} title={t('copy.source')} hint={t('copy.sourcePlaceholder')}>
+        <LeadBlock step={1} title={t('copy.source')}>
           <Field label={t('copy.jobName')}>
             <input
               className="input"
               value={jobName}
               placeholder={t('copy.jobNamePlaceholder')}
               onChange={(event) => setJobName(event.target.value)}
+              disabled={pendingJobId !== null || busy}
             />
           </Field>
           <PathPicker
@@ -663,11 +855,20 @@ export function CopyView(): ReactNode {
             placeholder={t('copy.sourcePlaceholder')}
             buttonLabel={t('copy.pickSource')}
             onPick={() => void pickSource()}
-            onChange={setSourcePath}
-            disabled={scanning || busy}
+            onChange={changeSourcePath}
+            disabled={scanning || busy || pendingJobId !== null}
           />
 
           {scanning && <Note>{t('copy.scanning')}</Note>}
+          {sourcePath.trim() !== '' && !sourceScanned && !scanning && (
+            <div className="source-scan-prompt" role="status">
+              <span>{t('p0.sourceNeedsScan')}</span>
+              <button type="button" className="btn btn-sm" disabled={busy}
+                onClick={() => void scanSourcePath(sourcePath)}>
+                {t('p0.scanNow')}
+              </button>
+            </div>
+          )}
 
           {scan !== null && (
             <>
@@ -731,6 +932,7 @@ export function CopyView(): ReactNode {
             </>
           )}
         </LeadBlock>
+        <div className="copy-flow-arrow" aria-hidden="true">→</div>
         <Card
           title={t('copy.targets')}
           hint={`${targets.length} / 8`}
@@ -739,7 +941,7 @@ export function CopyView(): ReactNode {
               type="button"
               className="btn btn-sm"
               onClick={() => void addTarget()}
-              disabled={busy}
+              disabled={busy || pendingJobId !== null}
             >
               + {t('copy.addTarget')}
             </button>
@@ -757,18 +959,20 @@ export function CopyView(): ReactNode {
                     <span className="target-path" title={path}>
                       {path}
                     </span>
-                    {info !== undefined && (
-                      <span className={`badge ${info.sufficient === false ? 'danger' : 'ok'}`}>
-                        {info.sufficient === false
-                          ? `${t('copy.insufficient')} · ${humanBytes(info.freeBytes)}`
-                          : `${t('copy.free')} ${humanBytes(info.freeBytes)}`}
+                    {info !== undefined && info.measured ? (
+                      <span className={'badge ' + (info.sufficient === false && !verifyOnlyMode ? 'danger' : '')}>
+                        {info.sufficient === false && !verifyOnlyMode
+                          ? t('copy.insufficient') + ' · ' + humanBytes(info.freeBytes)
+                          : t('copy.free') + ' ' + humanBytes(info.freeBytes)}
                       </span>
+                    ) : (
+                      <span className="badge">{t('p0.capacityUnknown')}</span>
                     )}
                     <button
                       type="button"
                       className="btn btn-sm btn-ghost"
                       onClick={() => void removeTarget(path)}
-                      disabled={busy}
+                      disabled={busy || pendingJobId !== null}
                     >
                       {t('common.remove')}
                     </button>
@@ -786,14 +990,6 @@ export function CopyView(): ReactNode {
               {insufficient.length > 0 && (
                 <Note tone="danger">
                   {t('copy.insufficientNotice', { count: insufficient.length })}
-                  <label className="row-actions" style={{ cursor: 'pointer', marginTop: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={spaceAck}
-                      onChange={(event) => setSpaceAck(event.target.checked)}
-                    />
-                    <span>{t('copy.spaceAck')}</span>
-                  </label>
                 </Note>
               )}
             </div>
@@ -801,6 +997,99 @@ export function CopyView(): ReactNode {
         </Card>
       </div>
 
+
+      <StorageSafetyPanel result={storage.result} checking={storage.checking} error={storage.error}
+        onCheck={() => void storage.check()} acknowledged={storage.acknowledged} onAcknowledge={storage.acknowledge}
+        disabled={busy || scanning || (pendingJobId === null ? !sourceScanned || targets.length === 0 : createdJob === null)} />
+      <section className="preflight" aria-label={t('p0.preflightTitle')}>
+        <div className="preflight__head">
+          <span>{t('p0.preflightTitle')}</span>
+          <span className="preflight__mode">{verifyOnlyMode ? t('queue.mode.verify') : t('p0.copyMode')}</span>
+        </div>
+        <div className="preflight__flow">
+          <div className="preflight__node">
+            <span className="preflight__label">{t('ops.source')}</span>
+            <strong title={sourcePath}>{sourcePath.trim() ? sourcePath.split(/[\\/]/).filter(Boolean).pop() : t('p0.notSelected')}</strong>
+            <small>{!sourceScanned ? (scanning ? t('copy.scanning') : t('p0.notScanned')) : String(scan.fileCount) + ' ' + t('common.files') + ' · ' + humanBytes(scan.totalBytes)}</small>
+          </div>
+          <span className="preflight__direction" aria-hidden="true">→</span>
+          <div className="preflight__node">
+            <span className="preflight__label">{t('ops.destinations')}</span>
+            <strong>{targets.length} / 8</strong>
+            <small>{targets.length === 0 ? t('p0.notSelected') : t('p0.destinationCount', { count: targets.length })}</small>
+          </div>
+          <span className="preflight__direction" aria-hidden="true">→</span>
+          <div className="preflight__node">
+            <span className="preflight__label">{t('ops.preflight')}</span>
+            <strong data-risk={insufficient.length > 0 || targets.length === 0 || !sourceScanned ? 'true' : undefined}>
+              {insufficient.length > 0
+                ? t('p0.spaceRisk', { count: insufficient.length })
+                : targets.length === 0 || !sourceScanned
+                  ? t('p0.awaitingPreflight')
+                  : t('p0.checkBeforeStarting')}
+            </strong>
+            <small>{requiredBytes === null ? t('p0.dataUnknown') : t('copy.required') + ' ' + humanBytes(requiredBytes)}</small>
+          </div>
+        </div>
+        <div className="preflight__facts">
+          <span>{t('copy.hashAlgorithm')}: <b>{HASH_ALGORITHM_LABELS[settings.hashAlgorithm]}</b></span>
+          <span>{t('copy.manifestFormat')}: <b>{settings.manifestFormat === 'asc-mhl-2.0' ? 'ASC MHL 2.0' : settings.manifestFormat === 'mhl-v1' ? 'MHL v1' : settings.manifestFormat.toUpperCase()}</b></span>
+          <span>{verifyOnlyMode ? t('p0.verificationMode') : t('p0.copyVerify')}: <b>{verifyOnlyMode ? t('p0.verifyOnlyNoWrite') : t('p0.independentReread')}</b></span>
+          <span>{t('copy.proxyEnabled')}: <b>{verifyOnlyMode ? t('workbench.disabled') : (proxyOn ? t('workbench.enabled') : t('workbench.disabled'))}</b></span>
+        </div>
+        {targets.length > 0 && (
+          <div className="preflight__targets" aria-label={t('p0.eachTarget')}>
+            <div className="preflight__targets-label">
+              <span>{t('p0.eachTarget')}</span>
+              <button className="ops__link" type="button" disabled={usageChecking || scanning || busy || !sourceScanned}
+                onClick={() => { void refreshUsage(targets, requiredBytes); void storage.check() }}>
+                {usageChecking ? t('p0.checking') : t('p0.recheckTargets')}
+              </button>
+            </div>
+            <div className="preflight__targets-scroll">
+              {targets.map((path, index) => {
+                const info = usage.find((row) => row.path === path)
+                const state: TargetPreflightState = overlappingTargets.includes(path)
+                  ? 'conflict' : storage.result?.groups.some((group) => group.sufficient === false && group.paths.includes(path))
+                    ? 'insufficient' : (targetStates[index] ?? 'not_checked')
+                return (
+                  <div key={path} className="preflight__target" data-state={state}>
+                    <span className="preflight__target-index">{String.fromCharCode(65 + index)}</span>
+                    <div className="preflight__target-id">
+                      <strong title={info?.label ?? path}>{info?.label ?? lastPathSegment(path) ?? path}</strong>
+                      <code title={path}>{path}</code>
+                    </div>
+                    <div className="preflight__target-metrics">
+                      <span>{verifyOnlyMode ? t('p0.compareExisting') : t('copy.required')}: <b>{requiredBytes === null ? '—' : humanBytes(requiredBytes)}</b></span>
+                      <span>{t('copy.free')}: <b>{info?.measured ? humanBytes(info.freeBytes) : '—'}</b></span>
+                    </div>
+                    <span className={'preflight__status preflight__status--' + state}>
+                      {state === 'ready' && verifyOnlyMode
+                        ? t('p0.volumeQueriedOnly')
+                        : t(('p0.target.' + state) as never)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="preflight__target-note">{t('p0.capacityNotProof')}</p>
+          </div>
+        )}
+        {blockingReasons.length > 0 && (
+          <div className="preflight__block" role="status">
+            <strong>{t('p0.cannotStartYet')}</strong>
+            <ul>{blockingReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+          </div>
+        )}
+        {insufficient.length > 0 && (
+          <div className="preflight__warning" role="alert">
+            {t('copy.insufficientNotice', { count: insufficient.length })}
+          </div>
+        )}
+      </section>
+
+      <details className="copy-metadata workbench-disclosure workbench-disclosure--panel" onToggle={(event) => { if (pendingJobId !== null) event.currentTarget.open = false }}>
+        <summary>{t('copy.parentSection')} · {selectedParent?.name ?? t('workbench.optionalFields')}</summary>
       <Card title={t('copy.parentSection')} hint={t('copy.parentHintTitle')}>
         <div className="path-row">
           <SelectBox<string>
@@ -955,7 +1244,10 @@ export function CopyView(): ReactNode {
           )}
         </Card>
       </details>
+      </details>
 
+      <details className="copy-technical workbench-disclosure workbench-disclosure--panel" onToggle={(event) => { if (pendingJobId !== null) event.currentTarget.open = false }}>
+        <summary>{t('copy.advanced')} · {HASH_ALGORITHM_LABELS[settings.hashAlgorithm]}</summary>
       <Card title={t('copy.advanced')}>
         <Field label={t('copy.hashAlgorithm')}>
           <SelectBox<HashAlgorithm>
@@ -1070,28 +1362,60 @@ export function CopyView(): ReactNode {
           )}
         </details>
       </Card>
+      </details>
 
+      {submitError !== null && (
+        <div className="copy-created-warning" role="alert">
+          <strong>{t('p0.submissionFailed')}</strong>
+          <span>{submitError}</span>
+        </div>
+      )}
+      {pendingJobId !== null && (
+        <div className="copy-created-warning" role="alert">
+          <strong>{t('p0.createdStartFailed')}</strong>
+          <span>{t('p0.pendingJobHelp')}</span>
+          <div className="copy-created-warning__identity" aria-label={t('p0.createdJobIdentity')}>
+            <span className="field-label">{t('p0.createdJobIdentity')}</span>
+            <code title={pendingJobId}>{pendingJobId}</code>
+            {createdJob?.id === pendingJobId && (
+              <>
+                <strong>{createdJob.name} · {createdJob.mode === 'verify' ? t('queue.mode.verify') : t('p0.copyMode')}</strong>
+                <code title={createdJob.sourcePath}>{t('ops.source')}: {createdJob.sourcePath}</code>
+                {createdJob.targets.map((target, index) => (
+                  <code key={target.id} title={target.path}>
+                    {String.fromCharCode(65 + index)}: {target.path}
+                  </code>
+                ))}
+              </>
+            )}
+          </div>
+          <button type="button" className="btn btn-sm" onClick={() => navigate('queue')}>
+            {t('ops.openMonitor')}
+          </button>
+        </div>
+      )}
       <div className="action-bar">
         <button
           type="button"
           className="btn btn--xl"
-          disabled={busy || scanning}
+          disabled={busy || (!canSubmit && pendingJobId === null)}
           onClick={() => void submit(true)}
         >
-          {t('copy.createAndStart')}
-          <span className="kbd">空格</span>
+          {pendingJobId === null ? t('copy.createAndStart') : t('p0.retryExistingStart')}
         </button>
         <button
           type="button"
           className="btn"
-          disabled={busy || scanning}
+          disabled={busy || (!canSubmit && pendingJobId === null)}
           onClick={() => void submit(false)}
         >
-          {t('copy.createOnly')}
+          {pendingJobId === null ? t('copy.createOnly') : t('p0.openCreatedJob')}
         </button>
         <span className="faint" style={{ fontSize: 12 }}>
-          {scan === null
-            ? t('copy.willStartHint')
+          {verifyOnlyMode
+            ? t('p0.verifyOnlyFooter')
+            : scan === null
+              ? t('copy.willStartHint')
             : `${scan.fileCount} ${t('common.files')} · ${humanBytes(scan.totalBytes)} · ${targets.length} ${t('copy.targets')}`}
         </span>
       </div>

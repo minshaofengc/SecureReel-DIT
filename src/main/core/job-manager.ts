@@ -1,3 +1,6 @@
+import type { JobPreflightRequest } from '@shared/ipc'
+import type { PreflightConfirmation, TargetPreflightResult } from '@shared/storage-safety'
+import { preflightStorage, checkPreflightConfirmation } from './storage-preflight'
 /**
  * 任务管理：把「扫描 → 拷贝 → 校验 → 出报告」串成一条链路。
  *
@@ -66,6 +69,7 @@ export interface SleepBlocker {
 }
 
 export interface JobManagerDeps {
+  storagePreflight?: typeof preflightStorage
   store: Store
   logger: Logger
   paths: AppPaths
@@ -86,6 +90,7 @@ interface RunHandle {
 }
 
 export class JobManager {
+  private readonly starting = new Set<string>()
   private readonly finishing = new Set<string>()
   private readonly allWork = new Map<string, Promise<void>>()
   private readonly endActions = new Set<string>()
@@ -94,7 +99,12 @@ export class JobManager {
   private readonly reportJobs = new Set<string>()
 
   get hasActiveWork(): boolean {
-    return this.runs.size > 0 || this.finishing.size > 0 || this.reportJobs.size > 0
+    return (
+      this.starting.size > 0 ||
+      this.runs.size > 0 ||
+      this.finishing.size > 0 ||
+      this.reportJobs.size > 0
+    )
   }
 
   get canEject(): boolean {
@@ -165,7 +175,12 @@ export class JobManager {
   }
 
   isRunning(jobId: string): boolean {
-    return this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId)
+    return (
+      this.starting.has(jobId) ||
+      this.runs.has(jobId) ||
+      this.finishing.has(jobId) ||
+      this.reportJobs.has(jobId)
+    )
   }
 
   /**
@@ -178,37 +193,86 @@ export class JobManager {
     return this.latestProgress.get(jobId) ?? null
   }
 
+  async preflight(request: JobPreflightRequest): Promise<TargetPreflightResult> {
+    const scan = await scanSource(request.sourcePath)
+    return (this.deps.storagePreflight ?? preflightStorage)({
+      sourcePath: request.sourcePath,
+      targets: request.targets.map((item) => item.path),
+      mode: request.mode,
+      requiredBytes: scan.totalBytes,
+      proxyEnabled: request.proxyEnabled
+    })
+  }
+
+  private async validateJobSafety(
+    job: CopyJob,
+    confirmation?: PreflightConfirmation
+  ): Promise<void> {
+    const evidence = await (this.deps.storagePreflight ?? preflightStorage)({
+      sourcePath: job.sourcePath,
+      targets: job.targets.filter((t) => t.enabled).map((t) => t.path),
+      requiredBytes: job.totalBytes,
+      mode: job.mode,
+      proxyEnabled: job.proxyEnabled
+    })
+    const accepted = confirmation ?? this.deps.store.getJobSafetyConfirmation(job.id)
+    checkPreflightConfirmation(evidence, accepted)
+    this.deps.store.saveJobSafety(job.id, evidence, accepted)
+    job.backupSafety = evidence
+  }
+
   /** 任务开始前补加一个目标盘。已开跑的任务不允许改，避免中途改变语义。 */
-  async addTarget(jobId: string, rawTargetPath: string): Promise<CopyTarget[]> {
+  async addTarget(
+    jobId: string,
+    rawTargetPath: string,
+    confirmation?: PreflightConfirmation
+  ): Promise<CopyTarget[]> {
     const { store } = this.deps
     const targetPath = stripTrailingSeparators(rawTargetPath)
-    if (this.runs.has(jobId)) {
+    if (this.isRunning(jobId)) {
       throw new Error(this.m('job.addTargetWhileRunning'))
     }
-    const job = store.getJob(jobId)
-    if (job === null) throw new Error(this.m('job.notFound'))
-    if (job.targets.length >= 8) throw new Error(this.m('job.maxTargets'))
-    if (job.targets.some((target) => target.path === targetPath)) {
-      throw new Error(this.m('job.targetAlreadyInList'))
-    }
-    if (await isNestedPath(targetPath, job.sourcePath)) {
-      throw new Error(this.m('job.nestedPathShort'))
-    }
+    this.starting.add(jobId)
+    try {
+      const job = store.getJob(jobId)
+      if (job === null) throw new Error(this.m('job.notFound'))
+      if (job.targets.length >= 8) throw new Error(this.m('job.maxTargets'))
+      if (job.targets.some((target) => target.path === targetPath)) {
+        throw new Error(this.m('job.targetAlreadyInList'))
+      }
+      if (await isNestedPath(targetPath, job.sourcePath)) {
+        throw new Error(this.m('job.nestedPathShort'))
+      }
 
-    await mkdir(targetPath, { recursive: true })
+      if (job.state !== 'draft' && job.state !== 'paused')
+        throw new Error('只有尚未运行的草稿或已暂停任务可增加目标')
+      const evidence = await this.preflight({
+        sourcePath: job.sourcePath,
+        targets: [...job.targets.map((t) => ({ path: t.path })), { path: targetPath }],
+        mode: job.mode,
+        proxyEnabled: job.proxyEnabled
+      })
+      checkPreflightConfirmation(evidence, confirmation)
 
-    const description = await describeVolume(targetPath)
-    const usage = await usageForTargets([{ path: targetPath }], job.totalBytes)
-    const target: CopyTarget = {
-      id: `tgt_${String(job.targets.length + 1).padStart(2, '0')}_${randomBytes(3).toString('hex')}`,
-      path: targetPath,
-      label: description?.label ?? basename(targetPath),
-      enabled: true,
-      freeBytes: usage[0]?.freeBytes ?? null,
-      writable: true
+      const description = await describeVolume(targetPath)
+      const usage = await usageForTargets([{ path: targetPath }], job.totalBytes)
+      const target: CopyTarget = {
+        id: `tgt_${String(job.targets.length + 1).padStart(2, '0')}_${randomBytes(3).toString('hex')}`,
+        path: targetPath,
+        label: description?.label ?? basename(targetPath),
+        enabled: true,
+        freeBytes: usage[0]?.freeBytes ?? null,
+        writable: true
+      }
+      const current = store.getJob(jobId)
+      if (!current || current.state !== job.state || current.targets.length !== job.targets.length)
+        throw new Error('任务状态已变化，请重新预检')
+      store.addTarget(jobId, target)
+      store.saveJobSafety(jobId, evidence, confirmation)
+      return store.listTargets(jobId)
+    } finally {
+      this.starting.delete(jobId)
     }
-    store.addTarget(jobId, target)
-    return store.listTargets(jobId)
   }
 
   runningJobIds(): string[] {
@@ -237,6 +301,15 @@ export class JobManager {
     if (scan.fileCount === 0) {
       throw new Error(this.m('job.sourceEmpty'))
     }
+
+    const safety = await (this.deps.storagePreflight ?? preflightStorage)({
+      sourcePath,
+      targets: request.targets.map((target) => stripTrailingSeparators(target.path)),
+      mode: verifyOnly ? 'verify' : 'copy',
+      requiredBytes: scan.totalBytes,
+      proxyEnabled: !verifyOnly && (request.proxyEnabled ?? settings.proxyEnabled)
+    })
+    checkPreflightConfirmation(safety, request.preflightConfirmation)
 
     // 目标校验：存在；拷贝模式还要求可写、不与源相互嵌套
     const targets: CopyTarget[] = []
@@ -317,6 +390,7 @@ export class JobManager {
 
     const job: CopyJob = {
       id: jobId,
+      backupSafety: safety,
       name: request.name,
       mode: verifyOnly ? 'verify' : 'copy',
       sourcePath,
@@ -353,6 +427,7 @@ export class JobManager {
     }
 
     store.insertJob(job)
+    store.saveJobSafety(jobId, safety, request.preflightConfirmation)
     store.upsertFiles(
       jobId,
       scan.preview.length > 0 || scan.fileCount > 0 ? await this.collectFileList(sourcePath) : []
@@ -444,135 +519,152 @@ export class JobManager {
    * 运行
    * ---------------------------------------------------------------- */
 
-  async start(jobId: string, proxyOnly = false): Promise<CopyJob> {
+  async start(
+    jobId: string,
+    proxyOnly = false,
+    confirmation?: PreflightConfirmation
+  ): Promise<CopyJob> {
     const { store } = this.deps
     if (this.ending) throw new Error('正在安全弹出磁盘，请等待完成')
     const job = store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
-    if (this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId))
-      throw new Error(this.m('job.alreadyRunning'))
+    if (this.isRunning(jobId)) throw new Error(this.m('job.alreadyRunning'))
+    if (job.state === 'cancelled') throw new Error('已取消任务不能再次启动')
+    this.starting.add(jobId)
+    try {
+      await this.validateJobSafety(job, confirmation)
+      if (store.getJob(jobId)?.state === 'cancelled') throw new Error('任务已取消')
+      const settings = this.deps.getSettings()
+      const gate = new PauseGate()
+      const controller = new AbortController()
 
-    const settings = this.deps.getSettings()
-    const gate = new PauseGate()
-    const controller = new AbortController()
+      // 首尾帧先落到任务工作目录，出报告时再挑被引用的拷进修订目录
+      const probeRunner = this.deps.probeRunner.fork?.() ?? this.deps.probeRunner
+      const frameWorkDir = this.deps.reportStore.frameWorkDir(jobId)
+      probeRunner.setFrameOutputDir(frameWorkDir)
+      // 候选静帧与首尾帧同目录（报告 frames/），按设置决定每条出几张
+      probeRunner.setStillFrameOutputDir(frameWorkDir)
+      probeRunner.setStillFrameCount(settings.stillFrameCount)
 
-    // 首尾帧先落到任务工作目录，出报告时再挑被引用的拷进修订目录
-    const probeRunner = this.deps.probeRunner.fork?.() ?? this.deps.probeRunner
-    const frameWorkDir = this.deps.reportStore.frameWorkDir(jobId)
-    probeRunner.setFrameOutputDir(frameWorkDir)
-    // 候选静帧与首尾帧同目录（报告 frames/），按设置决定每条出几张
-    probeRunner.setStillFrameOutputDir(frameWorkDir)
-    probeRunner.setStillFrameCount(settings.stillFrameCount)
-
-    const engine = new CopyEngine({
-      job,
-      store,
-      logger: this.deps.logger,
-      settings,
-      signal: controller.signal,
-      gate,
-      probeRunner,
-      onLog: (level, message) => {
-        this.deps.emit({
-          type: 'job:log',
-          payload: {
-            jobId,
-            entry: { at: new Date().toISOString(), level, scope: 'copy-engine', message }
-          }
-        })
-      },
-      onFileSettled: (file: CopyJobFile) => {
-        this.deps.emit({ type: 'job:file', payload: { jobId, file } })
-      },
-      // 中间态变更（已按 200ms 合并）。与 job:file 的分工：
-      // 这条只负责让界面看到"文件在动"，最终事实以 job:file 为准。
-      onFilesChanged: (deltas) => {
-        this.deps.emit({ type: 'job:files-delta', payload: { jobId, deltas } })
-      },
-      // 引擎把一批中间态改回了 pending（任务开始时的 resetInFlightFiles）。
-      // 这种"往回退"界面自己发现不了，必须显式请它重拉。
-      onFilesResync: () => {
-        this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
-      },
-      onProgress: (progress) => {
-        // 存一份给"主动来问"的调用方（见 latestProgress 的说明）
-        this.latestProgress.set(jobId, progress)
-        this.deps.emit({ type: 'job:progress', payload: progress })
-      }
-    })
-
-    store.updateJob(jobId, { state: 'queued' })
-    this.emitState(jobId)
-
-    // 从这一刻起不让系统空闲挂起：任务刚排进队列，用户很可能就切去干别的了，
-    // 而后续几小时的拷贝全靠这台机器不要睡着。
-    this.acquireSleepBlocker(jobId)
-
-    const promise = (async (): Promise<void> => {
-      let terminalState: CopyJob['state'] = 'failed'
-      try {
-        const result = proxyOnly ? await engine.retryProxies() : await engine.run()
-        terminalState = result.state
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        this.deps.logger.error('job', this.m('job.runError', { reason: message }))
-        store.updateJob(jobId, { state: 'failed', finishedAt: new Date().toISOString() })
-        terminalState = 'failed'
-      } finally {
-        this.finishing.add(jobId)
-        this.runs.delete(jobId)
-        const progress = this.latestProgress.get(jobId)
-        if (progress) {
-          const reporting = { ...progress, phase: 'reporting' as const }
-          this.latestProgress.set(jobId, reporting)
-          this.deps.emit({ type: 'job:progress', payload: reporting })
+      const engine = new CopyEngine({
+        job,
+        store,
+        logger: this.deps.logger,
+        settings,
+        signal: controller.signal,
+        gate,
+        probeRunner,
+        onLog: (level, message) => {
+          this.deps.emit({
+            type: 'job:log',
+            payload: {
+              jobId,
+              entry: { at: new Date().toISOString(), level, scope: 'copy-engine', message }
+            }
+          })
+        },
+        onFileSettled: (file: CopyJobFile) => {
+          this.deps.emit({ type: 'job:file', payload: { jobId, file } })
+        },
+        // 中间态变更（已按 200ms 合并）。与 job:file 的分工：
+        // 这条只负责让界面看到"文件在动"，最终事实以 job:file 为准。
+        onFilesChanged: (deltas) => {
+          this.deps.emit({ type: 'job:files-delta', payload: { jobId, deltas } })
+        },
+        // 引擎把一批中间态改回了 pending（任务开始时的 resetInFlightFiles）。
+        // 这种"往回退"界面自己发现不了，必须显式请它重拉。
+        onFilesResync: () => {
+          this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
+        },
+        onProgress: (progress) => {
+          // 存一份给"主动来问"的调用方（见 latestProgress 的说明）
+          this.latestProgress.set(jobId, progress)
+          this.deps.emit({ type: 'job:progress', payload: progress })
         }
-        // 与 acquire 的唯一配对点：正常完成、引擎抛错、被取消都会走到这里
-        this.emitState(jobId)
-      }
+      })
 
-      // 无论成功、失败还是被取消，都留一份报告 —— 失败也是取证链的一部分。
-      // 例外：用户在设置里关掉了自动报告（generateReport=false），则整段跳过。
-      // ⚠️ 只关"自动生成"，手动补报告仍走 generateReport()（受运行中红线约束）。
-      if (this.deps.getSettings().generateReport) {
+      store.updateJob(jobId, { state: 'queued' })
+      this.emitState(jobId)
+
+      // 从这一刻起不让系统空闲挂起：任务刚排进队列，用户很可能就切去干别的了，
+      // 而后续几小时的拷贝全靠这台机器不要睡着。
+      this.acquireSleepBlocker(jobId)
+
+      const promise = (async (): Promise<void> => {
+        let terminalState: CopyJob['state'] = 'failed'
+        let beganEngine = false
         try {
-          const report = await this.generateReports(jobId, terminalState)
-          if (report.delivery?.some((item) => item.state === 'failed'))
-            this.completionHadErrors = true
+          await this.validateJobSafety(job, confirmation)
+          if (controller.signal.aborted) throw new Error('任务已取消')
+          beganEngine = true
+          const result = proxyOnly ? await engine.retryProxies() : await engine.run()
+          terminalState = result.state
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          this.completionHadErrors = true
-          this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
-          this.deps.emit({
-            type: 'toast',
-            payload: { level: 'warn', message: this.m('job.reportGenFail', { reason: message }) }
-          })
+          this.deps.logger.error('job', this.m('job.runError', { reason: message }))
+          terminalState = controller.signal.aborted ? 'cancelled' : beganEngine ? 'failed' : 'paused'
+          store.updateJob(jobId, { state: terminalState, finishedAt: terminalState === 'paused' ? null : new Date().toISOString() })
+          this.deps.emit({ type: 'toast', payload: { level: 'warn', message } })
+        } finally {
+          this.finishing.add(jobId)
+          this.runs.delete(jobId)
+          const progress = this.latestProgress.get(jobId)
+          if (progress) {
+            const reporting = { ...progress, phase: 'reporting' as const }
+            this.latestProgress.set(jobId, reporting)
+            this.deps.emit({ type: 'job:progress', payload: reporting })
+          }
+          // 与 acquire 的唯一配对点：正常完成、引擎抛错、被取消都会走到这里
+          this.emitState(jobId)
         }
-      } else {
-        this.deps.logger.info('job', '报告生成已在设置中关闭，跳过。')
-      }
 
-      if (terminalState !== 'completed') this.completionHadErrors = true
-      else this.endActions.add(jobId)
-      this.finishing.delete(jobId)
-      this.releaseSleepBlocker(jobId)
-      const finalProgress = this.latestProgress.get(jobId)
-      if (finalProgress) {
-        const done = { ...finalProgress, phase: 'done' as const }
-        this.latestProgress.set(jobId, done)
-        this.deps.emit({ type: 'job:progress', payload: done })
-      }
-      await this.performEndActions()
-    })()
+        // 无论成功、失败还是被取消，都留一份报告 —— 失败也是取证链的一部分。
+        // 例外：用户在设置里关掉了自动报告（generateReport=false），则整段跳过。
+        // ⚠️ 只关"自动生成"，手动补报告仍走 generateReport()（受运行中红线约束）。
+        if (terminalState === 'paused') {
+          this.deps.logger.warn('job', '存储证据已改变，任务暂停并等待重新预检确认，尚未写入素材。')
+        } else if (this.deps.getSettings().generateReport) {
+          try {
+            const report = await this.generateReports(jobId, terminalState)
+            if (report.delivery?.some((item) => item.state === 'failed'))
+              this.completionHadErrors = true
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            this.completionHadErrors = true
+            this.deps.logger.error('job', this.m('job.reportGenFail', { reason: message }))
+            this.deps.emit({
+              type: 'toast',
+              payload: { level: 'warn', message: this.m('job.reportGenFail', { reason: message }) }
+            })
+          }
+        } else {
+          this.deps.logger.info('job', '报告生成已在设置中关闭，跳过。')
+        }
 
-    this.runs.set(jobId, { engine, gate, controller, promise })
-    this.allWork.set(jobId, promise)
-    void promise.then(
-      () => this.allWork.delete(jobId),
-      () => this.allWork.delete(jobId)
-    )
+        if (terminalState !== 'completed') this.completionHadErrors = true
+        else this.endActions.add(jobId)
+        this.finishing.delete(jobId)
+        this.releaseSleepBlocker(jobId)
+        const finalProgress = this.latestProgress.get(jobId)
+        if (finalProgress) {
+          const done = { ...finalProgress, phase: 'done' as const }
+          this.latestProgress.set(jobId, done)
+          this.deps.emit({ type: 'job:progress', payload: done })
+        }
+        await this.performEndActions()
+      })()
 
-    return store.getJob(jobId) ?? job
+      this.runs.set(jobId, { engine, gate, controller, promise })
+      this.allWork.set(jobId, promise)
+      void promise.then(
+        () => this.allWork.delete(jobId),
+        () => this.allWork.delete(jobId)
+      )
+
+      return store.getJob(jobId) ?? job
+    } finally {
+      this.starting.delete(jobId)
+    }
   }
 
   pause(jobId: string): CopyJob {
@@ -584,9 +676,12 @@ export class JobManager {
     return this.requireJob(jobId)
   }
 
-  resume(jobId: string): CopyJob {
+  async resume(jobId: string, confirmation?: PreflightConfirmation): Promise<CopyJob> {
     const handle = this.runs.get(jobId)
-    if (handle === undefined) throw new Error(this.m('job.notRunning'))
+    if (handle === undefined) return this.start(jobId, false, confirmation)
+    await this.validateJobSafety(this.requireJob(jobId), confirmation)
+    if (handle.controller.signal.aborted || this.runs.get(jobId) !== handle)
+      throw new Error('任务状态已改变，请刷新')
     handle.gate.resume()
     this.deps.store.updateJob(jobId, { state: 'running' })
     this.emitState(jobId)
@@ -600,27 +695,29 @@ export class JobManager {
    * 失败态等用户判断（见 Store.listPendingFiles 的注释）；这里显式重置它们。
    * 已成功的目标不会被重拷：引擎按目标盘上的成品/分片决定 adopt / 续传 / 写入。
    */
-  async retryFailed(jobId: string): Promise<CopyJob> {
+  async retryFailed(jobId: string, confirmation?: PreflightConfirmation): Promise<CopyJob> {
     const job = this.deps.store.getJob(jobId)
     if (job === null) throw new Error(this.m('job.notFound'))
-    if (this.runs.has(jobId) || this.finishing.has(jobId) || this.reportJobs.has(jobId))
-      throw new Error(this.m('job.alreadyRunning'))
-
-    const resetCount = this.deps.store.resetFailedFilesForRetry(jobId)
-    if (resetCount === 0) throw new Error(this.m('job.noFailedFiles'))
-
-    this.deps.logger.info('job', this.m('job.retryFailed', { count: resetCount }))
-    // 文件状态从 failed 回到 pending —— 界面自己发现不了这种"往回退"，
-    // 必须请它重拉一次文件列表，否则会一直挂着上一轮的失败状态。
-    this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
-    return this.start(jobId)
+    if (this.isRunning(jobId)) throw new Error(this.m('job.alreadyRunning'))
+    this.starting.add(jobId)
+    try {
+      await this.validateJobSafety(job, confirmation)
+      if (this.deps.store.getJob(jobId)?.state === 'cancelled') throw new Error('任务已取消')
+      const resetCount = this.deps.store.resetFailedFilesForRetry(jobId)
+      if (resetCount === 0) throw new Error(this.m('job.noFailedFiles'))
+      this.deps.logger.info('job', this.m('job.retryFailed', { count: resetCount }))
+      this.deps.emit({ type: 'job:files-resync', payload: { jobId } })
+    } finally {
+      this.starting.delete(jobId)
+    }
+    return this.start(jobId, false, confirmation)
   }
 
-  async retryProxies(jobId: string): Promise<CopyJob> {
+  async retryProxies(jobId: string, confirmation?: PreflightConfirmation): Promise<CopyJob> {
     const job = this.requireJob(jobId)
     if (job.mode === 'verify' || !job.proxyEnabled || isJobLive(job.state))
       throw new Error('该任务不能重试代理')
-    return this.start(jobId, true)
+    return this.start(jobId, true, confirmation)
   }
 
   cancel(jobId: string): CopyJob {
@@ -681,6 +778,7 @@ export class JobManager {
       const targets = store.listTargetProgress(jobId)
       const description = await describeVolume(job.sourcePath)
       const summary: ReportSummary = {
+        backupSafety: job.backupSafety,
         theme,
         jobId,
         jobName: job.name,

@@ -1,7 +1,7 @@
 #!/bin/sh
 # 打 macOS 版安装包（universal 的 dmg + zip），产物落到工作区根的「02-Mac 版」文件夹。
 #
-#   sh scripts/dist-mac.sh
+#   SECUREREEL_OUTPUT_DIR=/absolute/candidate sh scripts/dist-mac.sh
 #
 # 📁 目录层级（与 dist-win.sh 完全对称）：
 #   工作区根/
@@ -18,14 +18,46 @@
 #    （详见项目记忆的「产物线」一节）。
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$(cd "$ROOT/../.." && pwd)/02-Mac 版"
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 1
 
-# 下面有一处 rm -rf（覆盖旧的 .app）。路径一旦解析错就是灾难，
-# 所以先钉死：产物目录必须以「02-Mac 版」结尾，否则直接退出。
+# Linked worktrees live at another depth; never infer release destinations there.
+# The override also lets a normal checkout build candidates without touching releases.
+if [ "${SECUREREEL_OUTPUT_DIR+x}" = x ]; then
+  OUT_DIR="$SECUREREEL_OUTPUT_DIR"
+  case "$OUT_DIR" in
+    /*) ;;
+    *) echo "✗ SECUREREEL_OUTPUT_DIR 必须是非空绝对目录。" >&2; exit 1 ;;
+  esac
+elif [ -f "$ROOT/.git" ]; then
+  echo "✗ 隔离工作树必须显式设置 SECUREREEL_OUTPUT_DIR 指向候选产物目录。" >&2
+  exit 1
+else
+  OUT_DIR="$(cd "$ROOT/../.." && pwd -P)/02-Mac 版"
+fi
+
+# Resolve existing ancestors without creating output, including symlink aliases.
+# Reject traversal, files, dangling links, repository paths and their ancestors.
+case "/$OUT_DIR/" in
+  *'/../'*|*'/./'*) echo "✗ 产物目录不能包含 . 或 .. 路径段。" >&2; exit 1 ;;
+esac
+OUT_ANCESTOR="$OUT_DIR"
+OUT_SUFFIX=''
+while [ ! -d "$OUT_ANCESTOR" ]; do
+  if [ -e "$OUT_ANCESTOR" ] || [ -L "$OUT_ANCESTOR" ]; then
+    echo "✗ 产物路径不是可用目录。" >&2
+    exit 1
+  fi
+  OUT_SUFFIX="/$(basename "$OUT_ANCESTOR")$OUT_SUFFIX"
+  OUT_ANCESTOR="$(dirname "$OUT_ANCESTOR")"
+done
+OUT_ANCESTOR="$(cd "$OUT_ANCESTOR" && pwd -P)" || exit 1
+OUT_DIR="${OUT_ANCESTOR%/}$OUT_SUFFIX"
 case "$OUT_DIR" in
-  */02-Mac\ 版) ;;
-  *) echo "✗ 产物目录解析异常，已中止：$OUT_DIR" >&2; exit 1 ;;
+  ''|/|"$ROOT"|"$ROOT"/*|*/.git|*/.git/*)
+    echo "✗ 产物目录不能是根目录或源码目录。" >&2; exit 1 ;;
+esac
+case "$ROOT/" in
+  "$OUT_DIR/"*) echo "✗ 产物目录不能包含源码目录。" >&2; exit 1 ;;
 esac
 
 # 国内镜像：没设才设，已设的尊重调用方。
@@ -58,14 +90,14 @@ fi
 
 # electron-builder 把 .app 放在 <产物目录>/mac-universal/ 下。
 # 那个 .app 是 boss 平时直接双击用的，埋在两层子目录里不好找，
-# 这里把它提到「02-Mac 版」顶层，路径从此固定为：
+# 这里把它复制到「02-Mac 版」顶层，路径从此固定为：
 #   02-Mac 版/SecureReel DIT 2.app
 APP_SRC="$OUT_DIR/mac-universal/SecureReel DIT 2.app"
 APP_DST="$OUT_DIR/SecureReel DIT 2.app"
 if [ -d "$APP_SRC" ]; then
-  rm -rf "$APP_DST"
-  mv "$APP_SRC" "$APP_DST" && echo "✓ 已把 .app 提到顶层：$APP_DST"
-  rmdir "$OUT_DIR/mac-universal" 2>/dev/null || true
+  # Keep previous destination-only files and builder output for recovery.
+  /usr/bin/rsync -a "$APP_SRC/" "$APP_DST/" || exit 1
+  echo "✓ 已把 .app 复制到顶层：$APP_DST"
 fi
 
 echo

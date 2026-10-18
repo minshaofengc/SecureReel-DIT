@@ -1,13 +1,13 @@
 # SecureReel DIT
 
-[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.7 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.7)
+[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.8 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.8)
 
 ---
 
 ## English
 
 SecureReel DIT is a free, open-source camera media offload and verification tool for
-**macOS 13+ and Windows 10/11 (x64)**. It brings multi-target copying, xxHash64
+**macOS 13+, Windows 10/11 (x64) and Android 12+ (beta)**. It brings multi-target copying, xxHash64
 verification, ASC MHL, PDF/JSON reports and the official HDE workflow together in one
 clear desktop interface.
 
@@ -174,7 +174,7 @@ FFmpeg/ffprobe are licensed under LGPL (LGPL-2.1 on macOS, LGPL-3.0 on Windows);
 
 ## 简体中文
 
-SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的**免费开源**摄影机素材拷贝与校验工具。它将多目标拷贝、xxHash64 复核、ASC MHL、PDF/JSON 报告和 HDE 官方工作流放在一个清晰的桌面界面中。
+SecureReel DIT 是一款面向 **macOS 13+、Windows 10/11（x64）与 Android 12+（内测）** 的**免费开源**摄影机素材拷贝与校验工具。它将多目标拷贝、xxHash64 复核、ASC MHL、PDF/JSON 报告和 HDE 官方工作流放在一个清晰的桌面界面中。
 
 ### 核心能力
 
@@ -192,7 +192,7 @@ SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的**免
 
 ### 安装
 
-发布形态是**安装包**，两个平台各一份，功能与界面一致：
+发布形态是**安装包**，三个平台各一份：
 
 - **macOS 13+**：`dmg`，Intel 与 Apple 芯片通用。打开磁盘映像，把应用拖进「应用程序」即可。
 - **Windows 10/11（x64）**：NSIS 安装程序（`Setup`），另附免安装单文件（`Portable`）与免安装 `zip` 三种形态。
@@ -200,8 +200,12 @@ SecureReel DIT 是一款面向 **macOS 13+ 与 Windows 10/11（x64）** 的**免
   > ⚠️ **Windows 版目前为公开测试版（Beta）**：代码与 mac 版完全一致，但尚未在
   > 足够多的真机上完成验证。重要素材请另留一份可靠备份。详见 Windows 包内的
   > `README-先看我.md`（含免责声明）。
+- **Android 12+**：`apk`，四架构通用（arm64-v8a / armeabi-v7a / x86 / x86_64）。
+  > ⚠️ **安卓版为内测候选（Beta）**：使用调试证书签名、包名 `com.securereelmobile.beta`，
+  > 将来正式签名版无法覆盖升级，需卸载重装；真机 USB、光学扫码、厂商后台与实时 TLS 尚未验收。
+  > 仅用于测试，重要素材请另留可靠备份。
 
-两个平台都**不需要命令行、不需要 Node.js**，应用内置对应平台的 FFmpeg/ffprobe，装完即有完整的首帧图与元数据能力。
+桌面版都**不需要命令行、不需要 Node.js**，应用内置对应平台的 FFmpeg/ffprobe，装完即有完整的首帧图与元数据能力。
 
 未签名/未公证的构建首次打开时系统会拦一下，属正常：
 
@@ -292,11 +296,12 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 LGPL 授权（macOS 为 LGPL-2.1，Windows 为 LGPL-3.0），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 
-### 2.0.7 工作台与报告
+### 2.0.8 存储安全与桌面 / 安卓协作
 
-建任务页并列显示来源与目标，项目信息和代理设置可展开。拷贝始终执行独立重读校验；仅校验模式只读目标，不生成代理。
-监控页支持每页 100 条、路径搜索和状态筛选；代理失败可独立重试，不重新拷贝原始素材。
-交付页可预览简洁交付、详细技术和黑白打印主题；改主题会新增修订，不覆盖旧报告。未填写的可选字段不进入报告。
-代理从已经校验的副本读取，同一素材编码一次，再分发到各目标并重读校验。暂停会中断正在编码的代理，恢复后重新编码未完成项。已验证缓存保留在首个可用目标的 `.securereel-proxy-cache/<任务编号>/`，用于故障重试，需要额外磁盘空间。
-代理命名为 `Proxies/<来源目录>/<完整原文件名>.<代理扩展名>`，例如 `Proxies/A001/C001.mov.mov`，用于区分同名不同格式的素材。已有同名代理不覆盖。
-代理、原始素材与报告交付状态分别显示。Windows 真机验收及具体磁盘的性能测量与构建验证分开记录。
+写入前识别文件系统、物理设备组与共享容量池；共用同一容量池的目标（包括 APFS 容器）合并计算所需空间，拓扑未知时明确标出。同一物理设备上的备份与已知容量不足需显式确认；缺盘、容量检查失败、来源与目标文件系统重叠仍会阻止拷贝，排队写入、恢复、重试与新增目标前会重新核对设备。
+
+任务的安全证据持久化到磁盘；新报告修订区分「内容校验通过」与「物理上相互独立」。历史报告保持不变，缺失的历史证据显示为未知。
+
+局域网协作支持仅限授权目录的预检、单设备与单目录撤销，以及真实的最近认证联系信息；旧版伴侣端可以监控，但需升级后才能新建任务。
+
+安卓端提供「本机拷卡 / 校验」与「电脑协作」双模式，iOS 继续暂停。安卓真机 USB、光学扫码、厂商后台与实时 TLS 仍待验收。
