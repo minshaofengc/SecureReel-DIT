@@ -284,7 +284,7 @@ export function ProjectView(): ReactNode {
         <>
           <Card
             title={t('parent.details')}
-            hint={t('parent.detailsHint')}
+            hintIcon={t('parent.detailsHint')}
             actions={
               <span className="hint faint">
                 {savedAt === null ? t('project.autosave') : t('common.saved')}

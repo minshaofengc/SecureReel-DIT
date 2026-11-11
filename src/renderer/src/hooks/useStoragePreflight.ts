@@ -31,17 +31,18 @@ export function useStoragePreflight(input: StoragePreflightInput | null) {
     invalidate()
     return () => { evidence.invalidate() }
   }, [key, invalidate])
-  useEffect(() => {
-    // Invalidate on leaving as well as returning: an old in-flight reply cannot
-    // re-enable a start while the window is away and a device is being swapped.
-    window.addEventListener('blur', invalidate)
-    window.addEventListener('focus', invalidate)
-    return () => {
-      window.removeEventListener('blur', invalidate)
-      window.removeEventListener('focus', invalidate)
-    }
-  }, [invalidate])
-  const check = useCallback(async () => {
+  /*
+   * 失焦与回到前台**不再作废证据**。
+   *
+   * 原先 blur/focus 都直接 invalidate()：用户点开访达确认一下盘、系统弹一次
+   * 权限框，回来勾选和检查结果就全没了，按钮变灰且看不出原因。
+   *
+   * 换盘的安全性不依赖这里：主进程在 createJob 与 start 时会重新探测并比对
+   * fingerprint（含 filesystemId / physicalDeviceIds / present），设备真的变了
+   * 一定过不去。这里只在输入（源、目标、模式、代理）变化时作废，那才是
+   * 用户明确改变了任务要求。迟到的 IPC 回复仍由 generation 计数丢弃。
+   */
+  const check = useCallback(async (requiredBytes?: number | null) => {
     const request = JSON.parse(key) as StoragePreflightInput | null
     if (request === null) return null
     const ticket = session.current.begin(key)
@@ -50,7 +51,15 @@ export function useStoragePreflight(input: StoragePreflightInput | null) {
     setError(null)
     setChecking(true)
     try {
-      const answer = await window.securereel.jobs.preflight(request)
+      /*
+       * 界面已经扫过源就把总字节数带过去，主进程不必再整盘扫一遍。
+       * 这一步只是「要占多少空间」的判定，不需要重新遍历文件树。
+       */
+      const answer = await window.securereel.jobs.preflight(
+        requiredBytes === null || requiredBytes === undefined
+          ? request
+          : { ...request, requiredBytes }
+      )
       if (!session.current.isCurrent(ticket, currentKey.current)) return null
       if (!answer.ok) throw new Error(answer.error)
       setSnapshot({ key, result: answer.data })

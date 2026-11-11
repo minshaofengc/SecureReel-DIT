@@ -542,6 +542,81 @@ select {
   color: var(--text-faint);
 }
 
+/*
+ * 行内问号提示。
+ *
+ * 页面上不再常驻解释性小字，全部收进这里；hover 与键盘聚焦都能打开。
+ * tooltip 用 absolute + z-index，避免被卡片裁剪。
+ */
+.hint-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--hard-line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+}
+
+.hint-icon:hover,
+.hint-icon:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  outline: none;
+}
+
+.hint-icon:focus-visible {
+  box-shadow: 0 0 0 2px var(--hard-line);
+}
+
+.hint-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%);
+  z-index: 40;
+  width: max-content;
+  max-width: 280px;
+  padding: 7px 9px;
+  border: 1px solid var(--hard-line);
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  font-weight: 400;
+  line-height: 1.5;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.hint-icon-wrap:hover .hint-tip,
+.hint-icon-wrap:focus-within .hint-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.hint-icon-wrap[data-dismissed='true'] .hint-tip {
+  opacity: 0;
+  visibility: hidden;
+}
+
 .row {
   display: flex;
 }
@@ -2005,4 +2080,52 @@ table.data td.num {
 [data-platform='windows'] table.data th,
 [data-platform='windows'] .group-row td {
   top: var(--titlebar-height);
+}
+
+/*
+ * 「本地数据」五类目录。
+ * 每行：类别 + 实际路径 + 状态徽标 + 更改/恢复默认。
+ * 路径可能很长（外置盘），用 ellipsis 收住并靠 title 看全。
+ */
+.data-locations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.data-locations__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+}
+
+.data-locations__id {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.data-locations__id strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.data-locations__id code {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-locations__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }

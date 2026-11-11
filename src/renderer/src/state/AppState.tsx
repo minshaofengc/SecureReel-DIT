@@ -33,7 +33,8 @@ import type {
   ProxyCodec,
   ProxyProfile,
   ProxyResolution,
-  ReportRevision
+  ReportRevision,
+  ScanResult
 } from '@shared/types'
 import {
   DEFAULT_SETTINGS,
@@ -47,8 +48,14 @@ import { updateVisibleFilePage } from './file-page'
 
 /**
  * Unsaved job inputs are a page-independent, in-memory draft.
- * Validation evidence (scans, volume capacity, mount state, acknowledgements)
- * MUST NOT be stored here or assumed current after navigation.
+ *
+ * 源扫描结果也放在这里：拷贝页在单页应用里切走会整个卸载，纯组件内 state
+ * 会让用户每切一次页面就重扫一遍大卡 —— 现场几十秒到几分钟，没人愿意。
+ *
+ * 但**容量、挂载状态、风险确认**仍然不在这里：它们由主进程在创建与启动时
+ * 重新探测并比对指纹（filesystemId / physicalDeviceIds / present），
+ * 界面保留的扫描结果只用于展示文件数与总大小。
+ *
  * No disk storage: closing the app intentionally discards this draft.
  */
 export interface CopyInputDraft {
@@ -84,6 +91,17 @@ export interface Toast {
   message: string
 }
 
+/**
+ * 源扫描证据。
+ *
+ * 只在 `path` 与当前源路径一致时可用 —— 换了源就必须重扫，
+ * 这一点由消费方（CopyView）判断，不在这里做失效。
+ */
+export interface SourceScanEvidence {
+  path: string
+  result: ScanResult
+}
+
 interface AppStateValue {
   ready: boolean
   settings: AppSettings
@@ -105,6 +123,9 @@ interface AppStateValue {
   projectDraft: ProjectDraft | null
   copyDraft: CopyInputDraft | null
   setCopyDraft: Dispatch<SetStateAction<CopyInputDraft | null>>
+  /** 跨页保留的源扫描结果；切页面不再需要重扫。 */
+  sourceScan: SourceScanEvidence | null
+  setSourceScan: Dispatch<SetStateAction<SourceScanEvidence | null>>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   refreshParents: () => Promise<void>
   setProjectDraft: Dispatch<SetStateAction<ProjectDraft | null>>
@@ -154,6 +175,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
   const [parents, setParents] = useState<ParentProject[]>([])
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const [copyDraft, setCopyDraft] = useState<CopyInputDraft | null>(null)
+  const [sourceScan, setSourceScan] = useState<SourceScanEvidence | null>(null)
   const toastSeq = useRef(1)
   /**
    * 每个任务的 relPath → 行下标。
@@ -542,6 +564,8 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
       projectDraft,
       copyDraft,
       setCopyDraft,
+      sourceScan,
+      setSourceScan,
       updateSettings,
       refreshParents,
       setProjectDraft,
@@ -567,6 +591,7 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
       parents,
       projectDraft,
       copyDraft,
+      sourceScan,
       updateSettings,
       refreshParents,
       refreshJobs,

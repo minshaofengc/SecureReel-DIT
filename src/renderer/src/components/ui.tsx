@@ -9,6 +9,7 @@ import type { ChangeEvent, ReactNode } from 'react'
 import type { CopyJob, FileState, JobState } from '@shared/types'
 import { HASH_ALGORITHM_LABELS } from '@shared/types'
 import { useI18n } from '../i18n'
+import { HintIcon } from './HintIcon'
 
 /**
  * 页头（masthead）。
@@ -28,7 +29,8 @@ export function PageHead({
   index,
   kicker,
   title,
-  subtitle
+  subtitle,
+  hint
 }: {
   /** @deprecated 传空串即不渲染编号块 */
   index?: string
@@ -36,6 +38,8 @@ export function PageHead({
   kicker: string
   title: string
   subtitle?: string
+  /** 解释性说明，收进标题旁的问号 */
+  hint?: string
 }): ReactNode {
   const showIndex = index !== undefined && index !== ''
   return (
@@ -44,7 +48,10 @@ export function PageHead({
         {showIndex && <span className="page-head__index">{index}</span>}
         {kicker}
       </span>
-      <h2>{title}</h2>
+      <h2>
+        {title}
+        {hint !== undefined && <HintIcon text={hint} label={title} />}
+      </h2>
       {subtitle !== undefined && <p>{subtitle}</p>}
     </header>
   )
@@ -106,11 +113,15 @@ export function BlockGrid({ children }: { children: ReactNode }): ReactNode {
 export function Card({
   title,
   hint,
+  hintIcon,
   actions,
   children
 }: {
   title?: string
+  /** 标题旁的短事实（计数、单位），保持常驻 */
   hint?: string
+  /** 解释性说明，收进问号 */
+  hintIcon?: string
   actions?: ReactNode
   children: ReactNode
 }): ReactNode {
@@ -119,7 +130,12 @@ export function Card({
       {(title !== undefined || actions !== undefined) && (
         <div className="card-head">
           <div>
-            {title !== undefined && <h3>{title}</h3>}
+            {title !== undefined && (
+              <h3>
+                {title}
+                {hintIcon !== undefined && <HintIcon text={hintIcon} label={title} />}
+              </h3>
+            )}
             {hint !== undefined && <div className="hint">{hint}</div>}
           </div>
           {actions !== undefined && <div className="row-actions">{actions}</div>}
@@ -141,9 +157,11 @@ export function Field({
 }): ReactNode {
   return (
     <label className="field">
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        {label}
+        {hint !== undefined && <HintIcon text={hint} label={label} inline />}
+      </span>
       {children}
-      {hint !== undefined && <span className="hint faint">{hint}</span>}
     </label>
   )
 }

@@ -1,5 +1,6 @@
 import { storageEvidenceView } from '../state/storage-evidence'
 import { StorageSafetyPanel } from '../components/StorageSafetyPanel'
+import { HintIcon } from '../components/HintIcon'
 import { useStoragePreflight } from '../hooks/useStoragePreflight'
 import {
   Fragment,
@@ -1289,17 +1290,24 @@ export function QueueView(): ReactNode {
                         value={info.copyNotes}
                         onChange={(event) => saveInfo({ copyNotes: event.target.value })}
                       />
-                      <span className="hint faint" style={{ fontSize: 11 }}>
-                        {t('copy.copyNotesHint')}
+                      <span className="field-label">
+                        {t('copy.copyNotes')}
+                        <HintIcon text={t('copy.copyNotesHint')} label={t('copy.copyNotes')} inline />
                       </span>
+                      <textarea
+                        className="textarea"
+                        value={info.copyNotes}
+                        onChange={(event) => saveInfo({ copyNotes: event.target.value })}
+                      />
                       <div className="counter">
                         {info.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
                       </div>
                     </label>
 
-                    <Note>{t('queue.snapshotHint')}</Note>
-
-                    <div className="sec-h">{t('queue.inherited')}</div>
+                    <div className="sec-h">
+                      {t('queue.inherited')}
+                      <HintIcon text={t('queue.snapshotHint')} label={t('queue.inherited')} />
+                    </div>
                     <table className="kv">
                       <tbody>
                         <tr>

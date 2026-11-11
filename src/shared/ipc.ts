@@ -99,6 +99,12 @@ export const IPC = {
   logsReveal: 'logs:reveal',
   logsExportDiagnostics: 'logs:export-diagnostics',
 
+  /** 可配置数据目录 */
+  dataLocations: 'data:locations',
+  dataPick: 'data:pick',
+  dataRelocate: 'data:relocate',
+  dataReset: 'data:reset',
+
   event: 'main:event',
 
   /**
@@ -153,6 +159,11 @@ export interface JobPreflightRequest {
   targets: { path: string }[]
   mode: 'copy' | 'verify'
   proxyEnabled?: boolean
+  /**
+   * 界面已经扫过源时带上总字节数，主进程就不必再整盘扫一遍。
+   * 不传则由主进程自己扫描 —— 大卡这一步是几十秒到几分钟。
+   */
+  requiredBytes?: number
 }
 
 export interface CreateJobRequest {
@@ -200,6 +211,25 @@ export interface CompanionSetup {
   expiresAt: number
 }
 
+/** 可配置的数据类别。数据库配置里存的是它所在的目录。 */
+export type DataLocationCategory = 'db' | 'reports' | 'logs' | 'hde' | 'companion'
+
+export interface DataLocationStatus {
+  category: DataLocationCategory
+  /** 用户设定的目录；null 表示用默认 */
+  configured: string | null
+  /** 本次实际使用的目录（回退后是默认目录） */
+  used: string
+  /** 配置了但不可用，已回退 */
+  fallback: boolean
+  reason: string | null
+}
+
+export interface DataRelocateRequest {
+  category: DataLocationCategory
+  path: string
+}
+
 /** 预加载脚本暴露给渲染进程的 API 形状。 */
 export interface SecureReelApi {
   companion: {
@@ -219,6 +249,16 @@ export interface SecureReelApi {
   media: {
     /** 本机可用的代理编码器；首次调用会跑一遍试编码探测（结果会缓存） */
     encoders(): Promise<IpcResult<EncodersInfo>>
+  }
+  data: {
+    /** 五类数据目录的当前状态（配置值 / 实际使用值 / 是否回退） */
+    locations(): Promise<IpcResult<DataLocationStatus[]>>
+    /** 选目录；取消返回 null */
+    pick(category: DataLocationCategory): Promise<IpcResult<string | null>>
+    /** 迁移某一类数据到新目录并立即切换（必须没有运行中任务） */
+    relocate(request: DataRelocateRequest): Promise<IpcResult<DataLocationStatus[]>>
+    /** 恢复某一类为默认位置；只改配置，不搬文件 */
+    reset(category: DataLocationCategory): Promise<IpcResult<DataLocationStatus[]>>
   }
   settings: {
     get(): Promise<IpcResult<AppSettings>>

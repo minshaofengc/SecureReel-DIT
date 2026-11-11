@@ -194,12 +194,17 @@ export class JobManager {
   }
 
   async preflight(request: JobPreflightRequest): Promise<TargetPreflightResult> {
-    const scan = await scanSource(request.sourcePath)
+    /*
+     * 界面已经扫过源时直接用它的总字节数：检查按钮每点一次就整盘重扫一次，
+     * 大卡要几十秒到几分钟，而这一步只需要「要占多少空间」这一个数字。
+     * 没传才回退到自己扫 —— 那条路径仍用于任务监控页的重新检查。
+     */
+    const requiredBytes = request.requiredBytes ?? (await scanSource(request.sourcePath)).totalBytes
     return (this.deps.storagePreflight ?? preflightStorage)({
       sourcePath: request.sourcePath,
       targets: request.targets.map((item) => item.path),
       mode: request.mode,
-      requiredBytes: scan.totalBytes,
+      requiredBytes,
       proxyEnabled: request.proxyEnabled
     })
   }

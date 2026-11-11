@@ -1,6 +1,6 @@
 # SecureReel DIT
 
-[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.8 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.8)
+[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.9 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.9)
 
 ---
 
@@ -295,6 +295,16 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 
 应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 LGPL 授权（macOS 为 LGPL-2.1，Windows 为 LGPL-3.0），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+
+### 2.0.9 拷贝流程重做与可改数据目录
+
+扫描结果在本次运行期间保留，切换页面或切走窗口不再需要重新扫描；源扫描与设备检查的证据只在输入真的变化（源路径、目标盘、拷贝/校验模式、代理开关）时作废，换盘仍会在创建与启动任务时按指纹拦截。
+
+「检查当前来源与目标」并入「来源 → 目标 → 预检」流程条第三步；界面已扫过源时不再整盘重扫，逐目标区块只保留刷新容量的图标按钮。常驻的解释性小字收进问号图标，鼠标悬停或键盘聚焦时显示。
+
+设置页「本地数据」可分别更改任务数据库、报告档案、日志、HDE 工作目录与协作身份五类目录：复制现有数据后热切换，不覆盖也不删除旧目录；目录不可用时回退默认并写日志；数据库允许外置盘，拒绝网络盘。
+
+创建任务被拒会写入日志，写明拒绝原因与请求摘要。安卓端未随本版更新，仍为 2.0.8 内测候选。
 
 ### 2.0.8 存储安全与桌面 / 安卓协作
 

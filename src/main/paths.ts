@@ -17,6 +17,8 @@ export interface AppPaths {
   hdeWorkDir: string
   /** SQLite 任务数据库 */
   dbFile: string
+  /** 局域网协作身份与状态 */
+  companionDir: string
 }
 
 export function buildAppPaths(userDataDir: string): AppPaths {
@@ -25,6 +27,7 @@ export function buildAppPaths(userDataDir: string): AppPaths {
     logsDir: join(userDataDir, 'logs'),
     reportsDir: join(userDataDir, 'reports'),
     hdeWorkDir: join(userDataDir, 'hde'),
-    dbFile: join(userDataDir, 'securereel.sqlite')
+    dbFile: join(userDataDir, 'securereel.sqlite'),
+    companionDir: join(userDataDir, 'mobile-companion')
   }
 }

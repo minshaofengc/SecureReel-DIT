@@ -15,7 +15,7 @@ const LEVEL_ORDER: Record<Level, number> = { info: 0, warn: 1, error: 2 }
  */
 export class Logger {
   private queue: Promise<void> = Promise.resolve()
-  private readonly dir: string
+  private dir: string
   private readonly minLevel: Level
   private readonly mirrorToConsole: boolean
   private lastError: string | null = null
@@ -86,6 +86,17 @@ export class Logger {
   /** 等待队列里的日志全部落盘。退出前调用。 */
   async flush(): Promise<void> {
     await this.queue
+  }
+
+  /**
+   * 数据目录热切换：先把队列写完，再换目录。
+   *
+   * 不重建实例 —— `handlers` / `JobManager` / 各适配器都持有这个对象，
+   * 重建会让它们继续往旧实例里写。
+   */
+  async rebind(dir: string): Promise<void> {
+    await this.flush()
+    this.dir = dir
   }
 
   /**

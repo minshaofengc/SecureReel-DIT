@@ -126,7 +126,8 @@ export const jobPreflightSchema = z
       .min(1)
       .max(8),
     mode: z.enum(JOB_MODES),
-    proxyEnabled: z.boolean().optional()
+    proxyEnabled: z.boolean().optional(),
+    requiredBytes: z.number().int().nonnegative().optional()
   })
   .strict()
 export const jobSafetyActionSchema = z
@@ -193,6 +194,15 @@ export const setJobParentSchema = z.object({
   jobId: jobIdSchema,
   parentProjectId: z.union([parentProjectIdSchema, z.null()])
 })
+
+/** 可配置数据目录：类别 + 绝对路径。 */
+export const dataCategorySchema = z.enum(['db', 'reports', 'logs', 'hde', 'companion'])
+
+export const dataRelocateSchema = z
+  .strictObject({
+    category: dataCategorySchema,
+    path: absolutePathSchema
+  })
 
 export const settingsPatchSchema = z
   .strictObject({

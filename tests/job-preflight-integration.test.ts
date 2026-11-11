@@ -80,6 +80,29 @@ it('refuses an unacknowledged backup risk before persisting a task', async () =>
   ).rejects.toThrow()
   expect(f.store.listJobs()).toHaveLength(0)
 })
+/*
+ * 界面不再在窗口失焦时作废证据，所以"换盘"的拦截点必须落在主进程。
+ * 这条是那次改动的回归锁：界面拿着旧指纹提交，设备已经换了，创建必须被拒，
+ * 而且不能留下半条任务记录。
+ */
+it('rejects task creation when the devices changed after the UI check', async () => {
+  const f = await setup()
+  const previous = f.get()
+  f.set({
+    ...previous,
+    fingerprint: 'replaced-disk',
+    targets: [{ ...previous.targets[0]!, physicalDeviceIds: ['other-backup-disk'] }]
+  })
+  await expect(
+    f.manager.createJob({
+      name: 'Card',
+      sourcePath: f.source,
+      targets: [{ path: f.target }],
+      preflightConfirmation: { fingerprint: 'current-devices', acceptRisks: true }
+    })
+  ).rejects.toThrow(/变化/)
+  expect(f.store.listJobs()).toHaveLength(0)
+})
 it('persists accepted evidence and rejects changed devices before engine startup', async () => {
   const f = await setup()
   const proof = { fingerprint: 'current-devices', acceptRisks: true }

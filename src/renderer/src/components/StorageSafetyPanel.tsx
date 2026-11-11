@@ -3,6 +3,7 @@ import type { TargetPreflightResult } from '@shared/storage-safety'
 import { humanBytes } from '@shared/format'
 import { storageEvidenceView } from '../state/storage-evidence'
 import { useI18n } from '../i18n'
+import { HintIcon } from './HintIcon'
 
 export function StorageSafetyPanel({ result, checking = false, error, onCheck, acknowledged = false, onAcknowledge, disabled = false, historical = false }: {
   result?: TargetPreflightResult | null
@@ -19,12 +20,17 @@ export function StorageSafetyPanel({ result, checking = false, error, onCheck, a
   return (
     <section className="storage-safety" aria-label={t('safety.title')} aria-busy={checking}>
       <div className="storage-safety__head">
-        <strong>{t('safety.title')}</strong>
+        <strong>
+          {t('safety.title')}
+          <HintIcon
+            text={t(historical ? 'safety.snapshot' : 'safety.scope')}
+            label={t('safety.title')}
+          />
+        </strong>
         {onCheck && <button className="btn btn-sm" type="button" disabled={disabled || checking} onClick={onCheck}>
           {t(checking ? 'p0.checking' : 'safety.check')}
         </button>}
       </div>
-      <p className="hint">{t(historical ? 'safety.snapshot' : 'safety.scope')}</p>
       {error && <p className="danger" role="alert">{error}</p>}
       {!result ? <p className="hint">{t(evidence.status === 'historical-unknown' ? 'safety.historicalUnknown' : 'safety.notChecked')}</p> : <>
         <p className="storage-safety__summary" role="status">

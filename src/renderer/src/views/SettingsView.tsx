@@ -21,7 +21,7 @@ import {
   type ReportTheme,
   type ThemeId
 } from '@shared/types'
-import type { EncodersInfo } from '@shared/ipc'
+import type { DataLocationCategory, DataLocationStatus, EncodersInfo } from '@shared/ipc'
 import {
   BlockGrid,
   Card,
@@ -97,8 +97,49 @@ function NumberSetting({
 
 export function SettingsView(): ReactNode {
   const { t } = useI18n()
-  const { settings, updateSettings, appInfo, pushToast } = useAppState()
+  const { settings, updateSettings, pushToast } = useAppState()
   const [diagBusy, setDiagBusy] = useState(false)
+  const [dataLocations, setDataLocations] = useState<DataLocationStatus[]>([])
+  const [dataBusy, setDataBusy] = useState(false)
+
+  const refreshDataLocations = async (): Promise<void> => {
+    try {
+      setDataLocations(await unwrap(window.securereel.data.locations()))
+    } catch {
+      /* 读不到就保持空列表，不打断设置页 */
+    }
+  }
+
+  useEffect(() => {
+    void refreshDataLocations()
+  }, [])
+
+  const changeDataDir = async (category: DataLocationCategory): Promise<void> => {
+    try {
+      const picked = await unwrap(window.securereel.data.pick(category))
+      if (picked === null) return
+      if (!window.confirm(t('settings.dataConfirm'))) return
+      setDataBusy(true)
+      setDataLocations(await unwrap(window.securereel.data.relocate({ category, path: picked })))
+      pushToast('success', t('settings.dataRelocated'))
+    } catch (error) {
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      setDataBusy(false)
+    }
+  }
+
+  const resetDataDir = async (category: DataLocationCategory): Promise<void> => {
+    try {
+      setDataBusy(true)
+      setDataLocations(await unwrap(window.securereel.data.reset(category)))
+      pushToast('success', t('settings.dataResetDone'))
+    } catch (error) {
+      pushToast('error', error instanceof Error ? error.message : String(error))
+    } finally {
+      setDataBusy(false)
+    }
+  }
   /** 本机可用的编码器（决定 H.264/H.265 能不能选）；null = 还在探测 */
   const [encoders, setEncoders] = useState<EncodersInfo | null>(null)
 
@@ -216,9 +257,9 @@ export function SettingsView(): ReactNode {
         index={PAGE_INDEX.settings}
         kicker={t('nav.settings')}
         title={t('settings.title')}
+        hint={t('settings.scope')}
       />
 
-      <Note>{t('settings.scope')}</Note>
       <Card title={t('settings.appearance')}>
         <Field label={t('settings.skin')} hint={t('settings.skinHint')}>
           <SelectBox<ThemeId>
@@ -293,7 +334,7 @@ export function SettingsView(): ReactNode {
       </Card>
 
       <BlockGrid>
-        <Card title={t('settings.defaults')}>
+        <Card title={t('settings.defaults')} hintIcon={t('workbench.independentVerify')}>
           <Field label={t('copy.hashAlgorithm')} hint={t('copy.hashHint')}>
             <SelectBox<HashAlgorithm>
               value={settings.hashAlgorithm}
@@ -325,8 +366,6 @@ export function SettingsView(): ReactNode {
               })}
             </Note>
           )}
-
-          <Note>{t('workbench.independentVerify')}</Note>
         </Card>
 
         <Card title={t('settings.performance')}>
@@ -610,15 +649,45 @@ export function SettingsView(): ReactNode {
           </Field>
         </Card>
 
-        <Card title={t('settings.data')}>
-          <dl className="kv">
-            <dt>{t('settings.userData')}</dt>
-            <dd className="mono">{appInfo?.userDataDir ?? '—'}</dd>
-            <dt>{t('settings.logs')}</dt>
-            <dd className="mono">{appInfo?.logsDir ?? '—'}</dd>
-            <dt>{t('settings.reports')}</dt>
-            <dd className="mono">{appInfo?.reportsDir ?? '—'}</dd>
-          </dl>
+        <Card title={t('settings.data')} hintIcon={t('settings.privacy')}>
+          <div className="data-locations">
+            {dataLocations.map((row) => (
+              <div className="data-locations__row" key={row.category}>
+                <div className="data-locations__id">
+                  <strong>{t(`settings.data.${row.category}` as never)}</strong>
+                  <code className="mono" title={row.used}>
+                    {row.used}
+                  </code>
+                </div>
+                <div className="data-locations__actions">
+                  {row.fallback ? (
+                    <span className="badge danger">{t('settings.dataFallback')}</span>
+                  ) : row.configured !== null ? (
+                    <span className="badge">{t('settings.dataCustom')}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={dataBusy}
+                    onClick={() => void changeDataDir(row.category)}
+                  >
+                    {t('settings.dataChange')}
+                  </button>
+                  {row.configured !== null && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      disabled={dataBusy}
+                      onClick={() => void resetDataDir(row.category)}
+                    >
+                      {t('settings.dataReset')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {dataBusy && <p className="hint">{t('settings.dataBusy')}</p>}
 
           <div className="row-actions" style={{ marginTop: 12 }}>
             <button
@@ -658,8 +727,6 @@ export function SettingsView(): ReactNode {
               {t('settings.exportDiagnostics')}
             </button>
           </div>
-
-          <Note>{t('settings.privacy')}</Note>
         </Card>
       </BlockGrid>
       <MobileCompanionSettings />

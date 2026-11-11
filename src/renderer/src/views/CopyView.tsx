@@ -9,7 +9,6 @@ import type {
   ProxyCodec,
   ProxyProfile,
   ProxyResolution,
-  ScanResult,
   VolumeKind
 } from '@shared/types'
 import {
@@ -49,6 +48,7 @@ import { startPersistedJob } from '@shared/created-job-recovery'
 import { useI18n } from '../i18n'
 import { zeroByteNoteKey } from '../platform'
 import { StorageSafetyPanel } from '../components/StorageSafetyPanel'
+import { HintIcon } from '../components/HintIcon'
 import { useStoragePreflight } from '../hooks/useStoragePreflight'
 
 /** 下拉里表示「新建母项目」的哨兵值，不会与真实 ID 冲突 */
@@ -102,8 +102,9 @@ const KIND_LABEL: Record<VolumeKind, string> = {
 }
 
 /**
- * Persist only unsaved USER INPUT in AppState while CopyView unmounts.
- * Device/scan evidence remains ephemeral and is reacquired after navigation.
+ * Persist unsaved USER INPUT and the source scan in AppState while CopyView unmounts.
+ * Capacity, mount state and risk acknowledgements stay ephemeral: the main process
+ * re-probes and compares the fingerprint before creating or starting a job.
  */
 function useDraftField<K extends keyof CopyInputDraft>(
   key: K
@@ -134,6 +135,8 @@ export function CopyView(): ReactNode {
     projectDraft,
     setProjectDraft,
     setCopyDraft,
+    sourceScan,
+    setSourceScan,
     pushToast,
     appInfo
   } = useAppState()
@@ -155,8 +158,13 @@ export function CopyView(): ReactNode {
     }).catch(() => { if (alive) setCreatedJob(null) })
     return () => { alive = false }
   }, [pendingJobId])
-  const [scan, setScan] = useState<ScanResult | null>(null)
-  const [scannedSourcePath, setScannedSourcePath] = useState<string | null>(null)
+  /*
+   * 扫描结果存在 AppState 里，跨页存活。
+   *
+   * 拷贝页在单页应用里切走会整个卸载，放组件内会让用户每切一次页面
+   * 就重扫一遍大卡。这里按路径派生：换了源，旧结果立刻不可用。
+   */
+  const scan = sourceScan !== null && sourceScan.path === sourcePath ? sourceScan.result : null
   const scanEpoch = useRef(0)
   const usageEpoch = useRef(0)
   const [scanning, setScanning] = useState(false)
@@ -213,8 +221,8 @@ export function CopyView(): ReactNode {
     }
   }, [])
 
-  // A scan is evidence for exactly one source path. Never reuse it after editing that path.
-  const sourceScanned = scan !== null && scannedSourcePath === sourcePath
+  // A scan is evidence for exactly one source path — `scan` already derives that match.
+  const sourceScanned = scan !== null
   const requiredBytes = sourceScanned ? scan.totalBytes : null
 
   /*
@@ -411,31 +419,20 @@ export function CopyView(): ReactNode {
     }
   }, [setProjectDraft])
 
-  // A window may lose focus while a card is removed, re-mounted or swapped at
-  // the same path. Never reuse a previously green capacity/scan after return.
-  // This also drops any in-flight IPC answer via the generation counters.
-  useEffect(() => {
-    let leftApp = false
-    const onBlur = (): void => { leftApp = true }
-    const onFocus = (): void => {
-      if (!leftApp || submittingRef.current) return
-      leftApp = false
-      scanEpoch.current++
-      usageEpoch.current++
-      setScan(null)
-      setScannedSourcePath(null)
-      setScanning(false)
-      setUsage([])
-      setUsageChecking(false)
-      setUsageFailed(false)
-    }
-    window.addEventListener('blur', onBlur)
-    window.addEventListener('focus', onFocus)
-    return () => {
-      window.removeEventListener('blur', onBlur)
-      window.removeEventListener('focus', onFocus)
-    }
-  }, [])
+  /*
+   * 失焦/回到前台**不再作废扫描与容量结果**。
+   *
+   * 2.0.8 曾在这里把 scan/usage 全部清空：切一次访达、弹一次系统权限框、
+   * 点一下 Dock 再回来，刚做完的扫描就没了，按钮变灰，而"差什么"的说明在
+   * 页面中部、离底部按钮整屏远 —— 现场表现为"我明明都做完了，就是点不动"。
+   *
+   * 安全性由主进程兜住，不靠界面这种粗粒度失效：
+   *   · createJob 会重新 scanSource + preflightStorage，并比对 fingerprint
+   *   · start 前后各做一次 validateJobSafety
+   * 同路径换盘会改变 filesystemId / physicalDeviceIds / present，
+   * fingerprint 必变，创建或启动时照样会被拒。发现时机从"切窗口"挪到"点开始"，
+   * 但不再打断正常操作。scanEpoch / usageEpoch 保留，仍用于丢弃迟到的异步回复。
+   */
 
   const refreshUsage = useCallback(async (paths: string[], required: number | null) => {
     const epoch = ++usageEpoch.current
@@ -472,22 +469,20 @@ export function CopyView(): ReactNode {
     scanEpoch.current++
     usageEpoch.current++
     setSourcePath(next)
-    setScan(null)
-    setScannedSourcePath(null)
+    setSourceScan(null)
     setUsage([])
     setUsageChecking(false)
     setUsageFailed(false)
     setScanning(false)
     setSubmitError(null)
-  }, [setSourcePath])
+  }, [setSourcePath, setSourceScan])
 
   const scanSourcePath = useCallback(async (path: string) => {
     if (path.trim() === '') return
     invalidateStorage()
     const epoch = ++scanEpoch.current
     usageEpoch.current++
-    setScan(null)
-    setScannedSourcePath(null)
+    setSourceScan(null)
     setUsage([])
     setUsageChecking(false)
     setUsageFailed(false)
@@ -495,21 +490,19 @@ export function CopyView(): ReactNode {
     try {
       const result = await unwrap(window.securereel.volumes.scan(path))
       if (epoch !== scanEpoch.current) return
-      setScan(result)
-      setScannedSourcePath(path)
+      setSourceScan({ path, result })
       await refreshUsage(targetsRef.current, result.totalBytes)
       if (result.warnings.length > 0 && epoch === scanEpoch.current) {
         pushToast('warn', result.warnings[0] as string)
       }
     } catch (error) {
       if (epoch !== scanEpoch.current) return
-      setScan(null)
-      setScannedSourcePath(null)
+      setSourceScan(null)
       pushToast('error', error instanceof Error ? error.message : String(error))
     } finally {
       if (epoch === scanEpoch.current) setScanning(false)
     }
-  }, [pushToast, refreshUsage, invalidateStorage])
+  }, [pushToast, refreshUsage, invalidateStorage, setSourceScan])
 
   const pickSource = useCallback(async () => {
     const picked = await window.securereel.volumes.pickPath('directory', t('copy.pickSource'))
@@ -668,8 +661,7 @@ export function CopyView(): ReactNode {
         setCopyDraft(defaultCopyInput(settings))
         scanEpoch.current++
         usageEpoch.current++
-        setScan(null)
-        setScannedSourcePath(null)
+        setSourceScan(null)
         setUsage([])
         // 母项目选择与项目信息草稿都清掉：下一张卡重新开始，
         // 未分组时下一次会自动沿用这次填的内容（由主进程挑最近一条）。
@@ -704,6 +696,7 @@ export function CopyView(): ReactNode {
       setProjectDraft,
       setCopyDraft,
       setPendingJobId,
+      setSourceScan,
       settings,
       sourcePath,
       sourceScanned,
@@ -863,7 +856,7 @@ export function CopyView(): ReactNode {
           {sourcePath.trim() !== '' && !sourceScanned && !scanning && (
             <div className="source-scan-prompt" role="status">
               <span>{t('p0.sourceNeedsScan')}</span>
-              <button type="button" className="btn btn-sm" disabled={busy}
+              <button type="button" className="btn btn-sm btn-primary" disabled={busy}
                 onClick={() => void scanSourcePath(sourcePath)}>
                 {t('p0.scanNow')}
               </button>
@@ -997,10 +990,6 @@ export function CopyView(): ReactNode {
         </Card>
       </div>
 
-
-      <StorageSafetyPanel result={storage.result} checking={storage.checking} error={storage.error}
-        onCheck={() => void storage.check()} acknowledged={storage.acknowledged} onAcknowledge={storage.acknowledge}
-        disabled={busy || scanning || (pendingJobId === null ? !sourceScanned || targets.length === 0 : createdJob === null)} />
       <section className="preflight" aria-label={t('p0.preflightTitle')}>
         <div className="preflight__head">
           <span>{t('p0.preflightTitle')}</span>
@@ -1029,6 +1018,19 @@ export function CopyView(): ReactNode {
                   : t('p0.checkBeforeStarting')}
             </strong>
             <small>{requiredBytes === null ? t('p0.dataUnknown') : t('copy.required') + ' ' + humanBytes(requiredBytes)}</small>
+            {/*
+              检查按钮放在流程条第三步，而不是藏在下方面板的角落里：
+              它是"来源 → 目标 → 预检"这条链的最后一步，做完目标自然看到。
+            */}
+            <button
+              type="button"
+              className="btn btn-sm preflight__check"
+              disabled={busy || scanning || (pendingJobId === null ? !sourceScanned || targets.length === 0 : createdJob === null)}
+              aria-busy={storage.checking}
+              onClick={() => void storage.check(requiredBytes)}
+            >
+              {storage.checking ? t('p0.checking') : t('safety.check')}
+            </button>
           </div>
         </div>
         <div className="preflight__facts">
@@ -1040,10 +1042,19 @@ export function CopyView(): ReactNode {
         {targets.length > 0 && (
           <div className="preflight__targets" aria-label={t('p0.eachTarget')}>
             <div className="preflight__targets-label">
-              <span>{t('p0.eachTarget')}</span>
-              <button className="ops__link" type="button" disabled={usageChecking || scanning || busy || !sourceScanned}
-                onClick={() => { void refreshUsage(targets, requiredBytes); void storage.check() }}>
-                {usageChecking ? t('p0.checking') : t('p0.recheckTargets')}
+              <span>
+                {t('p0.eachTarget')}
+                <HintIcon text={t('p0.capacityNotProof')} label={t('p0.eachTarget')} />
+              </span>
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                aria-label={t('p0.refreshCapacity')}
+                title={t('p0.refreshCapacity')}
+                disabled={usageChecking || scanning || busy || !sourceScanned}
+                onClick={() => void refreshUsage(targets, requiredBytes)}
+              >
+                ↻
               </button>
             </div>
             <div className="preflight__targets-scroll">
@@ -1072,7 +1083,6 @@ export function CopyView(): ReactNode {
                 )
               })}
             </div>
-            <p className="preflight__target-note">{t('p0.capacityNotProof')}</p>
           </div>
         )}
         {blockingReasons.length > 0 && (
@@ -1088,9 +1098,22 @@ export function CopyView(): ReactNode {
         )}
       </section>
 
+      {/*
+        设备证据面板紧跟流程条：点完上面的「检查」，结果就在下面，
+        不用在页面中部和底部按钮之间来回找。
+      */}
+      <StorageSafetyPanel
+        result={storage.result}
+        checking={storage.checking}
+        error={storage.error}
+        acknowledged={storage.acknowledged}
+        onAcknowledge={storage.acknowledge}
+        disabled={busy || scanning || (pendingJobId === null ? !sourceScanned || targets.length === 0 : createdJob === null)}
+      />
+
       <details className="copy-metadata workbench-disclosure workbench-disclosure--panel" onToggle={(event) => { if (pendingJobId !== null) event.currentTarget.open = false }}>
         <summary>{t('copy.parentSection')} · {selectedParent?.name ?? t('workbench.optionalFields')}</summary>
-      <Card title={t('copy.parentSection')} hint={t('copy.parentHintTitle')}>
+      <Card title={t('copy.parentSection')} hintIcon={t('copy.parentHintTitle')}>
         <div className="path-row">
           <SelectBox<string>
             value={parentId ?? ''}
@@ -1144,11 +1167,6 @@ export function CopyView(): ReactNode {
           </div>
         )}
 
-        <div className="hint faint" style={{ marginTop: 10 }}>
-          {selectedParent === null
-            ? t('copy.parentHintUnassigned')
-            : `${t('copy.parentHintAssigned')}${selectedParent.name}`}
-        </div>
       </Card>
 
       <details className="workbench-disclosure workbench-disclosure--panel">
@@ -1184,7 +1202,8 @@ export function CopyView(): ReactNode {
           {selectedParent !== null && (
             <Note>
               {t('copy.inheritedFrom')}
-              {selectedParent.name} · {t('copy.inheritedHint')}
+              {selectedParent.name}
+              <HintIcon text={t('copy.inheritedHint')} label={t('copy.inheritedFrom')} />
             </Note>
           )}
 
@@ -1224,7 +1243,10 @@ export function CopyView(): ReactNode {
                 </label>
 
                 <label className="field">
-                  <span className="field-label">{t('copy.copyNotes')}</span>
+                  <span className="field-label">
+                    {t('copy.copyNotes')}
+                    <HintIcon text={t('copy.copyNotesHint')} label={t('copy.copyNotes')} inline />
+                  </span>
                   <textarea
                     className="textarea"
                     value={draft.copyNotes}
@@ -1232,9 +1254,6 @@ export function CopyView(): ReactNode {
                     maxLength={MAX_COPY_NOTES_LENGTH}
                     onChange={(event) => patchDraft({ copyNotes: event.target.value })}
                   />
-                  <span className="hint faint" style={{ fontSize: 11 }}>
-                    {t('copy.copyNotesHint')}
-                  </span>
                   <div className="counter">
                     {draft.copyNotes.length} / {MAX_COPY_NOTES_LENGTH}
                   </div>
@@ -1284,12 +1303,8 @@ export function CopyView(): ReactNode {
             onChange={(event) => setVerifyOnlyMode(event.target.checked)}
           />
           <span>{t('copy.verifyOnly')}</span>
+          <HintIcon text={t('copy.verifyOnlyHint')} label={t('copy.verifyOnly')} inline />
         </label>
-        {verifyOnlyMode && (
-          <div className="hint" style={{ marginTop: 6 }}>
-            {t('copy.verifyOnlyHint')}
-          </div>
-        )}
 
         {/*
           代理素材（**本次任务**）。开关与编码/分辨率/规格只对这一次拷贝生效；
@@ -1303,10 +1318,12 @@ export function CopyView(): ReactNode {
           <summary>
             {t('copy.proxyEnabled')} ·{' '}
             {t(!verifyOnlyMode && proxyOn ? 'workbench.enabled' : 'workbench.disabled')}
+            <HintIcon text={t('copy.proxyHint')} label={t('copy.proxyEnabled')} />
+            {verifyOnlyMode && (
+              <HintIcon text={t('workbench.readOnlyProxy')} label={t('copy.verifyOnly')} />
+            )}
           </summary>
-          {verifyOnlyMode ? (
-            <Note>{t('workbench.readOnlyProxy')}</Note>
-          ) : (
+          {!verifyOnlyMode && (
             <Toggle checked={proxyOn} onChange={setProxyOn} label={t('copy.proxyEnabled')} />
           )}
           {!verifyOnlyMode && proxyOn && (
@@ -1355,9 +1372,6 @@ export function CopyView(): ReactNode {
                   onChange={setProxyLutPath}
                 />
               </Field>
-              <div className="hint faint" style={{ fontSize: 11 }}>
-                {t('copy.proxyHint')}
-              </div>
             </>
           )}
         </details>

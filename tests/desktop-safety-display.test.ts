@@ -22,7 +22,7 @@ describe('desktop storage evidence lifecycle', () => {
     const targetsAB = session.begin('source:A,B')
     expect(session.isCurrent(targetsAB, 'source:A,C')).toBe(false)
   })
-  it('focus loss, navigation and failed recheck invalidate prior in-flight evidence', () => {
+  it('navigation and failed recheck invalidate prior in-flight evidence', () => {
     const session = new StorageEvidenceSession()
     const check = session.begin('same-paths')
     session.invalidate()
@@ -43,6 +43,17 @@ describe('desktop storage evidence lifecycle', () => {
     expect(confirmedStoragePreflight(blocked, blocked.fingerprint)).toBe(false)
     expect(confirmedStoragePreflight(null, null)).toBe(false)
     expect(confirmedStoragePreflight(snapshot(), null)).toBe(true)
+  })
+  /*
+   * 2.0.8 曾在窗口失焦时作废整份证据，用户切一次访达回来就得重做扫描与确认，
+   * 表现为"都做完了还是点不动"。证据只应该跟着**输入**失效。
+   * 换盘的安全兜底在主进程（createJob / start 重算 fingerprint），不靠这里。
+   */
+  it('keeps a completed check valid across a focus round-trip when the input did not change', () => {
+    const session = new StorageEvidenceSession()
+    const check = session.begin('source:A|targets:B')
+    expect(session.isCurrent(check, 'source:A|targets:B')).toBe(true)
+    expect(session.isCurrent(check, 'source:A|targets:C')).toBe(false)
   })
 })
 

@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.0.9 — Scans survive navigation, reworked preflight entry, configurable data directories
+
+- Stop discarding the source scan and device-check evidence when the window loses focus. Evidence is invalidated only when an input actually changes: source path, target volume, copy/verify mode or the proxy switch. Swapped volumes are still caught by fingerprint checks when a job is created and started.
+- Move "check current source and targets" into the third step of the source → target → preflight flow bar, and delete the duplicate "recheck targets" action that rescanned the whole source and cleared acknowledged risks. Each target block keeps only a capacity refresh icon.
+- Skip rescanning the source when the interface has already scanned it, taking the check from tens of seconds to about a second.
+- Move always-on explanatory fine print into question-mark hints that open on hover or keyboard focus; safety statements stay available inside the hint.
+- Add configurable local data directories: task database, report archive, logs, HDE workspace and companion identity can each be relocated. Existing data is copied to the new location without overwriting or deleting the old directory, then switched live without a restart. Unavailable locations fall back to the default with a log entry; the database accepts external volumes but rejects network shares.
+- Log rejected job creation with the reason and a request summary, which previously returned an error to the interface without writing anything to disk.
+- Align macOS and Windows display versions to 2.0.9. Android is unchanged in this release and remains the 2.0.8 beta candidate.
+
 ## 2.0.8 — Storage safety and desktop / Android companion (local candidate)
 
 - Identify filesystems, physical-device groups and shared capacity pools before writing; aggregate requirements across targets sharing capacity, including APFS containers. Unknown topology is shown explicitly.

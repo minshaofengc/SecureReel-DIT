@@ -6,11 +6,18 @@
  */
 import { app, BrowserWindow, dialog, powerSaveBlocker, shell } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import { join, isAbsolute } from 'node:path'
 import { DEFAULT_SETTINGS, THEMES, type AppSettings } from '@shared/types'
 import { APP_NAME, APP_VERSION } from '@shared/version'
 import { buildAppPaths } from './paths'
 import { legacyUserDataDirOf, migrateLegacyUserData, type MigrationResult } from './core/data-migration'
+import {
+  DATA_CATEGORIES,
+  createFsProbe,
+  readLocations,
+  resolveLocations
+} from './core/data-locations'
 import { Logger } from './logger'
 import { Store } from './db/store'
 import { FfprobeRunner } from './media/probe'
@@ -50,6 +57,21 @@ let logger: Logger | null = null
 let store: Store | null = null
 
 const paths = buildAppPaths(app.getPath('userData'))
+
+/**
+ * 取路径所在的文件系统类型，只用于拦网络盘。
+ *
+ * 拿不到就返回 null：未知不等于可用，但也不该因为探测失败把用户拦住。
+ * Windows 的 UNC 路径在前面已经被硬拦掉了，这里只补 macOS 的 autofs 等情形。
+ */
+function fsTypeOf(path: string): Promise<string | null> {
+  if (process.platform !== 'darwin') return Promise.resolve(null)
+  return new Promise((resolve) => {
+    execFile('/usr/bin/stat', ['-f', '%T', path], { timeout: 3000 }, (error, stdout) => {
+      resolve(error === null ? stdout.trim() || null : null)
+    })
+  })
+}
 
 /**
  * 启动时的窗口底色（避免白屏闪一下）。
@@ -306,13 +328,35 @@ function createWindow(settings: AppSettings): BrowserWindow {
 async function bootstrap(): Promise<void> {
   await app.whenReady()
 
+  /*
+   * 可配置数据目录：先把配置解析成实际路径，再往下走。
+   *
+   * 不可用的那一类回退到默认并记下原因 —— 绝不因为一块盘没插就打不开软件。
+   * 这里**只改 paths 的字段，不重新赋值**：ReportStore、protocol.handle、
+   * IPC handlers 都持有同一个对象，换对象会让它们继续指向旧路径。
+   */
+  const configuredLocations = await readLocations(paths.userDataDir)
+  const resolvedLocations = await resolveLocations(
+    paths,
+    configuredLocations,
+    createFsProbe({ fsTypeOf })
+  )
+  Object.assign(paths, resolvedLocations.paths)
+  const locationFallbacks = resolvedLocations.fallbacks
+  const hasCustomLocations = DATA_CATEGORIES.some(
+    (category) => configuredLocations[category] !== null
+  )
+
   // 1.x → 2.0 的数据迁移。**必须赶在 Store.open() 之前**：数据库一旦被打开，
   // 再复制就只能拿到一半旧一半新的状态。结果先存着，等 logger 建好再记
   // （日志本身要落在新目录里，而新目录正是这一步建出来的）。
+  // 用户自定义过目录时跳过：那是「搬家」，不是「从 1.x 升级」。
   let migration: MigrationResult = { status: 'skipped', reason: '未执行', copied: [] }
   try {
     await ensureDir(paths.userDataDir)
-    migration = await migrateLegacyUserData(paths.userDataDir, legacyUserDataDirOf(paths.userDataDir))
+    if (!hasCustomLocations) {
+      migration = await migrateLegacyUserData(paths.userDataDir, legacyUserDataDirOf(paths.userDataDir))
+    }
   } catch (error) {
     migration = {
       status: 'failed',
@@ -325,6 +369,13 @@ async function bootstrap(): Promise<void> {
 
   logger = new Logger({ dir: paths.logsDir, mirrorToConsole: !app.isPackaged })
   logger.info('app', `${APP_NAME} 启动，版本 ${APP_VERSION}`)
+
+  for (const fallback of locationFallbacks) {
+    logger.warn(
+      'app',
+      `${fallback.category} 目录不可用（${fallback.reason}），本次已回退到默认位置：${fallback.used}`
+    )
+  }
 
   if (migration.status === 'migrated') logger.info('app', migration.reason)
   if (migration.status === 'failed') {
@@ -391,7 +442,7 @@ async function bootstrap(): Promise<void> {
   // Local-network companion is opt-in; no LAN listener exists until the user enables it.
   try {
     const companion = await MobileCompanion.open({
-      directory: join(paths.userDataDir, 'mobile-companion'),
+      directory: paths.companionDir,
       adapter: desktopAdapter(jobManager, store, paths.reportsDir)
     })
     registerCompanionIpc(companion, () => mainWindow)
@@ -414,7 +465,8 @@ async function bootstrap(): Promise<void> {
       settings = saved
       return saved
     },
-    getMainWindow: () => mainWindow
+    getMainWindow: () => mainWindow,
+    fsTypeOf
   })
 
   mainWindow = createWindow(settings)

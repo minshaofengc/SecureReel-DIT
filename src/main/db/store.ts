@@ -115,7 +115,7 @@ export const LAST_JOB_DRAFT_KEY = 'lastJobDraft'
 export class Store {
   private quarantine: QuarantineRecord | null = null
 
-  private constructor(private readonly db: SqlDatabase) {}
+  private constructor(private db: SqlDatabase) {}
 
   static async open(path: string): Promise<Store> {
     const db = await openDatabase(path)
@@ -183,6 +183,28 @@ export class Store {
 
   close(): void {
     this.db.close()
+  }
+
+  /**
+   * 数据目录热切换：换到另一个数据库文件，保留同一个 Store 实例。
+   *
+   * 顺序是刻意的：**先打开新库，成功了才关旧库**。新库打不开（盘没插、
+   * 权限不足）时旧库仍然可用，调用方可以直接回退，用户不会看到
+   * "数据库关了但新的没开"的中间态。
+   *
+   * 不重建 Store 是因为 `handlers` / `JobManager` / 报告库都持有它，
+   * 换实例等于把那些引用全部变成孤儿。
+   */
+  async rebind(path: string): Promise<void> {
+    const next = await Store.open(path)
+    const previous = this.db
+    this.db = next.db
+    this.quarantine = next.quarantine
+    try {
+      previous.close()
+    } catch {
+      /* 旧句柄关不掉不阻塞切换，进程退出时会释放 */
+    }
   }
 
   /**

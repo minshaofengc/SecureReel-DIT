@@ -8,8 +8,8 @@
  */
 import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { randomBytes } from 'node:crypto'
-import { basename, join } from 'node:path'
-import type { AppInfo, EncodersInfo } from '@shared/ipc'
+import { basename, dirname, join } from 'node:path'
+import type { AppInfo, DataLocationCategory, DataLocationStatus, EncodersInfo } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type {
   AppSettings,
@@ -42,7 +42,9 @@ import {
   kvSetSchema,
   tailSchema,
   titleBarOverlaySchema,
-  updateParentProjectSchema
+  updateParentProjectSchema,
+  dataCategorySchema,
+  dataRelocateSchema
 } from '@shared/schemas'
 import type { Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
@@ -58,6 +60,8 @@ import { ejectVolume, listVolumeEntries } from '@main/volumes'
 import { TITLE_BAR_HEIGHT } from '@main/platform'
 import { usageForTargets } from '@main/core/source-scan'
 import { createDiagnosticsZip } from '@main/diagnostics'
+import { DATA_CATEGORIES, readLocations } from '@main/core/data-locations'
+import { relocateCategory, resetCategory } from '@main/data-relocate-service'
 
 export interface Services {
   store: Store
@@ -70,6 +74,8 @@ export interface Services {
   getSettings: () => AppSettings
   saveSettings: (settings: AppSettings) => AppSettings
   getMainWindow: () => BrowserWindow | null
+  /** 目标路径所在文件系统类型；拿不到返回 null（未知不拦） */
+  fsTypeOf: (path: string) => Promise<string | null>
 }
 
 type Handler<T> = (payload: unknown) => Promise<T> | T
@@ -292,6 +298,74 @@ export function registerIpcHandlers(services: Services): void {
     return result.filePaths[0] ?? null
   })
 
+  /* ---------------- 数据目录 ---------------- */
+
+  const dataLocationStatus = async (): Promise<DataLocationStatus[]> => {
+    const configured = await readLocations(paths.userDataDir)
+    return DATA_CATEGORIES.map((category) => {
+      const used =
+        category === 'db'
+          ? dirname(paths.dbFile)
+          : category === 'reports'
+            ? paths.reportsDir
+            : category === 'logs'
+              ? paths.logsDir
+              : category === 'hde'
+                ? paths.hdeWorkDir
+                : paths.companionDir
+      const target = configured[category]
+      const fallback = target !== null && target !== used
+      return {
+        category,
+        configured: target,
+        used,
+        fallback,
+        reason: fallback ? '目录不可用，已回退到默认位置' : null
+      }
+    })
+  }
+
+  const relocateDeps = (): Parameters<typeof relocateCategory>[0] => ({
+    paths,
+    store,
+    logger,
+    userDataDir: paths.userDataDir,
+    hasActiveWork: () => jobManager.hasActiveWork,
+    fsTypeOf: services.fsTypeOf
+  })
+
+  register(IPC.dataLocations, () => dataLocationStatus())
+
+  register<string | null>(IPC.dataPick, async (payload) => {
+    parseOrThrow<DataLocationCategory>(dataCategorySchema, payload)
+    const window = services.getMainWindow()
+    const options = {
+      title: '选择数据目录',
+      properties: ['openDirectory', 'createDirectory'] as const
+    }
+    const result =
+      window === null
+        ? await dialog.showOpenDialog({ ...options, properties: [...options.properties] })
+        : await dialog.showOpenDialog(window, { ...options, properties: [...options.properties] })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0] ?? null
+  })
+
+  register(IPC.dataRelocate, async (payload) => {
+    const request = parseOrThrow<{ category: DataLocationCategory; path: string }>(
+      dataRelocateSchema,
+      payload
+    )
+    await relocateCategory(relocateDeps(), request.category, request.path)
+    return dataLocationStatus()
+  })
+
+  register(IPC.dataReset, async (payload) => {
+    const category = parseOrThrow<DataLocationCategory>(dataCategorySchema, payload)
+    await resetCategory(relocateDeps(), category)
+    return dataLocationStatus()
+  })
+
   /* ---------------- 任务 ---------------- */
 
   register(IPC.jobPreflight, async (payload) =>
@@ -300,7 +374,26 @@ export function registerIpcHandlers(services: Services): void {
 
   register(IPC.jobCreate, async (payload) => {
     const request = parseOrThrow<Parameters<JobManager['createJob']>[0]>(createJobSchema, payload)
-    return jobManager.createJob(request)
+    /*
+     * 创建阶段的拒绝必须留痕。
+     *
+     * 这条链路原来只把错误返回给界面、一个字节都不写日志：用户报"拷贝不了"，
+     * 日志里只有启动记录、没有任何任务创建，事后完全无法判断是被存储门禁、
+     * 容量还是路径重叠挡住的。只记录、不改返回值，也不参与任何判定。
+     */
+    try {
+      return await jobManager.createJob(request)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn('job', `创建任务被拒绝：${message}`, {
+        sourcePath: request.sourcePath,
+        targets: request.targets.map((target) => target.path),
+        mode: request.mode,
+        proxyEnabled: request.proxyEnabled ?? null,
+        hasConfirmation: request.preflightConfirmation !== undefined
+      })
+      throw error
+    }
   })
 
   register(IPC.jobList, () => store.listJobs())

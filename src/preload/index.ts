@@ -30,6 +30,12 @@ const api: SecureReelApi = {
   media: {
     encoders: () => invoke(IPC.mediaEncoders)
   },
+  data: {
+    locations: () => invoke(IPC.dataLocations),
+    pick: (category) => invoke(IPC.dataPick, category),
+    relocate: (request) => invoke(IPC.dataRelocate, request),
+    reset: (category) => invoke(IPC.dataReset, category)
+  },
   settings: {
     get: () => invoke(IPC.settingsGet),
     update: (patch) => invoke(IPC.settingsUpdate, patch)
