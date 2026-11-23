@@ -55,7 +55,7 @@ async function setup() {
     logger,
     paths,
     reportStore: new ReportStore(paths, logger),
-    probeRunner: { setFrameOutputDir: () => undefined, setStillFrameOutputDir: () => undefined, setStillFrameCount: () => undefined } as never,
+    probeRunner: { setFrameOutputDir: () => undefined, setStillFrameOutputDir: () => undefined, setStillFrameCount: () => undefined, setColorRestore: () => undefined } as never,
     hde: {} as never,
     getSettings: () => ({ ...DEFAULT_SETTINGS, generateReport: false }),
     emit: () => undefined,

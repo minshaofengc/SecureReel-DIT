@@ -144,6 +144,7 @@ export const zhCN = {
   'p0.dataUnknown': "数据量未扫描",
   'p0.copyVerify': "写后校验",
   'p0.independentReread': "独立重读",
+  'p0.independentRereadAlways': "独立重读校验 · 始终开启",
   'p0.ackInTargets': "请在目标区确认风险",
   'p0.monitorEmptyEyebrow': "OPERATION MONITOR",
   'p0.monitorEmptyTitle': "任务监控就绪",
@@ -259,6 +260,22 @@ export const zhCN = {
 
   'app.name': 'SecureReel DIT',
   'app.tagline': '素材拷贝 · 哈希校验 · 报告',
+  'update.available': '新版本 v{version} 可用（当前 v{current}）',
+  'update.open': '查看更新',
+  'update.dismiss': '知道了',
+  'update.openFailed': '打不开更新页面，请手动访问 GitHub 仓库的 Releases。',
+  'update.about': '关于与更新',
+  'update.current': '当前版本',
+  'update.check': '立即检查',
+  'update.checking': '正在检查…',
+  'update.upToDate': '已是最新版本。',
+  'update.found': '发现新版本 v{version}。',
+  'update.failed': '检查失败：网络不可用或无法访问更新服务器。稍后可以再试。',
+  'update.autoCheck': '自动检查新版本',
+  'update.autoCheckHint':
+    '每 7 天检查一次，有新版本时在顶部提示一次。这是本软件唯一主动发起的网络请求，只读取版本号，不上传任何本机信息。关掉后完全离线。',
+  'update.lastChecked': '上次检查：{time}',
+  'update.neverChecked': '尚未检查过。',
   'app.initFailed': '初始化失败：{reason}',
   'app.databaseQuarantine':
     '检测到旧版本的任务数据库，结构与当前版本不兼容，已重新建立新的任务库。旧数据没有被删除，已备份到 {backup}。',
@@ -698,6 +715,28 @@ export const zhCN = {
   'settings.frameConcurrency': '并行提取数',
   'settings.frameConcurrencyHint': '同时有几个进程在读源盘取帧。机械硬盘上调低更稳。',
 
+  'settings.frameRestore': '首帧颜色还原',
+  'settings.frameRestoreHint':
+    'Log 素材提取出来是灰的。开启后可以按素材元数据自动识别 Log 曲线并还原到 Rec.709，或套用你自己的 .cube LUT。只影响报告里的缩略图，不改变目标盘上的原始素材。',
+  'settings.frameRestore.off': '不还原（保留原始 Log 画面）',
+  'settings.frameRestore.auto': '自动识别并还原到 Rec.709',
+  'settings.frameRestore.lut': '使用我自己的 LUT（.cube）',
+  'settings.frameRestoreLut': 'LUT 文件',
+  'settings.frameRestoreLutHint': '一个 .cube 三维 LUT。会应用到报告里所有解码出来的首帧。',
+  'settings.frameRestoreLutMissing': '还没有选择 LUT 文件，当前不会做还原。',
+  'settings.frameRestoreFallback': '识别不出时',
+  'settings.frameRestoreFallbackHint':
+    '容器元数据经常只写 bt709，自动识别会认不出 Log。整批都是同一条曲线时，在这里直接指定更可靠。',
+  'settings.frameRestoreFallbackNone': '不还原（推荐）',
+  'settings.frameRestoreNotice':
+    '内嵌预览图（R3D / BRAW）出厂已是 709，不会被二次还原。自动还原使用公开的标准曲线公式，用于预览参考，不作为调色依据。',
+
+  'logProfile.slog3': 'Sony S-Log3 / S-Gamut3.Cine',
+  'logProfile.vlog': 'Panasonic V-Log / V-Gamut',
+  'logProfile.logc3': 'ARRI LogC3 / Wide Gamut 3',
+  'logProfile.clog3': 'Canon C-Log3 / Cinema Gamut',
+  'logProfile.log3g10': 'RED Log3G10 / REDWideGamutRGB',
+
   'queue.phase.copying': '正在拷贝与校验',
   'queue.phase.analyzing': '正在解析素材并提取首帧',
   'queue.phase.finalizing': '正在检查并完成收尾',
@@ -893,6 +932,7 @@ export const en: Record<MessageKey, string> = {
   'p0.dataUnknown': "Size not scanned",
   'p0.copyVerify': "Read-back verification",
   'p0.independentReread': "Independent reread",
+  'p0.independentRereadAlways': "Independent reread · always on",
   'p0.ackInTargets': "Confirm the risk in the destination section",
   'p0.monitorEmptyEyebrow': "OPERATION MONITOR",
   'p0.monitorEmptyTitle': "Ready to monitor",
@@ -1011,6 +1051,22 @@ export const en: Record<MessageKey, string> = {
 
   'app.name': 'SecureReel DIT',
   'app.tagline': 'Offload · Verify · Report',
+  'update.available': 'Version {version} is available (current {current})',
+  'update.open': 'View update',
+  'update.dismiss': 'Dismiss',
+  'update.openFailed': 'Could not open the release page. Please visit the GitHub Releases page manually.',
+  'update.about': 'About & updates',
+  'update.current': 'Current version',
+  'update.check': 'Check now',
+  'update.checking': 'Checking…',
+  'update.upToDate': 'You are on the latest version.',
+  'update.found': 'Version {version} is available.',
+  'update.failed': 'Check failed: no network or the update server is unreachable. Try again later.',
+  'update.autoCheck': 'Check for new versions automatically',
+  'update.autoCheckHint':
+    'Checks once every 7 days and shows a single banner when a new version exists. This is the only outbound request the app makes: it reads a version number and never uploads anything about this machine. Turn it off for fully offline use.',
+  'update.lastChecked': 'Last checked: {time}',
+  'update.neverChecked': 'Not checked yet.',
   'app.initFailed': 'Initialization failed: {reason}',
   'app.databaseQuarantine':
     'An older job database was found and is not compatible with this version, so a new one was created. Your old data was not deleted — it was backed up to {backup}.',
@@ -1478,6 +1534,29 @@ export const en: Record<MessageKey, string> = {
   'settings.frameConcurrency': 'Parallel extractions',
   'settings.frameConcurrencyHint':
     'How many processes read the source at once. Lower is steadier on spinning disks.',
+
+  'settings.frameRestore': 'First-frame colour restoration',
+  'settings.frameRestoreHint':
+    'Log footage comes out flat and grey. When enabled, the app either detects the Log curve from clip metadata and converts it to Rec.709, or applies your own .cube LUT. This only affects the thumbnails in the report; the originals on the destination disks are never modified.',
+  'settings.frameRestore.off': 'Off (keep the original Log image)',
+  'settings.frameRestore.auto': 'Detect automatically and convert to Rec.709',
+  'settings.frameRestore.lut': 'Use my own LUT (.cube)',
+  'settings.frameRestoreLut': 'LUT file',
+  'settings.frameRestoreLutHint':
+    'A .cube 3D LUT applied to every decoded first frame in the report.',
+  'settings.frameRestoreLutMissing': 'No LUT selected yet — nothing will be restored.',
+  'settings.frameRestoreFallback': 'When detection fails',
+  'settings.frameRestoreFallbackHint':
+    'Container metadata often only says bt709, so Log cannot always be detected. If a whole card uses one curve, pick it here.',
+  'settings.frameRestoreFallbackNone': 'Do not restore (recommended)',
+  'settings.frameRestoreNotice':
+    'Embedded previews (R3D / BRAW) are already Rec.709 and are never restored twice. Automatic restoration uses published standard curve formulas — it is a preview aid, not a colour-grading reference.',
+
+  'logProfile.slog3': 'Sony S-Log3 / S-Gamut3.Cine',
+  'logProfile.vlog': 'Panasonic V-Log / V-Gamut',
+  'logProfile.logc3': 'ARRI LogC3 / Wide Gamut 3',
+  'logProfile.clog3': 'Canon C-Log3 / Cinema Gamut',
+  'logProfile.log3g10': 'RED Log3G10 / REDWideGamutRGB',
 
   'queue.phase.copying': 'Copying and verifying',
   'queue.phase.analyzing': 'Analysing clips and extracting first frames',

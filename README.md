@@ -1,6 +1,6 @@
 # SecureReel DIT
 
-[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.9 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.9)
+[English](#english) · [简体中文](#简体中文) · [Official website / 官网](https://securereel.pages.dev/) · [Download 2.0.10 / 下载](https://github.com/minshaofengc/SecureReel-DIT/releases/tag/v2.0.10)
 
 ---
 
@@ -295,6 +295,14 @@ Shanfly — [minshaofengc@gmail.com](mailto:minshaofengc@gmail.com)
 
 应用代码采用 [GPL-3.0-only](LICENSE)。本项目不随包分发任何字体；随包分发的 FFmpeg/ffprobe 按 LGPL 授权（macOS 为 LGPL-2.1，Windows 为 LGPL-3.0），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+
+### 2.0.10 更新检查、强制重读校验与首帧颜色还原
+
+启动后自动检查新版本，每 7 天一次，发现新版本时在窗口顶部提示一条横幅；同一版本 7 天内只提醒一次。检查只读取版本号，优先读官网清单、失败再试 GitHub Releases，不上传任何本机信息；设置页可完全关闭联网，也可以「立即检查」跳过 7 天窗口。
+
+写入后独立重读校验改为**无条件开启**：拷贝页不再提供开关，主进程也忽略请求里的 `verifyAfterWrite`。目标盘上出现完整文件名的素材，一定是写完又被独立读回来、与源侧逐字节比对通过的。
+
+报告首帧可选颜色还原：套用自选的 `.cube` 3D LUT，或按元数据与文件名识别 Log 曲线（S-Log3 / V-Log / LogC3 / C-Log3 / Log3G10），用公开标准公式还原到 Rec.709。生成的 LUT 缓存在 `color-luts/`；R3D / BRAW 的内嵌预览出厂已是 709，不会被二次还原。报告里逐张标注画面是怎么来的。还原只影响报告缩略图，目标盘上的原始素材不做任何改动。
 
 ### 2.0.9 拷贝流程重做与可改数据目录
 

@@ -631,6 +631,14 @@ export function CopyView(): ReactNode {
             mode: verifyOnlyMode ? 'verify' : 'copy',
             hashAlgorithm: settings.hashAlgorithm,
             manifestFormat: settings.manifestFormat,
+            /*
+             * 写入后独立重读校验**恒为开启**，界面上没有开关。
+             *
+             * 它是这个工具的存在理由：目标盘上出现完整文件名的素材，
+             * 必须是"写完又被独立读回来、和源侧逐字节比对通过"的。
+             * 允许关掉等于允许交付一份没验证过的副本，那不是选项。
+             * 主进程侧同样强制 true，不信任这里传什么。
+             */
             verifyAfterWrite: true,
             preflightConfirmation: storage.confirmation,
             // 代理是**每任务**的：把这次选的三个值带进任务记录。
@@ -1036,7 +1044,7 @@ export function CopyView(): ReactNode {
         <div className="preflight__facts">
           <span>{t('copy.hashAlgorithm')}: <b>{HASH_ALGORITHM_LABELS[settings.hashAlgorithm]}</b></span>
           <span>{t('copy.manifestFormat')}: <b>{settings.manifestFormat === 'asc-mhl-2.0' ? 'ASC MHL 2.0' : settings.manifestFormat === 'mhl-v1' ? 'MHL v1' : settings.manifestFormat.toUpperCase()}</b></span>
-          <span>{verifyOnlyMode ? t('p0.verificationMode') : t('p0.copyVerify')}: <b>{verifyOnlyMode ? t('p0.verifyOnlyNoWrite') : t('p0.independentReread')}</b></span>
+          <span>{verifyOnlyMode ? t('p0.verificationMode') : t('p0.copyVerify')}: <b>{verifyOnlyMode ? t('p0.verifyOnlyNoWrite') : t('p0.independentRereadAlways')}</b></span>
           <span>{t('copy.proxyEnabled')}: <b>{verifyOnlyMode ? t('workbench.disabled') : (proxyOn ? t('workbench.enabled') : t('workbench.disabled'))}</b></span>
         </div>
         {targets.length > 0 && (

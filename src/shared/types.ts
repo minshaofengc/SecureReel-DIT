@@ -345,6 +345,13 @@ export interface MediaProbe {
   firstFrame: string | null
   lastFrame: string | null
   /**
+   * 首帧做过哪种颜色还原；`null` = 未还原。
+   *
+   * 只有**真正解码出来的**帧才会被还原：R3D / BRAW 走的是摄影机写在文件里的
+   * 内嵌预览图，那些图出厂就已经是 709，再套一次 LUT 会二次还原、颜色发假。
+   */
+  frameRestore: FrameRestoreInfo | null
+  /**
    * 候选静帧文件名（位于报告的 frames/ 目录），每条 3–4 张。
    *
    * 与 firstFrame / lastFrame 的分工：那两张只是"这条素材长什么样"的锚点，
@@ -815,6 +822,39 @@ export type ThemeMode = (typeof THEME_MODES)[number]
 export const LANGUAGES = ['zh-CN', 'en'] as const
 export type Language = (typeof LANGUAGES)[number]
 
+/**
+ * 报告首帧的颜色还原方式。
+ *
+ * - `off`  ：保持原始像素。Log 素材看起来是灰的，但那是"卡里真实的画面"。
+ * - `auto` ：按元数据 / 命名 / 格式族自动识别 Log 曲线，还原到 Rec.709。
+ * - `lut`  ：应用用户自己选的 3D LUT（`.cube`）。
+ */
+export const FRAME_RESTORE_MODES = ['off', 'auto', 'lut'] as const
+export type FrameRestoreMode = (typeof FRAME_RESTORE_MODES)[number]
+
+/**
+ * 支持自动还原的 Log 曲线。
+ *
+ * 只收**有公开标准公式、且本机可以验证往返**的五种。识别不出来就不还原 ——
+ * 用错曲线比不还原更糟：画面看着"正常"了，但颜色是假的，
+ * 而报告首帧的用途恰恰是判断"卡有没有读错"。
+ *
+ * Blackmagic Film Gen 5 刻意**没有**收进来：官方没有公开可直接引用的
+ * 编码公式，社区流传的版本彼此对不上。BRAW 本身走内嵌预览、不参与还原，
+ * 收一条猜的曲线只会制造"看起来很专业但其实是错的"输出。
+ */
+export const LOG_PROFILES = ['slog3', 'vlog', 'logc3', 'clog3', 'log3g10'] as const
+export type LogProfileId = (typeof LOG_PROFILES)[number]
+
+/** 一条素材的首帧颜色还原记录。 */
+export interface FrameRestoreInfo {
+  mode: 'auto' | 'lut'
+  /** 自动模式下实际使用的曲线；`mode === 'lut'` 时为 null */
+  profile: LogProfileId | null
+  /** 用户 LUT 的文件名（报告里只写文件名，不暴露本机绝对路径） */
+  lutName: string | null
+}
+
 export interface AppSettings {
   reportTheme: ReportTheme
   language: Language
@@ -822,7 +862,13 @@ export interface AppSettings {
   themeMode: ThemeMode
   hashAlgorithm: HashAlgorithm
   manifestFormat: ManifestFormat
-  verifyAfterWrite: boolean
+  /**
+   * 自动检查新版本。
+   *
+   * 默认开启，但**可以关**：这是本项目唯一主动发起的网络请求，
+   * 现场离线作业的人有权让它完全不联网。关掉后连手动检查都不发请求。
+   */
+  autoCheckUpdates: boolean
   /** 同时写入的目标数量上限（1–8） */
   maxParallelTargets: number
   /**
@@ -856,6 +902,22 @@ export interface AppSettings {
   maxFrameExtractions: number
   /** 并行提取首帧的进程数（1–8） */
   frameConcurrency: number
+  /**
+   * 报告首帧是否做颜色还原。
+   *
+   * 默认 `off`：报告首帧的第一职责是"证明这条素材能读出来"，
+   * 保持原始像素是最不容易骗人的做法。想让画面好看再自己开。
+   */
+  frameRestoreMode: FrameRestoreMode
+  /** `frameRestoreMode === 'lut'` 时使用的 `.cube` 绝对路径 */
+  frameRestoreLutPath: string | null
+  /**
+   * 自动模式识别不出 Log 曲线时的兜底。
+   *
+   * `null` = 不还原（默认）。现场常常一整批都是同一条 Log，
+   * 而容器元数据经常只写 `bt709` —— 让用户显式指定比猜可靠。
+   */
+  frameRestoreFallback: LogProfileId | null
   /**
    * 任务开始 / 结束 / 出错时给一声提示音。
    *
@@ -999,7 +1061,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeMode: 'dark',
   hashAlgorithm: 'xxhash64',
   manifestFormat: 'asc-mhl-2.0',
-  verifyAfterWrite: true,
+  autoCheckUpdates: true,
   maxParallelTargets: 4,
   performanceMode: 'standard',
   resumePartialFiles: true,
@@ -1010,6 +1072,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   extractFrames: true,
   maxFrameExtractions: 0,
   frameConcurrency: 4,
+  frameRestoreMode: 'off',
+  frameRestoreLutPath: null,
+  frameRestoreFallback: null,
   soundEnabled: true,
   soundVolume: 0.6,
   generateReport: true,

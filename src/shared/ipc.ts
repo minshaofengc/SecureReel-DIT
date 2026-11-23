@@ -1,4 +1,5 @@
 import type { TargetPreflightResult, PreflightConfirmation } from './storage-safety'
+import type { UpdateCheckResult } from './update'
 /**
  * IPC 通道常量与请求/响应形状。
  *
@@ -29,6 +30,10 @@ import type {
 
 export const IPC = {
   appInfo: 'app:info',
+  /** 检查新版本（7 天节流；force 跳过节流） */
+  updateCheck: 'update:check',
+  /** 打开发布页（地址由主进程从上次结果里取，不接受渲染层传 URL） */
+  updateOpenRelease: 'update:open-release',
   companionStatus: 'companion:status',
   companionStart: 'companion:start',
   companionStop: 'companion:stop',
@@ -245,6 +250,17 @@ export interface SecureReelApi {
   }
   app: {
     info(): Promise<IpcResult<AppInfo>>
+  }
+  updates: {
+    /**
+     * 检查新版本。
+     *
+     * `force=true` 跳过 7 天节流（设置页的「立即检查」）；
+     * 启动时的自动检查传 false。检查失败不会抛错，结果里的 `error` 说明原因。
+     */
+    check(force?: boolean): Promise<IpcResult<UpdateCheckResult>>
+    /** 打开发布页；没有可用的发布地址时返回 false */
+    openRelease(): Promise<IpcResult<boolean>>
   }
   media: {
     /** 本机可用的代理编码器；首次调用会跑一遍试编码探测（结果会缓存） */

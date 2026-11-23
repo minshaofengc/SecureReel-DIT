@@ -39,7 +39,8 @@ it('real HTTPS creates once through Store/JobManager, verifies read-only and ser
     probeRunner: {
       setFrameOutputDir: () => undefined,
       setStillFrameOutputDir: () => undefined,
-      setStillFrameCount: () => undefined
+      setStillFrameCount: () => undefined,
+      setColorRestore: () => undefined
     } as never,
     hde: {} as never,
     getSettings: () => ({ ...DEFAULT_SETTINGS, generateReport: false, extractFrames: false }),

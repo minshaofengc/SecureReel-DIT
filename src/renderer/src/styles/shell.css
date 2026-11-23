@@ -300,3 +300,48 @@
     transition: none;
   }
 }
+
+/* ---------------- 新版本横幅 ---------------- */
+
+/*
+ * 一条贴顶的细横幅，不是模态。
+ *
+ * 现场正在拷卡时被弹窗挡住界面是最招人烦的事，所以这里只用一条 36px 的横带，
+ * 内容区自己往下让 —— 横幅缺席时（绝大多数时候）它不占任何高度。
+ */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  background: var(--accent-soft);
+  border-bottom: var(--border-w) solid var(--line-soft);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.update-banner__led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--accent-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 16%, transparent);
+}
+
+.update-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}

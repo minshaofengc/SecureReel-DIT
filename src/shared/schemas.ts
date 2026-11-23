@@ -8,8 +8,10 @@ import { z } from 'zod'
 import {
   HASH_ALGORITHMS,
   FILE_STATES,
+  FRAME_RESTORE_MODES,
   JOB_MODES,
   LANGUAGES,
+  LOG_PROFILES,
   MANIFEST_FORMATS,
   MAX_COPY_NOTES_LENGTH,
   MAX_CREW_ROWS,
@@ -149,6 +151,12 @@ export const createJobSchema = z.object({
   mode: z.enum(JOB_MODES).optional(),
   hashAlgorithm: z.enum(HASH_ALGORITHMS).optional(),
   manifestFormat: z.enum(MANIFEST_FORMATS).optional(),
+  /**
+   * 已废弃：写入后独立重读校验**恒为开启**，主进程忽略这里的值。
+   *
+   * 字段留着只为兼容尚未升级的旧版移动端 —— 它还在传 true。
+   * 新版界面不传，也没有任何开关可以关掉校验。
+   */
   verifyAfterWrite: z.boolean().optional(),
   /** 本次任务是否出代理；缺省 = 用全局设置 */
   proxyEnabled: z.boolean().optional(),
@@ -211,7 +219,7 @@ export const settingsPatchSchema = z
     themeMode: z.enum(THEME_MODES),
     hashAlgorithm: z.enum(HASH_ALGORITHMS),
     manifestFormat: z.enum(MANIFEST_FORMATS),
-    verifyAfterWrite: z.boolean(),
+    autoCheckUpdates: z.boolean(),
     maxParallelTargets: z.number().int().min(1).max(8),
     performanceMode: z.enum(PERFORMANCE_MODES),
     resumePartialFiles: z.boolean(),
@@ -223,6 +231,9 @@ export const settingsPatchSchema = z
     /** 0 表示不限制；上限 100000 只是防止界面填入荒谬值 */
     maxFrameExtractions: z.number().int().min(0).max(100_000),
     frameConcurrency: z.number().int().min(1).max(8),
+    frameRestoreMode: z.enum(FRAME_RESTORE_MODES),
+    frameRestoreLutPath: z.union([absolutePathSchema, z.null()]),
+    frameRestoreFallback: z.union([z.enum(LOG_PROFILES), z.null()]),
     soundEnabled: z.boolean(),
     soundVolume: z.number().min(0).max(1),
     generateReport: z.boolean(),
@@ -280,6 +291,16 @@ export const kvSetSchema = z.object({
     .max(64)
     .regex(/^[a-zA-Z0-9._-]+$/),
   value: z.string().max(200)
+})
+
+/**
+ * 检查更新。
+ *
+ * `force=true` 是设置页的「立即检查」，跳过 7 天节流；
+ * 启动时的自动检查传 false（或不传）。
+ */
+export const updateCheckSchema = z.object({
+  force: z.boolean().optional()
 })
 
 export const reportRequestSchema = z.object({

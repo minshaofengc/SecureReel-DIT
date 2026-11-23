@@ -19,6 +19,13 @@ export interface AppPaths {
   dbFile: string
   /** 局域网协作身份与状态 */
   companionDir: string
+  /**
+   * 自动生成的首帧还原 LUT 缓存。
+   *
+   * 这是**可再生的缓存**，不是用户数据：删掉只会在下次任务时重新生成，
+   * 所以它不参与「数据目录」那套可配置/可迁移机制。
+   */
+  colorLutsDir: string
 }
 
 export function buildAppPaths(userDataDir: string): AppPaths {
@@ -28,6 +35,7 @@ export function buildAppPaths(userDataDir: string): AppPaths {
     reportsDir: join(userDataDir, 'reports'),
     hdeWorkDir: join(userDataDir, 'hde'),
     dbFile: join(userDataDir, 'securereel.sqlite'),
-    companionDir: join(userDataDir, 'mobile-companion')
+    companionDir: join(userDataDir, 'mobile-companion'),
+    colorLutsDir: join(userDataDir, 'color-luts')
   }
 }

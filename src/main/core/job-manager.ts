@@ -45,7 +45,8 @@ import { ejectVolume, scheduleShutdown } from '@main/volumes'
 import { CopyEngine } from './copy-engine'
 import { PauseGate } from './concurrency'
 import { inspectSource, scanSource, usageForTargets } from './source-scan'
-import type { FfprobeRunner } from '@main/media/probe'
+import type { FfprobeRunner, FrameRestoreOptions } from '@main/media/probe'
+import { looksLikeCube } from '@main/media/color-restore'
 import type { HdeAdapter } from '@main/adapters/hde'
 import type { ReportStore } from '@main/reports/report-store'
 import { renderHtmlToPdf } from '@main/reports/pdf'
@@ -409,9 +410,16 @@ export class JobManager {
       targets,
       hashAlgorithm: request.hashAlgorithm ?? settings.hashAlgorithm,
       manifestFormat: request.manifestFormat ?? settings.manifestFormat,
+      /*
+       * 恒为 true，**不读 request.verifyAfterWrite**。
+       *
+       * 2026-11 起写入后独立重读校验是硬约束：界面上没有开关，
+       * 请求里传 false 也不生效（字段保留只为兼容旧版移动端）。
+       * 引擎本来就不读这个值 —— 它永远校验 —— 这里存 true 是为了
+       * 让任务记录如实反映"这个任务确实是带着校验跑的"。
+       */
       verifyAfterWrite: true,
-      // 代理设置：**每任务**（拷贝页可选），缺省回落到全局设置 ——
-      // 与 verifyAfterWrite 同一套"设置给默认、任务可覆盖"的模式。
+      // 代理设置：**每任务**（拷贝页可选），缺省回落到全局设置
       proxyEnabled: !verifyOnly && (request.proxyEnabled ?? settings.proxyEnabled),
       proxyResolution: request.proxyResolution ?? settings.proxyResolution,
       proxyCodec: request.proxyCodec ?? settings.proxyCodec,
@@ -520,6 +528,33 @@ export class JobManager {
     return walk.files.map((file) => ({ relPath: file.relPath, sizeBytes: file.sizeBytes }))
   }
 
+  /**
+   * 把设置翻译成 probe 用的还原参数。
+   *
+   * 用户 LUT 在这里**预检一次**：选错文件（选成压缩包、或者路径已经失效）时
+   * 直接关掉还原，而不是让 ffmpeg 在每条素材上都失败一次 ——
+   * 那会连首帧都取不到，比"不还原"糟得多。
+   */
+  private async resolveColorRestore(settings: AppSettings): Promise<FrameRestoreOptions | null> {
+    if (settings.frameRestoreMode === 'off') return null
+    if (settings.frameRestoreMode === 'lut') {
+      const lut = settings.frameRestoreLutPath
+      if (lut === null || lut.trim() === '' || !(await looksLikeCube(lut))) {
+        this.deps.logger.warn(
+          'media',
+          '首帧颜色还原已跳过：指定的 LUT 不存在或不是有效的 .cube 文件。'
+        )
+        return null
+      }
+    }
+    return {
+      mode: settings.frameRestoreMode,
+      lutPath: settings.frameRestoreLutPath,
+      fallback: settings.frameRestoreFallback,
+      cacheDir: this.deps.paths.colorLutsDir
+    }
+  }
+
   /* ---------------------------------------------------------------- *
    * 运行
    * ---------------------------------------------------------------- */
@@ -550,6 +585,8 @@ export class JobManager {
       // 候选静帧与首尾帧同目录（报告 frames/），按设置决定每条出几张
       probeRunner.setStillFrameOutputDir(frameWorkDir)
       probeRunner.setStillFrameCount(settings.stillFrameCount)
+      // 首帧颜色还原：整批素材共用一套参数，任务开始时设一次
+      probeRunner.setColorRestore(await this.resolveColorRestore(settings))
 
       const engine = new CopyEngine({
         job,

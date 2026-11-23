@@ -13,6 +13,7 @@ import type {
   CopyJobFile,
   FrameSource,
   JobState,
+  LogProfileId,
   ProjectInfo,
   ReportSummary,
   ReportTheme,
@@ -20,6 +21,15 @@ import type {
 } from '@shared/types'
 import { clockDuration, humanBytes, humanDuration, percent, reportTimestamp } from '@shared/format'
 import { escapeXml } from './manifests'
+
+/** 自动还原用的曲线名，写进报告的图注。 */
+const LOG_PROFILE_LABELS: Record<LogProfileId, string> = {
+  slog3: 'Sony S-Log3',
+  vlog: 'Panasonic V-Log',
+  logc3: 'ARRI LogC3',
+  clog3: 'Canon C-Log3',
+  log3g10: 'RED Log3G10'
+}
 
 /** 任务状态的中文说明，写进报告正文。 */
 const JOB_STATE_TEXT: Record<JobState, string> = {
@@ -74,6 +84,8 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
   const frameGaps = new Map<string, number>()
   let included = 0
   let total = 0
+  /** 有多少张首帧做过颜色还原（用于报告末尾的一句总体说明） */
+  let restoredFrames = 0
 
   for await (const file of context.files) {
     total++
@@ -147,13 +159,26 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
                 )
                 .join('')}</div>`
         const cover = probe.firstFrame === null ? (stills[0] ?? null) : probe.firstFrame
+        /*
+         * 还原方式必须写在图注里，而且要与"首帧来源"分开写：
+         * 「解码出来的、还原过」和「机内预览、本来就是 709」是两件事，
+         * 看图的人需要知道眼前这张到底动过没有。
+         */
+        const restoreProfile = probe.frameRestore?.profile ?? null
+        const restoreLabel =
+          probe.frameRestore === null
+            ? ''
+            : probe.frameRestore.mode === 'lut'
+              ? ` · 已套用 LUT：${escapeXml(probe.frameRestore.lutName ?? '自定义')}`
+              : ` · 已还原：${escapeXml(restoreProfile === null ? '自动识别' : LOG_PROFILE_LABELS[restoreProfile])} → Rec.709`
+        if (probe.frameRestore !== null) restoredFrames++
         frames.push(
           `<figure class="frame">
             ${cover === null ? '' : `<img src="frames/${encodeURIComponent(cover)}" alt="${escapeXml(file.relPath)}" width="320">`}
             ${stillStrip}
             <figcaption>
               <div class="fname mono">${escapeXml(file.relPath)}</div>
-              <div class="fmeta">${probe.format === null ? '' : `${escapeXml(probe.format)} · `}${frameSourceLabel(probe.frameSource)}${stills.length > 0 ? ` · 候选静帧 ${stills.length} 张` : ''}</div>
+              <div class="fmeta">${probe.format === null ? '' : `${escapeXml(probe.format)} · `}${frameSourceLabel(probe.frameSource)}${stills.length > 0 ? ` · 候选静帧 ${stills.length} 张` : ''}${restoreLabel}</div>
             </figcaption>
           </figure>`
         )
@@ -186,6 +211,19 @@ export async function renderHtmlReport(context: HtmlReportContext): Promise<stri
       )
       included++
     }
+  }
+
+  /*
+   * 首帧还原的总体说明。
+   *
+   * 逐张写在图注里会重复几百遍，但完全不提又不行 —— 拿到报告的人
+   * 会以为这些画面是"卡里的原始像素"。一句话说清"只动了缩略图"，
+   * 才不会被误当成素材已经被改过。
+   */
+  if (restoredFrames > 0) {
+    notes.add(
+      `报告中有 ${restoredFrames} 张首帧做过颜色还原（Log → Rec.709 或自定义 LUT），仅影响报告缩略图；目标盘上的原始素材未被改动。`
+    )
   }
 
   const targetRows = context.targets

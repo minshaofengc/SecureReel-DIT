@@ -1309,6 +1309,8 @@ export class CopyEngine {
               () =>
                 runner.probe(sourceAbs, {
                   extractFrames: budgetLeft && this.deps.settings.extractFrames,
+                  // 颜色还原要靠文件名/目录名认 Log 曲线（容器元数据常只写 bt709）
+                  relPath,
                   signal: controller.signal
                 }),
               controller.signal,

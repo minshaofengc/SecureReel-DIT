@@ -76,7 +76,8 @@ beforeEach(async () => {
     probeRunner: {
       setFrameOutputDir: () => undefined,
       setStillFrameOutputDir: () => undefined,
-      setStillFrameCount: () => undefined
+      setStillFrameCount: () => undefined,
+      setColorRestore: () => undefined
     } as never,
     hde: {} as never,
     getSettings: () => testSettings,

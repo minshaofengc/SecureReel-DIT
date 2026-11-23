@@ -16,12 +16,24 @@
  */
 import { basename, join } from 'node:path'
 import { copyFile, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import type { FrameSource, MediaProbe } from '@shared/types'
+import type {
+  FrameRestoreInfo,
+  FrameRestoreMode,
+  FrameSource,
+  LogProfileId,
+  MediaProbe
+} from '@shared/types'
 import { resolveExecutable, runCommand } from '@main/exec'
 import { ensureDir, whichInPath } from '@main/fs-utils'
 import { executableName, IS_WINDOWS } from '@main/platform'
 import type { Logger } from '@main/logger'
 import { extractEmbeddedPreview, type EmbeddedPreview } from './embedded-preview'
+import {
+  detectLogProfile,
+  ensureAutoLut,
+  frameVideoFilter,
+  lutFilter
+} from './color-restore'
 import {
   canDecodeWithFfmpeg,
   extensionOf,
@@ -35,7 +47,30 @@ import {
 export interface ProbeOptions {
   /** 是否提取首帧（对长片材有解码开销，按设置决定） */
   extractFrames: boolean
+  /**
+   * 源内相对路径。
+   *
+   * 只用于颜色还原时的**关键词识别**：容器元数据经常只写 bt709，
+   * 而现场目录名往往直接写着 `A001_SLOG3`。不传就只用元数据判断。
+   */
+  relPath?: string
   signal?: AbortSignal
+}
+
+/**
+ * 首帧颜色还原的运行参数。
+ *
+ * 由 JobManager 在任务开始时一次性设进 probe runner（见 `setColorRestore`），
+ * 而不是每个文件都从设置里读一遍 —— 一次任务里几百条素材，读一次就够。
+ */
+export interface FrameRestoreOptions {
+  mode: FrameRestoreMode
+  /** `mode === 'lut'` 时用户的 `.cube` 绝对路径 */
+  lutPath: string | null
+  /** `mode === 'auto'` 且识别不出时的兜底曲线 */
+  fallback: LogProfileId | null
+  /** 自动生成的 LUT 缓存目录 */
+  cacheDir: string
 }
 
 export interface MediaProbeRunner {
@@ -60,6 +95,8 @@ export interface MediaProbeRunner {
   setStillFrameOutputDir(dir: string): void
   /** 每条素材出几张候选静帧（0 = 不出） */
   setStillFrameCount(count: number): void
+  /** 设置首帧颜色还原（null = 不还原） */
+  setColorRestore(options: FrameRestoreOptions | null): void
   /** 重新探测工具位置（用户改了设置之后调用） */
   refresh(userDir?: string | null): Promise<void>
 }
@@ -143,6 +180,16 @@ interface FfprobeStream {
   r_frame_rate?: string
   avg_frame_rate?: string
   duration?: string
+  /**
+   * 色彩标记。
+   *
+   * 现实很骨感：Log 素材装在 709 容器里是行业惯例，所以这三项**经常全是
+   * `bt709`**，靠它们认不出 Log。留着是因为偶尔能碰到标对的（例如
+   * 某些机型的 `color_transfer=linear`），也是判断"HDR 不要乱还原"的依据。
+   */
+  color_space?: string
+  color_transfer?: string
+  color_primaries?: string
   tags?: Record<string, string>
 }
 
@@ -178,6 +225,7 @@ function baseProbe(
     frameRate: null,
     firstFrame: null,
     lastFrame: null,
+    frameRestore: null,
     stillFrames: [],
     format: format.label,
     formatFamily: format.family,
@@ -279,6 +327,8 @@ export class FfprobeRunner implements MediaProbeRunner {
   private stillFrameOutputDir: string | null = null
   /** 每条素材出几张候选静帧；0 = 不出（只保留原有首尾帧）。 */
   private stillFrameCount = 0
+  /** 首帧颜色还原参数；null = 不还原。 */
+  private colorRestore: FrameRestoreOptions | null = null
 
   constructor(
     private readonly deps: {
@@ -331,6 +381,15 @@ export class FfprobeRunner implements MediaProbeRunner {
 
   setStillFrameCount(count: number): void {
     this.stillFrameCount = Math.max(0, Math.floor(count))
+  }
+
+  /**
+   * 设置首帧颜色还原。传 null = 不还原。
+   *
+   * 与 `setStillFrameCount` 同一套模式：任务开始时设一次，整批素材复用。
+   */
+  setColorRestore(options: FrameRestoreOptions | null): void {
+    this.colorRestore = options
   }
 
   async refresh(userDir?: string | null): Promise<void> {
@@ -411,6 +470,17 @@ export class FfprobeRunner implements MediaProbeRunner {
     const probe = baseProbe(format, 'none', null)
     const decodable = canDecodeWithFfmpeg(format.family)
 
+    /*
+     * 色彩线索先收集起来，等取首帧时再决定要不要还原。
+     * 放在这里是因为 ffprobe 只跑一次 —— 到了 acquireFirstFrame 再补一次
+     * 探测既慢又容易和这里的结论打架。
+     */
+    let colorMeta: { transfer: string | null; primaries: string | null } = {
+      transfer: null,
+      primaries: null
+    }
+    let streamTags: Record<string, string> = {}
+
     // ---- 2. 填元数据 ----
     /*
      * 关键判断：**流级参数可不可信**，不能只看"能不能解码"。
@@ -446,6 +516,12 @@ export class FfprobeRunner implements MediaProbeRunner {
         tags['creation_time'] ?? tags['com.apple.quicktime.creationdate'] ?? tags['date'] ?? null
       probe.capturedAt = captured === null ? null : String(captured)
       probe.available = true
+      // 色彩线索留给取首帧时判断要不要做 Log → Rec.709 还原
+      streamTags = tags
+      colorMeta = {
+        transfer: video?.color_transfer ?? null,
+        primaries: video?.color_primaries ?? null
+      }
     } else if (parsed !== null) {
       // 只保留容器层面的身份，并说明技术参数去了哪里
       probe.codec = null
@@ -455,11 +531,37 @@ export class FfprobeRunner implements MediaProbeRunner {
     // ---- 3. 取首帧 ----
     const videoLike = isVideoLike(absPath)
     const wantsFrame = options.extractFrames && videoLike
+
+    /*
+     * 颜色还原只对**真正解码出来的**画面生效。在这里算一次，
+     * 首帧 / 尾帧 / 候选静帧共用同一个 LUT —— 一条素材里三种图颜色不一致
+     * 会让人以为读错了卡。
+     */
+    let restoreLut: string | null = null
+    let restoreInfo: FrameRestoreInfo | null = null
+    if (wantsFrame && decodable && this.ffmpegPath !== null) {
+      const resolved = await this.resolveRestoreLut({
+        relPath: options.relPath ?? basename(absPath),
+        tags: streamTags,
+        colorTransfer: colorMeta.transfer,
+        colorPrimaries: colorMeta.primaries
+      })
+      restoreLut = resolved.lutPath
+      restoreInfo = resolved.info
+    }
+
     if (wantsFrame) {
-      const frame = await this.acquireFirstFrame(absPath, decodable, options.signal)
+      const frame = await this.acquireFirstFrame(
+        absPath,
+        decodable,
+        restoreLut,
+        restoreInfo,
+        options.signal
+      )
       if (frame !== null) {
         probe.firstFrame = frame.fileName
         probe.frameSource = frame.source
+        probe.frameRestore = frame.restore
         // 预览图的分辨率只在没有真实技术参数时用于填充，并在 note 里说明
         if (frame.width !== null && probe.width === null) probe.width = frame.width
         if (frame.height !== null && probe.height === null) probe.height = frame.height
@@ -472,7 +574,7 @@ export class FfprobeRunner implements MediaProbeRunner {
 
     // ---- 4. 尾帧只在能真解码时才提 ----
     if (wantsFrame && decodable && this.ffmpegPath !== null) {
-      probe.lastFrame = await this.extractFrameWithFfmpeg(absPath, 'last')
+      probe.lastFrame = await this.extractFrameWithFfmpeg(absPath, 'last', restoreLut)
     }
 
     /*
@@ -494,6 +596,7 @@ export class FfprobeRunner implements MediaProbeRunner {
         absPath,
         this.stillFrameOutputDir,
         this.stillFrameCount,
+        restoreLut,
         options.signal
       )
     }
@@ -559,19 +662,28 @@ export class FfprobeRunner implements MediaProbeRunner {
   private async acquireFirstFrame(
     absPath: string,
     decodable: boolean,
+    lutPath: string | null,
+    restoreInfo: FrameRestoreInfo | null,
     signal?: AbortSignal
   ): Promise<{
     fileName: string
     source: FrameSource
     width: number | null
     height: number | null
+    restore: FrameRestoreInfo | null
   } | null> {
     const canDecode = decodable && this.ffmpegPath !== null
 
     if (canDecode) {
-      const decoded = await this.extractFrameWithFfmpeg(absPath, 'first')
+      const decoded = await this.extractFrameWithFfmpeg(absPath, 'first', lutPath)
       if (decoded !== null) {
-        return { fileName: decoded, source: 'decoded', width: null, height: null }
+        return {
+          fileName: decoded,
+          source: 'decoded',
+          width: null,
+          height: null,
+          restore: restoreInfo
+        }
       }
       // 解码失败（文件损坏 / 编码不支持）时，仍然值得试试内嵌预览
     }
@@ -593,10 +705,64 @@ export class FfprobeRunner implements MediaProbeRunner {
       await ensureDir(this.frameOutputDir)
       const fileName = `${safeStem(basename(absPath))}-first.jpg`
       await writeFile(join(this.frameOutputDir, fileName), preview.jpeg)
-      return { fileName, source: 'embedded-preview', width: preview.width, height: preview.height }
+      /*
+       * 内嵌预览**不做还原**，`restore` 一律为 null。
+       *
+       * R3D / BRAW 文件里的预览图是摄影机自己生成的 709 画面，
+       * 出厂就已经还原过了。再套一次 LUT 会二次还原：黑位被压死、
+       * 高光染色，比灰片更容易误导人。
+       */
+      return {
+        fileName,
+        source: 'embedded-preview',
+        width: preview.width,
+        height: preview.height,
+        restore: null
+      }
     } catch (error) {
       this.deps.logger.warn('media', `内嵌预览图写入失败：${String(error)}`)
       return null
+    }
+  }
+
+  /**
+   * 决定这一条素材用哪个 LUT。
+   *
+   * 三条路径：
+   *   · 关掉 → 不还原
+   *   · 用户 LUT → 直接用（哪怕识别不出 Log 也照用，用户说了算）
+   *   · 自动 → 先识别，识别不出退到用户设的兜底曲线，再不行就不还原
+   */
+  private async resolveRestoreLut(detect: {
+    relPath: string
+    tags: Record<string, string>
+    colorTransfer: string | null
+    colorPrimaries: string | null
+  }): Promise<{ lutPath: string | null; info: FrameRestoreInfo | null }> {
+    const restore = this.colorRestore
+    if (restore === null || restore.mode === 'off') return { lutPath: null, info: null }
+
+    if (restore.mode === 'lut') {
+      if (restore.lutPath === null || restore.lutPath.trim() === '') {
+        return { lutPath: null, info: null }
+      }
+      return {
+        lutPath: restore.lutPath,
+        info: { mode: 'lut', profile: null, lutName: basename(restore.lutPath) }
+      }
+    }
+
+    const detected = detectLogProfile(detect)
+    const profile = detected ?? restore.fallback
+    if (profile === null) return { lutPath: null, info: null }
+
+    try {
+      const lutPath = await ensureAutoLut(profile, restore.cacheDir)
+      return { lutPath, info: { mode: 'auto', profile, lutName: null } }
+    } catch (error) {
+      // LUT 生成失败只影响"画面好不好看"，绝不影响拷贝与校验
+      this.deps.logger.warn('media', `自动还原 LUT 生成失败，本次不还原：${String(error)}`)
+      return { lutPath: null, info: null }
     }
   }
 
@@ -608,7 +774,8 @@ export class FfprobeRunner implements MediaProbeRunner {
    */
   private async extractFrameWithFfmpeg(
     absPath: string,
-    which: 'first' | 'last'
+    which: 'first' | 'last',
+    lutPath: string | null = null
   ): Promise<string | null> {
     if (this.ffmpegPath === null || this.frameOutputDir === null) return null
 
@@ -633,7 +800,7 @@ export class FfprobeRunner implements MediaProbeRunner {
         '-frames:v',
         '1',
         '-vf',
-        'scale=640:-2',
+        frameVideoFilter({ width: 640, lutPath }),
         '-q:v',
         '4',
         output
@@ -681,6 +848,7 @@ export class FfprobeRunner implements MediaProbeRunner {
     absPath: string,
     outputDir: string,
     count: number,
+    lutPath: string | null = null,
     signal?: AbortSignal
   ): Promise<string[]> {
     if (this.ffmpegPath === null || count <= 0) return []
@@ -702,10 +870,12 @@ export class FfprobeRunner implements MediaProbeRunner {
 
     // 1) 抽出候选帧（小尺寸即可，打分只需相对清晰度）
     const candidatePattern = join(tmpDir, 'cand-%02d.jpg')
-    const selectFilter =
+    const baseFilter =
       sampleFps !== null
         ? `fps=${sampleFps.toFixed(6)},scale=480:-2`
         : `select='not(mod(n\\,${Math.max(1, Math.round(30 / candidateCount))}))',scale=480:-2`
+    // 静帧与首帧用同一个 LUT，否则一条素材里两种图颜色会不一样
+    const selectFilter = lutPath === null ? baseFilter : `${baseFilter},${lutFilter(lutPath)}`
 
     const extract = await runCommand(
       this.ffmpegPath,

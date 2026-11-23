@@ -10,6 +10,7 @@ import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import type { AppInfo, DataLocationCategory, DataLocationStatus, EncodersInfo } from '@shared/ipc'
+import type { UpdateCheckResult } from '@shared/update'
 import { IPC } from '@shared/ipc'
 import type {
   AppSettings,
@@ -40,6 +41,7 @@ import {
   settingsPatchSchema,
   kvGetSchema,
   kvSetSchema,
+  updateCheckSchema,
   tailSchema,
   titleBarOverlaySchema,
   updateParentProjectSchema,
@@ -53,6 +55,7 @@ import type { JobManager } from '@main/core/job-manager'
 import type { ReportStore } from '@main/reports/report-store'
 import type { FfprobeRunner } from '@main/media/probe'
 import { detectEncoders } from '@main/media/encoder-probe'
+import { checkForUpdates, openReleasePage } from '@main/updates'
 import type { HdeAdapter } from '@main/adapters/hde'
 import { inspectSource, scanSource } from '@main/core/source-scan'
 import { describeError, describeVolume } from '@main/fs-utils'
@@ -187,6 +190,37 @@ export function registerIpcHandlers(services: Services): void {
     }
     return saved
   })
+
+  /* ---------------- 更新检查 ---------------- */
+
+  register<UpdateCheckResult>(IPC.updateCheck, async (payload) => {
+    const { force } = parseOrThrow<{ force?: boolean }>(updateCheckSchema, payload)
+    // 用户关掉了自动检查时，自动路径直接返回"不检查"。
+    // 手动「立即检查」是显式动作，不受这个开关限制 —— 否则设置页那个按钮会失效，
+    // 而用户点它恰恰是想现在查一次。
+    if (force !== true && !store.getSettings().autoCheckUpdates) {
+      return {
+        currentVersion: APP_VERSION,
+        latestVersion: null,
+        hasUpdate: false,
+        releaseUrl: null,
+        publishedAt: null,
+        checkedAt: new Date().toISOString(),
+        source: null,
+        error: null,
+        shouldNotify: false
+      }
+    }
+    return checkForUpdates({ store, logger, force: force === true })
+  })
+
+  register<boolean>(IPC.updateOpenRelease, async () =>
+    openReleasePage({
+      store,
+      logger,
+      openExternal: (url) => shell.openExternal(url)
+    })
+  )
 
   /* ---------------- 卷 ---------------- */
 

@@ -32,6 +32,7 @@ const probe: MediaProbe = {
   frameRate: '25',
   firstFrame: null,
   lastFrame: null,
+  frameRestore: null,
   stillFrames: [],
   format: 'ProRes',
   formatFamily: 'prores',
@@ -95,6 +96,7 @@ async function setup(mode: 'copy' | 'verify' = 'copy') {
     setFrameOutputDir: () => {},
     setStillFrameOutputDir: () => {},
     setStillFrameCount: () => {},
+    setColorRestore: () => {},
     refresh: async () => {}
   }
   const engine = () =>

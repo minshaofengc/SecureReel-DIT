@@ -138,7 +138,9 @@ function pathsFromDirs(userDataDir: string, dirs: Record<DataCategory, string>):
     reportsDir: dirs.reports,
     logsDir: dirs.logs,
     hdeWorkDir: dirs.hde,
-    companionDir: dirs.companion
+    companionDir: dirs.companion,
+    // LUT 缓存是可再生的派生数据，跟着 userData 走，不参与可配置目录
+    colorLutsDir: join(userDataDir, 'color-luts')
   }
 }
 

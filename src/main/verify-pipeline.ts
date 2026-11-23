@@ -385,6 +385,17 @@ async function main(): Promise<number> {
     /* ---------- 3. 跑真实拷贝引擎（含媒体分析阶段） ---------- */
     process.stdout.write('\n[3] 拷贝引擎（读出即算哈希 + 扇出写 + 重读校验 + 媒体分析）\n')
     probeRunner.setFrameOutputDir(reportStore.frameWorkDir(job.id))
+    /*
+     * 端到端验证里把首帧颜色还原也走一遍：用兜底曲线强制还原，
+     * 证明「生成 .cube → lut3d 滤镜 → 真的写出图」这条链在随包 ffmpeg 上成立。
+     * 夹具素材没有 Log 标记，靠自动识别不会触发，所以必须给兜底。
+     */
+    probeRunner.setColorRestore({
+      mode: 'auto',
+      lutPath: null,
+      fallback: 'slog3',
+      cacheDir: paths.colorLutsDir
+    })
 
     const progressPhases = new Set<string>()
     const engine = new CopyEngine({

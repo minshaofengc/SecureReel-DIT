@@ -12,6 +12,7 @@ import { ProjectView } from './views/ProjectView'
 import { SettingsView } from './views/SettingsView'
 import { HelpView } from './views/HelpView'
 import { NavIcon } from './components/NavIcon'
+import { UpdateBanner } from './components/UpdateBanner'
 import { ViewSwitch, type ViewMode } from './components/ViewSwitch'
 import { PAGE_ICON, SEGMENTS, TOOL_PAGES, segmentOf, type Page } from './nav'
 
@@ -166,6 +167,12 @@ function Shell(): ReactNode {
           ))}
         </div>
       )}
+
+      {/*
+       * 新版本提示。只在主进程判定"该提醒"时出现（7 天一次），
+       * 关掉「自动检查更新」后这里完全不发请求。
+       */}
+      <UpdateBanner />
 
       {/*
        * data-page 不是给 JS 读的，是给 CSS 读的：拷贝页有吸底操作条，

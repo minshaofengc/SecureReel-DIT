@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2.0.10 — Update checks, always-on verification, first-frame colour restoration
+
+- Check for a new version automatically once every 7 days and show a single banner at the top of the window. The check reads only a version number, prefers the project site manifest and falls back to the GitHub Releases API, never uploads anything about the machine, and can be turned off for fully offline work. "Check now" in Settings bypasses the 7-day window.
+- Make independent re-read verification unconditional: the copy page no longer offers a switch, and the main process ignores `verifyAfterWrite` from requests. Every destination copy is still re-read and compared with the source value before its final filename is published.
+- Add optional first-frame colour restoration for reports: apply a user-selected `.cube` 3D LUT, or detect the Log curve (S-Log3, V-Log, LogC3, C-Log3, Log3G10) from metadata and filenames and convert to Rec.709 using published standard formulas. Generated LUTs are cached under `color-luts/`. Embedded camera previews (R3D, BRAW) are never restored twice, and every report frame is labelled with how it was produced. Restoration affects report thumbnails only; originals on destination disks are never modified.
+- Align macOS and Windows display versions to 2.0.10. Android is unchanged in this release.
+
 ## 2.0.9 — Scans survive navigation, reworked preflight entry, configurable data directories
 
 - Stop discarding the source scan and device-check evidence when the window loses focus. Evidence is invalidated only when an input actually changes: source path, target volume, copy/verify mode or the proxy switch. Swapped volumes are still caught by fingerprint checks when a job is created and started.

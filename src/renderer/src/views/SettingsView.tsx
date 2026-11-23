@@ -1,9 +1,11 @@
 import { MobileCompanionSettings } from './MobileCompanionSettings'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
+  FRAME_RESTORE_MODES,
   HASH_ALGORITHMS,
   HASH_ALGORITHM_LABELS,
   LANGUAGES,
+  LOG_PROFILES,
   MANIFEST_FORMATS,
   PERFORMANCE_MODES,
   PERFORMANCE_MODE_PRESETS,
@@ -12,7 +14,9 @@ import {
   PROXY_RESOLUTIONS,
   THEME_MODES,
   supportsAlgorithm,
+  type FrameRestoreMode,
   type HashAlgorithm,
+  type LogProfileId,
   type ManifestFormat,
   type PerformanceMode,
   type ProxyCodec,
@@ -22,6 +26,7 @@ import {
   type ThemeId
 } from '@shared/types'
 import type { DataLocationCategory, DataLocationStatus, EncodersInfo } from '@shared/ipc'
+import type { UpdateCheckResult } from '@shared/update'
 import {
   BlockGrid,
   Card,
@@ -97,10 +102,12 @@ function NumberSetting({
 
 export function SettingsView(): ReactNode {
   const { t } = useI18n()
-  const { settings, updateSettings, pushToast } = useAppState()
+  const { settings, updateSettings, pushToast, appInfo } = useAppState()
   const [diagBusy, setDiagBusy] = useState(false)
   const [dataLocations, setDataLocations] = useState<DataLocationStatus[]>([])
   const [dataBusy, setDataBusy] = useState(false)
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
 
   const refreshDataLocations = async (): Promise<void> => {
     try {
@@ -602,6 +609,81 @@ export function SettingsView(): ReactNode {
                 {t('settings.stillFramesOff')}
               </div>
             )}
+
+            {/*
+             * 首帧颜色还原。
+             *
+             * 默认关闭：报告首帧的第一职责是"证明这条素材能读出来"，
+             * 原始像素最不容易骗人。想看得舒服再自己开。
+             */}
+            <Field label={t('settings.frameRestore')} hint={t('settings.frameRestoreHint')}>
+              <SelectBox<FrameRestoreMode>
+                value={settings.frameRestoreMode}
+                ariaLabel={t('settings.frameRestore')}
+                options={FRAME_RESTORE_MODES.map((mode) => ({
+                  value: mode,
+                  label: t(`settings.frameRestore.${mode}` as never)
+                }))}
+                onChange={(frameRestoreMode) => void updateSettings({ frameRestoreMode })}
+              />
+            </Field>
+
+            {settings.frameRestoreMode === 'lut' && (
+              <Field label={t('settings.frameRestoreLut')} hint={t('settings.frameRestoreLutHint')}>
+                <PathPicker
+                  value={settings.frameRestoreLutPath ?? ''}
+                  buttonLabel={t('copy.pickSource')}
+                  onPick={() => {
+                    void (async () => {
+                      const picked = await window.securereel.volumes.pickPath(
+                        'file',
+                        t('settings.frameRestoreLut')
+                      )
+                      if (picked.ok && picked.data !== null) {
+                        void updateSettings({ frameRestoreLutPath: picked.data })
+                      }
+                    })()
+                  }}
+                  onChange={(next) =>
+                    void updateSettings({
+                      frameRestoreLutPath: next.trim() === '' ? null : next
+                    })
+                  }
+                />
+              </Field>
+            )}
+            {settings.frameRestoreMode === 'lut' &&
+              (settings.frameRestoreLutPath ?? '') === '' && (
+                <Note tone="warn">{t('settings.frameRestoreLutMissing')}</Note>
+              )}
+
+            {settings.frameRestoreMode === 'auto' && (
+              <Field
+                label={t('settings.frameRestoreFallback')}
+                hint={t('settings.frameRestoreFallbackHint')}
+              >
+                <SelectBox<string>
+                  value={settings.frameRestoreFallback ?? 'none'}
+                  ariaLabel={t('settings.frameRestoreFallback')}
+                  options={[
+                    { value: 'none', label: t('settings.frameRestoreFallbackNone') },
+                    ...LOG_PROFILES.map((profile) => ({
+                      value: profile,
+                      label: t(`logProfile.${profile}` as never)
+                    }))
+                  ]}
+                  onChange={(next) =>
+                    void updateSettings({
+                      frameRestoreFallback: next === 'none' ? null : (next as LogProfileId)
+                    })
+                  }
+                />
+              </Field>
+            )}
+
+            {settings.frameRestoreMode !== 'off' && (
+              <Note>{t('settings.frameRestoreNotice')}</Note>
+            )}
           </>
         )}
       </Card>
@@ -727,6 +809,62 @@ export function SettingsView(): ReactNode {
               {t('settings.exportDiagnostics')}
             </button>
           </div>
+        </Card>
+        <Card title={t('update.about')}>
+          <Field label={t('update.current')}>
+            <span className="mono">v{appInfo?.version ?? '—'}</span>
+          </Field>
+
+          <Toggle
+            checked={settings.autoCheckUpdates}
+            label={t('update.autoCheck')}
+            onChange={(next) => void updateSettings({ autoCheckUpdates: next })}
+          />
+          <div className="hint">{t('update.autoCheckHint')}</div>
+
+          <div className="row-actions" style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={updateBusy}
+              onClick={() => {
+                void (async (): Promise<void> => {
+                  setUpdateBusy(true)
+                  try {
+                    const response = await window.securereel.updates.check(true)
+                    if (!response.ok) {
+                      pushToast('error', t('update.failed'))
+                      return
+                    }
+                    setUpdateResult(response.data)
+                  } finally {
+                    setUpdateBusy(false)
+                  }
+                })()
+              }}
+            >
+              {updateBusy ? t('update.checking') : t('update.check')}
+            </button>
+            {updateResult?.hasUpdate === true && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => void window.securereel.updates.openRelease()}
+              >
+                {t('update.open')}
+              </button>
+            )}
+          </div>
+
+          {updateResult !== null && (
+            <div className="hint" style={{ marginTop: 8 }}>
+              {updateResult.error !== null
+                ? t('update.failed')
+                : updateResult.hasUpdate
+                  ? t('update.found', { version: updateResult.latestVersion ?? '' })
+                  : t('update.upToDate')}
+            </div>
+          )}
         </Card>
       </BlockGrid>
       <MobileCompanionSettings />
