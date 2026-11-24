@@ -44,6 +44,15 @@ export function AccountDialog({
     return () => window.clearInterval(timer)
   }, [cooldown])
 
+  // Esc 关闭：面板一旦打开就必须有退路，不能只靠「退出登录」。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const errorText = (raw: string): string => {
     const key = ERROR_KEYS[raw]
     return key === undefined ? t('account.error.server') : t(key)
@@ -111,8 +120,22 @@ export function AccountDialog({
       : null
 
   return (
-    <div className="dialog-overlay">
+    <div
+      className="dialog-overlay"
+      onMouseDown={(event) => {
+        // 只有点在遮罩本身（不是面板内部）才关闭，避免拖选文字时误关。
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
       <section className="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="account-title">
+        <button
+          type="button"
+          className="dialog-close"
+          aria-label={t('account.close')}
+          onClick={onClose}
+        >
+          ×
+        </button>
         <span className="dialog-kicker mono">ACCOUNT / SYNC</span>
         <h2 id="account-title">{t('account.title')}</h2>
 

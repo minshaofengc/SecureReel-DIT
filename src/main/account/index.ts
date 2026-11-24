@@ -168,15 +168,22 @@ export class AccountService {
     if (this.session === null) return { ok: true, data: this.status() }
     if (this.syncing) return { ok: true, data: this.status() }
 
+    /*
+     * ⚠️ `status()` 必须在 `syncing` 复位之后再取。
+     * 早先是在 try 里直接 `return this.status()`，那时 finally 还没跑，
+     * 返回的 syncing 仍是 true —— 界面会把「同步中…」一直显示下去。
+     */
     this.syncing = true
+    let ok = false
     try {
-      const ok = await this.pullAndMerge()
-      return ok
-        ? { ok: true, data: this.status() }
-        : { ok: false, error: (this.syncError as AccountErrorCode | null) ?? 'server' }
+      ok = await this.pullAndMerge()
     } finally {
       this.syncing = false
     }
+
+    return ok
+      ? { ok: true, data: this.status() }
+      : { ok: false, error: (this.syncError as AccountErrorCode | null) ?? 'server' }
   }
 
   /** 设置页改完之后调用；2 秒内多次改动只推一次。 */
