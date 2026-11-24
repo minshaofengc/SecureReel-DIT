@@ -1,29 +1,23 @@
 /**
  * 使用统计的门面。
  *
- * 装配顺序刻意简单：`start()` 只挂一个心跳和一个 6 小时的发送定时器，
+ * 默认开启，界面上没有任何开关：`start()` 只挂一个心跳和一个 6 小时的发送定时器，
  * 除此之外不注册任何全局监听；锁屏/休眠由 `index.ts` 转达。
  *
- * 关闭开关时：停止累加、清空本地历史、一个包都不发。
- * 这是"同意"二字的最低要求，也是隐私说明里的原话。
+ * 关闭方式只有三种，全部不在界面里：
+ *   · 环境变量 `SECUREREEL_DISABLE_USAGE=1`
+ *   · 启动参数 `--disable-usage-stats`
+ *   · 设置键 `usageStatsEnabled = false`
+ * 任一成立即停止累加、不发包。
  */
-import type { BrowserWindow } from 'electron'
 import type { AppSettings } from '@shared/types'
-import type { UsageStatus } from '@shared/ipc'
-import {
-  isReportingEnabled,
-  needsConsent,
-  USAGE_POLICY_VERSION,
-  type ConsentDecision
-} from '@shared/usage'
 import type { Store } from '../db/store'
 import type { Logger } from '../logger'
-import { ensureInstallId, resetInstallId } from './install-id'
-import { readConsent, writeConsent } from './consent'
+import { ensureInstallId } from './install-id'
 import { UsageTracker } from './tracker'
-import { LAST_SENT_AT_KV, UsageReporter } from './reporter'
+import { UsageReporter } from './reporter'
 
-export const PRIVACY_URL = 'https://securereel.pages.dev/privacy.html'
+export const PRIVACY_URL = 'https://securereel.pages.dev/privacy'
 const ALLOWED_PRIVACY_PREFIXES = ['https://securereel.pages.dev/']
 
 const FIRST_REPORT_DELAY_MS = 30_000
@@ -33,8 +27,6 @@ export interface UsageDeps {
   store: Store
   logger: Logger
   getSettings: () => AppSettings
-  saveSettings: (next: AppSettings) => AppSettings
-  getMainWindow: () => BrowserWindow | null
   isFocused: () => boolean
   getIdleSeconds: () => number
   platform?: string
@@ -42,6 +34,8 @@ export interface UsageDeps {
   appVersion: string
   /** 正式包才允许真的发请求；开发与冒烟默认关闭 */
   allowNetwork?: boolean
+  /** 环境变量或启动参数要求关闭 */
+  disabledByOverride?: () => boolean
   now?: () => number
   openExternal?: (url: string) => Promise<void>
 }
@@ -78,16 +72,25 @@ export class UsageService {
     })
   }
 
-  private now(): number {
-    return this.deps.now ? this.deps.now() : Date.now()
-  }
-
-  private consent(): ReturnType<typeof readConsent> {
-    return readConsent(this.deps.store)
-  }
-
   private isEnabled(): boolean {
-    return isReportingEnabled(this.consent(), this.deps.getSettings().usageStatsEnabled)
+    if (this.deps.disabledByOverride?.() === true) return false
+    return this.deps.getSettings().usageStatsEnabled
+  }
+
+  /** 账号登录后要绑定这个 ID。 */
+  getInstallId(): string {
+    return this.installId
+  }
+
+  /**
+   * 发一轮上报。
+   *
+   * ⚠️ 必须先 `flush()`：心跳每 60 秒才落库，而首次上报在 30 秒 ——
+   * 不先落库就会发一份空数据，安装要等下一次（6 小时后）才出现在后台。
+   */
+  private report(): void {
+    this.tracker.flush()
+    void this.reporter.reportOnce()
   }
 
   start(): void {
@@ -97,12 +100,8 @@ export class UsageService {
     this.tracker.noteLaunch()
 
     if (this.isEnabled()) {
-      this.firstReportTimer = setTimeout(() => {
-        void this.reporter.reportOnce()
-      }, FIRST_REPORT_DELAY_MS)
-      this.reportTimer = setInterval(() => {
-        void this.reporter.reportOnce()
-      }, REPORT_INTERVAL_MS)
+      this.firstReportTimer = setTimeout(() => this.report(), FIRST_REPORT_DELAY_MS)
+      this.reportTimer = setInterval(() => this.report(), REPORT_INTERVAL_MS)
     }
   }
 
@@ -132,68 +131,6 @@ export class UsageService {
   /** 给端到端验证用：推进一次心跳，不依赖真实定时器。 */
   tickNow(): void {
     this.tracker.tick()
-  }
-
-  status(): UsageStatus {
-    const consent = this.consent()
-    const rows = this.deps.store.listUsageRows(this.installId)
-    return {
-      enabled: this.isEnabled(),
-      consent: consent?.decision ?? null,
-      policyVersion: USAGE_POLICY_VERSION,
-      needsConsent: needsConsent(consent),
-      installId: this.installId,
-      pendingDays: this.deps.store.countPendingUsage(this.installId),
-      lastSentAt: this.deps.store.getKv(LAST_SENT_AT_KV),
-      firstSeenDay: rows[0]?.day ?? null
-    }
-  }
-
-  /**
-   * 打开/关闭。
-   *
-   * 关闭 = 停止累加 + 清空本地历史 + 一个包都不发。
-   * 重新打开会把同意记录补成当前政策版本 —— 用户主动打开开关，就是一次明确同意。
-   */
-  setEnabled(enabled: boolean): UsageStatus {
-    if (enabled) {
-      writeConsent(this.deps.store, 'granted', USAGE_POLICY_VERSION, new Date(this.now()).toISOString())
-      this.deps.saveSettings({ ...this.deps.getSettings(), usageStatsEnabled: true })
-      if (this.started && this.firstReportTimer === null) {
-        this.firstReportTimer = setTimeout(() => {
-          void this.reporter.reportOnce()
-        }, FIRST_REPORT_DELAY_MS)
-        this.reportTimer = setInterval(() => {
-          void this.reporter.reportOnce()
-        }, REPORT_INTERVAL_MS)
-      }
-      this.tracker.noteLaunch()
-    } else {
-      writeConsent(this.deps.store, 'declined', USAGE_POLICY_VERSION, new Date(this.now()).toISOString())
-      this.deps.saveSettings({ ...this.deps.getSettings(), usageStatsEnabled: false })
-      this.tracker.discardPending()
-      this.deps.store.clearUsage()
-      if (this.firstReportTimer !== null) {
-        clearTimeout(this.firstReportTimer)
-        this.firstReportTimer = null
-      }
-      if (this.reportTimer !== null) {
-        clearInterval(this.reportTimer)
-        this.reportTimer = null
-      }
-    }
-    return this.status()
-  }
-
-  /** 首次弹层里的「同意 / 暂不开启」，语义与设置开关一致。 */
-  decideConsent(decision: ConsentDecision): UsageStatus {
-    return this.setEnabled(decision === 'granted')
-  }
-
-  resetInstallId(): UsageStatus {
-    this.tracker.discardPending()
-    this.installId = resetInstallId(this.deps.store)
-    return this.status()
   }
 
   /**

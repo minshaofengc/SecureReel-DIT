@@ -249,17 +249,18 @@ export const settingsPatchSchema = z
     proxyConcurrency: z.number().int().min(1).max(4),
     /** 0 = 不出候选静帧；与设置页的 0–4 档保持一致 */
     stillFrameCount: z.number().int().min(0).max(4),
-    /** 匿名使用统计开关（同意记录本身存在 settings_kv，不进 AppSettings） */
+    /** 匿名使用统计开关（隐藏，仅环境变量/启动参数/数据库可改） */
     usageStatsEnabled: z.boolean()
   })
   .partial()
 
-export const usageSetEnabledSchema = z.strictObject({
-  enabled: z.boolean()
+export const accountRequestCodeSchema = z.strictObject({
+  email: z.string().min(5).max(254)
 })
 
-export const usageDecideSchema = z.strictObject({
-  decision: z.enum(['granted', 'declined'])
+export const accountVerifySchema = z.strictObject({
+  email: z.string().min(5).max(254),
+  code: z.string().regex(/^\d{6}$/)
 })
 
 export const pathPickSchema = z.object({

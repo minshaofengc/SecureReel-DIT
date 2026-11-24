@@ -47,8 +47,8 @@ import {
   updateParentProjectSchema,
   dataCategorySchema,
   dataRelocateSchema,
-  usageSetEnabledSchema,
-  usageDecideSchema
+  accountRequestCodeSchema,
+  accountVerifySchema
 } from '@shared/schemas'
 import type { Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
@@ -68,6 +68,7 @@ import { createDiagnosticsZip } from '@main/diagnostics'
 import { DATA_CATEGORIES, readLocations } from '@main/core/data-locations'
 import { relocateCategory, resetCategory } from '@main/data-relocate-service'
 import type { UsageService } from '@main/usage'
+import type { AccountService } from '@main/account'
 
 export interface Services {
   store: Store
@@ -83,6 +84,7 @@ export interface Services {
   /** 目标路径所在文件系统类型；拿不到返回 null（未知不拦） */
   fsTypeOf: (path: string) => Promise<string | null>
   usage: UsageService
+  account: AccountService
 }
 
 type Handler<T> = (payload: unknown) => Promise<T> | T
@@ -125,7 +127,7 @@ function newParentProjectId(): string {
 }
 
 export function registerIpcHandlers(services: Services): void {
-  const { store, paths, reportStore, jobManager, probeRunner, hde, logger, usage } = services
+  const { store, paths, reportStore, jobManager, probeRunner, hde, logger, usage, account } = services
 
   /*
    * IPC 层的用户可见错误文案。
@@ -192,6 +194,8 @@ export function registerIpcHandlers(services: Services): void {
     if ('arrirawHdePath' in patch) {
       void hde.status(true)
     }
+    // 登录状态下把改动推到云端（2 秒节流）；未登录时这是个空操作。
+    account.onSettingsSaved()
     return saved
   })
 
@@ -228,24 +232,46 @@ export function registerIpcHandlers(services: Services): void {
 
   /* ---------------- 匿名使用统计 ---------------- */
 
-  register(IPC.usageStatus, () => usage.status())
+  register<boolean>(IPC.usageOpenPrivacy, () => usage.openPrivacyPolicy())
 
-  register(IPC.usageSetEnabled, (payload) => {
-    const { enabled } = parseOrThrow<{ enabled: boolean }>(usageSetEnabledSchema, payload)
-    return usage.setEnabled(enabled)
+  /* ---------------- 账号与设置同步 ---------------- */
+
+  register(IPC.accountStatus, () => account.status())
+
+  register<boolean>(IPC.accountRequestCode, async (payload) => {
+    const { email } = parseOrThrow<{ email: string }>(accountRequestCodeSchema, payload)
+    const result = await account.requestCode(email)
+    if (!result.ok) throw new Error(result.error ?? 'server')
+    return true
   })
 
-  register(IPC.usageDecide, (payload) => {
-    const { decision } = parseOrThrow<{ decision: 'granted' | 'declined' }>(
-      usageDecideSchema,
+  register(IPC.accountVerify, async (payload) => {
+    const { email, code } = parseOrThrow<{ email: string; code: string }>(
+      accountVerifySchema,
       payload
     )
-    return usage.decideConsent(decision)
+    const result = await account.verify(email, code)
+    if (!result.ok || result.data === undefined) throw new Error(result.error ?? 'server')
+    return result.data
   })
 
-  register(IPC.usageResetId, () => usage.resetInstallId())
+  register(IPC.accountLogout, async () => {
+    const result = await account.logout()
+    if (!result.ok || result.data === undefined) throw new Error(result.error ?? 'server')
+    return result.data
+  })
 
-  register<boolean>(IPC.usageOpenPrivacy, () => usage.openPrivacyPolicy())
+  register(IPC.accountDelete, async () => {
+    const result = await account.deleteAccount()
+    if (!result.ok || result.data === undefined) throw new Error(result.error ?? 'server')
+    return result.data
+  })
+
+  register(IPC.accountSyncNow, async () => {
+    const result = await account.syncNow()
+    if (!result.ok || result.data === undefined) throw new Error(result.error ?? 'server')
+    return result.data
+  })
 
   /* ---------------- 卷 ---------------- */
 

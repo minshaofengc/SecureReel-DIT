@@ -1,5 +1,6 @@
 import type { TargetPreflightResult, PreflightConfirmation } from './storage-safety'
 import type { UpdateCheckResult } from './update'
+import type { AccountStatus } from './account'
 /**
  * IPC 通道常量与请求/响应形状。
  *
@@ -34,12 +35,15 @@ export const IPC = {
   updateCheck: 'update:check',
   /** 打开发布页（地址由主进程从上次结果里取，不接受渲染层传 URL） */
   updateOpenRelease: 'update:open-release',
-  /** 匿名使用统计：状态 / 开关 / 重置安装 ID / 打开隐私说明 */
-  usageStatus: 'usage:status',
-  usageSetEnabled: 'usage:set-enabled',
-  usageDecide: 'usage:decide',
-  usageResetId: 'usage:reset-id',
+  /** 打开隐私说明（地址由主进程写死并过白名单） */
   usageOpenPrivacy: 'usage:open-privacy',
+  /** 账号与设置同步 */
+  accountStatus: 'account:status',
+  accountRequestCode: 'account:request-code',
+  accountVerify: 'account:verify',
+  accountLogout: 'account:logout',
+  accountDelete: 'account:delete',
+  accountSyncNow: 'account:sync-now',
   companionStatus: 'companion:status',
   companionStart: 'companion:start',
   companionStop: 'companion:stop',
@@ -242,27 +246,22 @@ export interface DataRelocateRequest {
 }
 
 /**
- * 匿名使用统计的界面可见状态。
+ * 账号与设置同步。
  *
- * 刻意**不含**逐日数据：渲染层只需要知道"开没开、要不要弹层、发出去多少天"，
- * 拿不到具体某天用了多久 —— 那是主进程与数据库的事。
+ * 邮箱只存在本机加密文件里，服务端只存哈希；`status()` 返回的 email
+ * 仅供界面显示，不会随任何请求上传。
  */
-export interface UsageStatus {
-  /** 只有「已同意 + 设置开着」才为真 */
-  enabled: boolean
-  /** null = 从未征求过 */
-  consent: 'granted' | 'declined' | null
-  policyVersion: number
-  /** 首次启动、或政策版本升级后为真 */
-  needsConsent: boolean
-  /** 随机安装 ID，界面自行掩码显示 */
-  installId: string
-  /** 待发送的天数 */
-  pendingDays: number
-  /** 上次成功上报时间（ISO）；从未成功为 null */
-  lastSentAt: string | null
-  /** 本机最早一条统计的日期；没有为 null */
-  firstSeenDay: string | null
+export interface AccountApi {
+  status(): Promise<IpcResult<AccountStatus>>
+  /** 发验证码；成功后返回 true */
+  requestCode(email: string): Promise<IpcResult<boolean>>
+  /** 校验验证码并登录；首次会自动建账号 */
+  verify(email: string, code: string): Promise<IpcResult<AccountStatus>>
+  logout(): Promise<IpcResult<AccountStatus>>
+  /** 注销账号：删账号、会话、绑定与云端设置 */
+  deleteAccount(): Promise<IpcResult<AccountStatus>>
+  /** 立即同步一次设置 */
+  syncNow(): Promise<IpcResult<AccountStatus>>
 }
 
 /** 预加载脚本暴露给渲染进程的 API 形状。 */
@@ -293,17 +292,10 @@ export interface SecureReelApi {
     openRelease(): Promise<IpcResult<boolean>>
   }
   usage: {
-    /** 当前统计状态（开关、同意、待发送天数） */
-    status(): Promise<IpcResult<UsageStatus>>
-    /** 打开/关闭匿名统计；关闭会清空本机历史 */
-    setEnabled(enabled: boolean): Promise<IpcResult<UsageStatus>>
-    /** 首启弹层的两个出口 */
-    decide(decision: 'granted' | 'declined'): Promise<IpcResult<UsageStatus>>
-    /** 重置安装 ID（断开关联，清空本机历史） */
-    resetInstallId(): Promise<IpcResult<UsageStatus>>
     /** 打开隐私说明；地址由主进程写死并过白名单 */
     openPrivacyPolicy(): Promise<IpcResult<boolean>>
   }
+  account: AccountApi
   media: {
     /** 本机可用的代理编码器；首次调用会跑一遍试编码探测（结果会缓存） */
     encoders(): Promise<IpcResult<EncodersInfo>>

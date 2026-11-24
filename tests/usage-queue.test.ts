@@ -7,7 +7,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Store } from '@main/db/store'
 import { ensureInstallId, resetInstallId, INSTALL_ID_KV } from '@main/usage/install-id'
-import { readConsent, writeConsent, CONSENT_KV } from '@main/usage/consent'
 import { UsageTracker } from '@main/usage/tracker'
 import type { Logger } from '@main/logger'
 import { isValidInstallId } from '@shared/usage'
@@ -195,32 +194,6 @@ describe('重置与统计', () => {
   })
 })
 
-describe('同意记录', () => {
-  it('初始为空', () => {
-    expect(readConsent(store)).toBeNull()
-  })
-
-  it('写入后能读回', () => {
-    writeConsent(store, 'granted', 1, '2026-11-24T10:00:00.000Z')
-    expect(readConsent(store)).toEqual({
-      decision: 'granted',
-      policyVersion: 1,
-      decidedAt: '2026-11-24T10:00:00.000Z'
-    })
-    expect(store.getKv(CONSENT_KV)).not.toBeNull()
-  })
-
-  it('损坏的 JSON 当作没有记录，不让界面崩', () => {
-    store.setKv(CONSENT_KV, '{oops')
-    expect(readConsent(store)).toBeNull()
-  })
-
-  it('拒绝也照实记录（下次不再打扰）', () => {
-    writeConsent(store, 'declined', 1)
-    expect(readConsent(store)?.decision).toBe('declined')
-  })
-})
-
 describe('心跳到落库的整条链路', () => {
   const installId = 'inst_0123456789abcdef0123456789abcdef'
   const logger = { warn: () => undefined, info: () => undefined } as unknown as Logger
@@ -271,7 +244,7 @@ describe('心跳到落库的整条链路', () => {
     expect(row?.aliveSeconds).toBe(30)
   })
 
-  it('关掉开关后不再累加，但基准照常推进', () => {
+  it('关闭开关后不再累加，重新打开时也不会补算关闭期间', () => {
     let clock = Date.parse('2026-11-24T02:00:00Z')
     let enabled = false
     const tracker = new UsageTracker({

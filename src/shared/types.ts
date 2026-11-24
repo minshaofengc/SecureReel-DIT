@@ -1164,6 +1164,8 @@ export type MainEvent =
   | { type: 'job:files-resync'; payload: { jobId: string } }
   | { type: 'job:log'; payload: { jobId: string; entry: LogEntry } }
   | { type: 'reports:changed'; payload: { jobId: string } }
+  /** 云端同步把设置写回本机后，通知界面刷新 */
+  | { type: 'settings:changed'; payload: AppSettings }
   | { type: 'toast'; payload: { level: 'info' | 'warn' | 'error' | 'success'; message: string } }
 
 /* ------------------------------------------------------------------ *

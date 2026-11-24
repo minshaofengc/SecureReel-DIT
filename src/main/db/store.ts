@@ -294,10 +294,58 @@ export class Store {
   }
 
   saveSettings(settings: AppSettings): AppSettings {
+    const previous = this.getSettings()
     this.db
       .prepare('INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)')
       .run('app', JSON.stringify(settings))
+
+    /*
+     * 逐键记录修改时间，供设置同步比较。
+     *
+     * 只给**真的变了**的键打时间戳：`saveSettings` 在每次设置页操作时都会整份写回，
+     * 如果无差别打戳，一次改语言会把所有键都标成"刚改过"，同步时就会把
+     * 另一台机器的主题、代理参数全部覆盖掉。
+     */
+    const now = Date.now()
+    for (const key of Object.keys(settings) as (keyof AppSettings)[]) {
+      if (JSON.stringify(previous[key]) === JSON.stringify(settings[key])) continue
+      this.setKv(`sync.at.${String(key)}`, String(now))
+    }
     return settings
+  }
+
+  /** 参与同步的键最近一次修改时间；没有记录视为 0。 */
+  getSettingTimestamps(): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT key, value FROM settings_kv WHERE key LIKE 'sync.at.%'")
+      .all()
+    const result: Record<string, number> = {}
+    for (const row of rows) {
+      const key = asString(row.key).slice('sync.at.'.length)
+      const value = Number(asString(row.value))
+      if (key !== '' && Number.isFinite(value)) result[key] = value
+    }
+    return result
+  }
+
+  /**
+   * 把云端设置写回本机，并把时间戳对齐到云端。
+   *
+   * 不能直接走 `saveSettings`：那会把时间戳改成"现在"，
+   * 下一次同步就会把刚拉下来的值当成"本机更新"再推回去，来回震荡。
+   */
+  applySyncedSettings(
+    patch: Partial<AppSettings>,
+    timestamps: Record<string, number>
+  ): AppSettings {
+    const merged = { ...this.getSettings(), ...patch }
+    this.db
+      .prepare('INSERT OR REPLACE INTO settings_kv (key, value) VALUES (?, ?)')
+      .run('app', JSON.stringify(merged))
+    for (const [key, value] of Object.entries(timestamps)) {
+      this.setKv(`sync.at.${key}`, String(value))
+    }
+    return merged
   }
 
   /**

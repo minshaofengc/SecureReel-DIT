@@ -29,15 +29,16 @@ export const MAX_TICK_SECONDS = (HEARTBEAT_MS / 1000) * 3
 export const MAX_BATCH_DAYS = 30
 /** 一天最多 86400 秒，服务端也按这个上限校验。 */
 export const MAX_DAY_SECONDS = 86_400
-/** 隐私说明的版本号。改政策时 +1，客户端会重新征求一次同意。 */
-export const USAGE_POLICY_VERSION = 1
 
-export type ConsentDecision = 'granted' | 'declined'
-
-export interface ConsentRecord {
-  decision: ConsentDecision
-  policyVersion: number
-  decidedAt: string
+/**
+ * 关闭开关的取值判定。
+ *
+ * 只在环境变量 / 启动参数里用；界面上不出现，隐私说明里写明。
+ */
+export function isDisabledFlag(raw: string | undefined | null): boolean {
+  if (raw === undefined || raw === null) return false
+  const value = raw.trim().toLowerCase()
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
 }
 
 export interface UsageDayRow {
@@ -198,23 +199,6 @@ export function toPayloadDay(row: UsageDayRow): UsageDayPayload {
     aliveSeconds: alive,
     launches: Math.max(0, Math.min(Math.round(row.launches), 50))
   }
-}
-
-/** 首次启动、或政策版本升级后需要重新征求同意。 */
-export function needsConsent(record: ConsentRecord | null, currentVersion = USAGE_POLICY_VERSION): boolean {
-  if (record === null) return true
-  return record.policyVersion < currentVersion
-}
-
-/** 只有"明确同意 + 设置里开着"才上报。 */
-export function isReportingEnabled(
-  record: ConsentRecord | null,
-  settingsEnabled: boolean,
-  currentVersion = USAGE_POLICY_VERSION
-): boolean {
-  if (record === null) return false
-  if (record.policyVersion < currentVersion) return false
-  return record.decision === 'granted' && settingsEnabled
 }
 
 /** 生成安装 ID。用 crypto.randomUUID 去掉横线，32 位十六进制。 */

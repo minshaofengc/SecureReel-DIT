@@ -1,12 +1,13 @@
 # 更新日志
 
-## 2.0.11 — Anonymous usage statistics (opt-out) and a developer dashboard
+## 2.0.11 — Optional accounts, settings sync, and a quieter interface
 
-- Add a minimal, switchable usage report so the developer can tell whether the app is actually used: a random install ID, app version, platform and architecture, per-day foreground-active seconds and process-alive seconds, and launch count. It never includes media paths, file names, job content, hardware identifiers or an IP-derived location.
-- Ask once on first launch, after the window is ready. Both answers are real choices: "Not now" disables collection immediately and clears the local queue, and everything keeps working. The policy version is stored with the answer, so a future change to the privacy note asks again.
-- Add Settings → Anonymous usage statistics: a switch, the masked install ID, pending days, the last successful report, and "Reset install ID", which switches to a new random ID and clears local statistics so server records can no longer be linked to this machine.
-- Report in the background with the same rules as update checks: through the system proxy, 8-second timeout, silent retry with exponential backoff, never blocking or interrupting a copy. Offline days are queued and sent later; turning the switch off sends nothing.
-- Add a bilingual privacy note page and a developer dashboard at `/admin` (password-protected, server-rendered, no third-party scripts). Dashboard figures are labelled with their definitions, and the page states plainly that a client can forge them, so they are for product judgement only.
+- Add an optional email-code account (no password) behind a top-bar button. Signing in syncs machine-independent settings — language, theme, report theme, hash algorithm, concurrency and proxy preferences — across machines. Media, project, job and report content are never synced.
+- Store email addresses server-side as a salted hash only, so the plaintext is never kept and accounts cannot be looked up by email. Codes expire in 10 minutes; sessions last 90 days and renew while in use.
+- Link the machine's install ID to the account while signed in and unlink it on sign-out. Deleting the account removes the account, sessions, device links and cloud settings immediately.
+- Keep every feature available without an account: copying, verification, reports and proxies never require sign-in.
+- Remove the usage-statistics settings card and the first-run notice. Reporting stays on by default, is documented in the privacy note, and can be turned off with `SECUREREEL_DISABLE_USAGE=1`, `--disable-usage-stats`, or the `usageStatsEnabled` setting.
+- Add a bilingual privacy note covering usage statistics, accounts and sync, and add account metrics (signed-in accounts, devices per account) to the developer dashboard without exposing any email address.
 - Align macOS and Windows display versions to 2.0.11. Android is unchanged in this release.
 
 ## 2.0.10 — Update checks, always-on verification, first-frame colour restoration

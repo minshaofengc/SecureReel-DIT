@@ -26,8 +26,8 @@ import {
   setJobParentSchema,
   settingsPatchSchema,
   tailSchema,
-  usageDecideSchema,
-  usageSetEnabledSchema
+  accountRequestCodeSchema,
+  accountVerifySchema
 } from '../src/shared/schemas'
 
 describe('绝对路径校验', () => {
@@ -359,23 +359,16 @@ describe('日志读取校验', () => {
   })
 })
 
-describe('匿名使用统计的入参', () => {
-  it('设置补丁接受开关字段', () => {
-    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: true }).success).toBe(true)
-    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: false }).success).toBe(true)
-    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: 'yes' }).success).toBe(false)
+describe('账号接口的入参', () => {
+  it('邮箱长度受限', () => {
+    expect(accountRequestCodeSchema.safeParse({ email: 'a@b.co' }).success).toBe(true)
+    expect(accountRequestCodeSchema.safeParse({ email: 'x' }).success).toBe(false)
+    expect(accountRequestCodeSchema.safeParse({ email: 'a'.repeat(300) }).success).toBe(false)
   })
 
-  it('开关通道只接受布尔', () => {
-    expect(usageSetEnabledSchema.safeParse({ enabled: true }).success).toBe(true)
-    expect(usageSetEnabledSchema.safeParse({ enabled: 1 }).success).toBe(false)
-    expect(usageSetEnabledSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false)
-  })
-
-  it('同意通道只接受两种取值', () => {
-    expect(usageDecideSchema.safeParse({ decision: 'granted' }).success).toBe(true)
-    expect(usageDecideSchema.safeParse({ decision: 'declined' }).success).toBe(true)
-    expect(usageDecideSchema.safeParse({ decision: 'maybe' }).success).toBe(false)
-    expect(usageDecideSchema.safeParse({}).success).toBe(false)
+  it('验证码必须是 6 位数字', () => {
+    expect(accountVerifySchema.safeParse({ email: 'a@b.co', code: '123456' }).success).toBe(true)
+    expect(accountVerifySchema.safeParse({ email: 'a@b.co', code: '12345' }).success).toBe(false)
+    expect(accountVerifySchema.safeParse({ email: 'a@b.co', code: 'abcdef' }).success).toBe(false)
   })
 })

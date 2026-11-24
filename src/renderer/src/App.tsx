@@ -13,7 +13,7 @@ import { SettingsView } from './views/SettingsView'
 import { HelpView } from './views/HelpView'
 import { NavIcon } from './components/NavIcon'
 import { UpdateBanner } from './components/UpdateBanner'
-import { ConsentDialog } from './components/ConsentDialog'
+import { AccountButton } from './components/AccountButton'
 import { ViewSwitch, type ViewMode } from './components/ViewSwitch'
 import { PAGE_ICON, SEGMENTS, TOOL_PAGES, segmentOf, type Page } from './nav'
 
@@ -128,6 +128,7 @@ function Shell(): ReactNode {
               {t('top.running')} · {runningCount}
             </span>
           )}
+          <AccountButton />
           <div className="topbar__viewmode">
             <ViewSwitch value={viewMode} onChange={changeView} />
           </div>
@@ -226,9 +227,6 @@ function Shell(): ReactNode {
         ))}
 
       </div>
-
-      {/* 首启一次性告知：只在从未征求过、或隐私政策升版时出现 */}
-      <ConsentDialog />
     </div>
   )
 }

@@ -15,11 +15,10 @@ import {
   classifyTick,
   dayKeyOf,
   formatInstallId,
-  isReportingEnabled,
+  isDisabledFlag,
   isValidInstallId,
   MAX_DAY_SECONDS,
   MAX_TICK_SECONDS,
-  needsConsent,
   nextLocalMidnight,
   selectBatch,
   splitIntervalAcrossDays,
@@ -220,28 +219,15 @@ describe('安装 ID', () => {
   })
 })
 
-describe('同意状态', () => {
-  it('从未征求过 → 需要征求', () => {
-    expect(needsConsent(null)).toBe(true)
+describe('隐藏关闭开关', () => {
+  it('认识常见的真值写法', () => {
+    for (const value of ['1', 'true', 'TRUE', ' yes ', 'on']) expect(isDisabledFlag(value)).toBe(true)
   })
 
-  it('当前版本已同意 / 已拒绝 → 都不再打扰', () => {
-    expect(needsConsent({ decision: 'granted', policyVersion: 1, decidedAt: '' })).toBe(false)
-    expect(needsConsent({ decision: 'declined', policyVersion: 1, decidedAt: '' })).toBe(false)
-  })
-
-  it('政策版本升级 → 重新征求', () => {
-    expect(needsConsent({ decision: 'granted', policyVersion: 0, decidedAt: '' }, 1)).toBe(true)
-  })
-
-  it('只有「同意 + 设置开着」才上报', () => {
-    const granted = { decision: 'granted' as const, policyVersion: 1, decidedAt: '' }
-    const declined = { decision: 'declined' as const, policyVersion: 1, decidedAt: '' }
-    expect(isReportingEnabled(granted, true)).toBe(true)
-    expect(isReportingEnabled(granted, false)).toBe(false)
-    expect(isReportingEnabled(declined, true)).toBe(false)
-    expect(isReportingEnabled(null, true)).toBe(false)
-    expect(isReportingEnabled({ ...granted, policyVersion: 0 }, true)).toBe(false)
+  it('其它值一律视为不关闭', () => {
+    for (const value of ['0', 'false', '', '  ', 'no', undefined, null]) {
+      expect(isDisabledFlag(value)).toBe(false)
+    }
   })
 })
 

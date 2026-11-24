@@ -32,11 +32,15 @@ const api: SecureReelApi = {
     openRelease: () => invoke(IPC.updateOpenRelease, {})
   },
   usage: {
-    status: () => invoke(IPC.usageStatus, {}),
-    setEnabled: (enabled) => invoke(IPC.usageSetEnabled, { enabled: enabled === true }),
-    decide: (decision) => invoke(IPC.usageDecide, { decision }),
-    resetInstallId: () => invoke(IPC.usageResetId, {}),
     openPrivacyPolicy: () => invoke(IPC.usageOpenPrivacy, {})
+  },
+  account: {
+    status: () => invoke(IPC.accountStatus, {}),
+    requestCode: (email) => invoke(IPC.accountRequestCode, { email }),
+    verify: (email, code) => invoke(IPC.accountVerify, { email, code }),
+    logout: () => invoke(IPC.accountLogout, {}),
+    deleteAccount: () => invoke(IPC.accountDelete, {}),
+    syncNow: () => invoke(IPC.accountSyncNow, {})
   },
   media: {
     encoders: () => invoke(IPC.mediaEncoders)

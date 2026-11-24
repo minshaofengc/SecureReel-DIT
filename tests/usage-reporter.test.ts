@@ -44,19 +44,19 @@ function makeReporter(overrides: Partial<ReporterDeps> = {}): UsageReporter {
 
 describe('上报载荷', () => {
   it('字段与服务端校验一致，且只发待发行的绝对值', async () => {
-    let captured: { url: string; init?: RequestInit } | null = null
+    const captured: { url?: string; init?: RequestInit } = {}
     const reporter = makeReporter({
       fetchImpl: async (url, init) => {
-        captured = { url, init }
+        captured.url = url
+        captured.init = init
         return new Response(null, { status: 204 })
       }
     })
 
     const result = await reporter.reportOnce()
     expect(result).toEqual({ sent: 1, ok: true })
-    expect(captured).not.toBeNull()
 
-    const body = JSON.parse(String(captured?.init?.body)) as Record<string, unknown>
+    const body = JSON.parse(String(captured.init?.body)) as Record<string, unknown>
     expect(body).toEqual({
       v: 1,
       installId,
@@ -65,8 +65,8 @@ describe('上报载荷', () => {
       arch: 'arm64',
       days: [{ day: '2026-11-24', activeSeconds: 90, aliveSeconds: 120, launches: 2 }]
     })
-    expect(String(captured?.url)).toContain('/api/v1/usage')
-    expect(captured?.init?.method).toBe('POST')
+    expect(String(captured.url)).toContain('/api/v1/usage')
+    expect(captured.init?.method).toBe('POST')
   })
 
   it('成功后清掉待发标记并记录时间', async () => {

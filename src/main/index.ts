@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process'
 import { join, isAbsolute } from 'node:path'
 import { DEFAULT_SETTINGS, THEMES, type AppSettings } from '@shared/types'
 import { APP_NAME, APP_VERSION } from '@shared/version'
+import { isDisabledFlag } from '@shared/usage'
 import { buildAppPaths } from './paths'
 import { legacyUserDataDirOf, migrateLegacyUserData, type MigrationResult } from './core/data-migration'
 import {
@@ -32,6 +33,7 @@ import { ensureDir } from './fs-utils'
 import { IS_MAC, IS_WINDOWS, TITLE_BAR_HEIGHT, USE_OVERLAY_TITLEBAR } from './platform'
 import { registerFrameProtocol, registerFrameScheme } from './protocol'
 import { UsageService } from './usage'
+import { AccountService } from './account'
 
 app.setName(APP_NAME)
 
@@ -56,6 +58,7 @@ if (smokeMode) app.disableHardwareAcceleration()
 let mainWindow: BrowserWindow | null = null
 /** 退出前要 flush 一次；正常启动失败时为 null。 */
 let usageService: UsageService | null = null
+let accountService: AccountService | null = null
 let logger: Logger | null = null
 let store: Store | null = null
 
@@ -419,20 +422,45 @@ async function bootstrap(): Promise<void> {
     return saved
   }
 
+  /*
+   * 统计的关闭方式只有三种，都不在界面里：
+   * 环境变量、启动参数、设置键（由 UsageService 自己读 settings）。
+   */
+  const usageDisabledByOverride =
+    isDisabledFlag(process.env['SECUREREEL_DISABLE_USAGE']) ||
+    process.argv.includes('--disable-usage-stats')
+
   const usage = new UsageService({
     store,
     logger,
     getSettings,
-    saveSettings,
-    getMainWindow: () => mainWindow,
     isFocused: () => mainWindow?.isFocused() ?? false,
     getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
     appVersion: APP_VERSION,
     // 开发模式与冒烟验证不往生产库写假安装；要联调时显式给端点。
     allowNetwork: app.isPackaged || Boolean(process.env['SECUREREEL_USAGE_ENDPOINT']),
+    disabledByOverride: () => usageDisabledByOverride,
     openExternal: (url) => shell.openExternal(url)
   })
   usageService = usage
+
+  /*
+   * 账号与设置同步。
+   *
+   * 与统计共用同一道网络闸门：开发与冒烟默认不发真实请求，
+   * 否则每跑一次测试就会在线上账号库里留下一个测试账号。
+   */
+  const account = new AccountService({
+    store,
+    logger,
+    sessionFile: join(paths.userDataDir, 'account.json'),
+    allowNetwork: app.isPackaged || Boolean(process.env['SECUREREEL_API_BASE']),
+    installId: () => usage.getInstallId(),
+    getSettings,
+    onSettingsApplied: (next) =>
+      emitToWindows({ type: 'settings:changed', payload: next }, () => mainWindow)
+  })
+  accountService = account
 
   const probeRunner = new FfprobeRunner({
     logger,
@@ -492,7 +520,8 @@ async function bootstrap(): Promise<void> {
     saveSettings,
     getMainWindow: () => mainWindow,
     fsTypeOf,
-    usage
+    usage,
+    account
   })
 
   mainWindow = createWindow(settings)
@@ -502,6 +531,8 @@ async function bootstrap(): Promise<void> {
    * 早于窗口创建启动只会白记一段"未聚焦"的存活时间。
    */
   usage.start()
+  // 已登录时重新绑定当前安装并拉一次设置；未登录是空操作。
+  account.start()
   powerMonitor.on('lock-screen', () => usage.setLocked(true))
   powerMonitor.on('unlock-screen', () => usage.setLocked(false))
   powerMonitor.on('suspend', () => usage.setLocked(true))
@@ -557,6 +588,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   // 先把内存里的统计落库，再关库 —— 顺序反了会丢最后几十秒。
   usageService?.stop()
+  accountService?.stop()
   void logger?.flush()
   try {
     store?.close()

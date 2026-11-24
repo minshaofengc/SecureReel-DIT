@@ -473,6 +473,11 @@ export function AppStateProvider({ children }: { children: ReactNode }): ReactNo
           pushToast(payload.level, payload.message)
           break
         }
+        case 'settings:changed': {
+          // 云端同步把设置写回本机后，界面必须立刻跟上，否则会显示旧值。
+          setSettings(event.payload as AppSettings)
+          break
+        }
         default:
           break
       }

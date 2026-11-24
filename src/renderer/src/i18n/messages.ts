@@ -791,30 +791,41 @@ export const zhCN = {
   'help.privacyBody':
     '本软件不上传素材与任务数据，不格式化磁盘，不删除源素材。软件会发送一组可关闭的匿名使用统计（随机安装 ID、版本、平台、每日活跃与在线秒数、启动次数），不含路径、文件名、任务内容或硬件信息，可随时在设置中关闭并清空本机记录。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。',
 
-  /* ---------------- 匿名使用统计 ---------------- */
-  'usage.consentTitle': '匿名使用统计',
-  'usage.consentBody':
-    '为了知道软件有没有人真的在用，这一版开始收集一组最小的匿名数据：随机安装 ID、版本、平台、每天的前台活跃时长与进程在线时长、启动次数。不含素材路径、文件名、任务内容或硬件信息。',
-  'usage.consentNote': '不开启也能使用全部功能；开启后随时可以在设置里关掉。',
-  'usage.consentAgree': '同意并继续',
-  'usage.consentDecline': '暂不开启',
-  'usage.policyLink': '查看隐私说明',
-  'usage.cardTitle': '匿名使用统计',
-  'usage.enabled': '发送匿名使用统计',
-  'usage.enabledHint':
-    '只发送随机安装 ID、版本、平台、每日活跃与在线秒数、启动次数；不含路径、文件名与任务内容。关闭后立即停止并清空本机记录。',
-  'usage.installId': '安装 ID',
-  'usage.pending': '待发送',
-  'usage.pendingValue': '{days} 天',
-  'usage.lastSent': '上次成功上报',
-  'usage.neverSent': '尚未成功上报',
-  'usage.firstSeen': '最早记录',
-  'usage.reset': '重置安装 ID',
-  'usage.resetConfirm':
-    '重置后会换一个新 ID 并清空本机统计，服务端旧记录将无法再与这台机器关联。继续？',
-  'usage.resetDone': '已重置安装 ID。',
+  /* ---------------- 隐私说明 ---------------- */
   'usage.policy': '隐私说明',
-  'usage.saved': '已更新'
+
+  /* ---------------- 账号与同步 ---------------- */
+  'account.login': '登录',
+  'account.title': '账号',
+  'account.intro': '登录后可在多台机器之间同步设置。不登录也能使用全部功能。',
+  'account.email': '邮箱',
+  'account.emailPlaceholder': 'you@example.com',
+  'account.sendCode': '发送验证码',
+  'account.code': '验证码',
+  'account.codePlaceholder': '6 位数字',
+  'account.codeSent': '验证码已发送，10 分钟内有效。',
+  'account.verify': '登录',
+  'account.loggedIn': '已登录',
+  'account.logout': '退出登录',
+  'account.delete': '注销账号',
+  'account.deleteConfirm':
+    '注销后会立即删除账号、登录状态与设备绑定，云端设置 7 天内清除。继续？',
+  'account.deleteDone': '账号已注销。',
+  'account.syncNow': '立即同步',
+  'account.syncing': '同步中…',
+  'account.lastSync': '上次同步：{time}',
+  'account.neverSynced': '尚未同步',
+  'account.syncFailed': '同步失败',
+  'account.syncOk': '设置已同步。',
+  'account.close': '关闭',
+  'account.cancel': '取消',
+  'account.error.invalid_email': '邮箱格式不对。',
+  'account.error.rate_limited': '发送太频繁，请稍后再试。',
+  'account.error.invalid_code': '验证码不对。',
+  'account.error.code_expired': '验证码已过期，请重新获取。',
+  'account.error.unauthorized': '登录已失效，请重新登录。',
+  'account.error.network': '网络不可用，请稍后再试。',
+  'account.error.server': '服务暂时不可用，请稍后再试。'
 } as const
 
 export type MessageKey = keyof typeof zhCN
@@ -1637,28 +1648,39 @@ export const en: Record<MessageKey, string> = {
   'help.privacyBody':
     'The app never uploads media or job data, never formats a disk, and never deletes source media. It does send a switchable set of anonymous usage statistics (a random install ID, version, platform, daily active and alive seconds, launch count). No paths, file names, job content or hardware details are included, and you can turn it off at any time in Settings, which also clears the local record. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.',
 
-  /* ---------------- Anonymous usage statistics ---------------- */
-  'usage.consentTitle': 'Anonymous usage statistics',
-  'usage.consentBody':
-    'So the developer can tell whether anyone actually uses the app, this version collects a minimal anonymous set: a random install ID, version, platform, daily active and process-alive seconds, and launch count. No media paths, file names, job content or hardware details.',
-  'usage.consentNote': 'Everything works without it, and you can turn it off in Settings at any time.',
-  'usage.consentAgree': 'Agree and continue',
-  'usage.consentDecline': 'Not now',
-  'usage.policyLink': 'Read the privacy note',
-  'usage.cardTitle': 'Anonymous usage statistics',
-  'usage.enabled': 'Send anonymous usage statistics',
-  'usage.enabledHint':
-    'Only a random install ID, version, platform, daily active and alive seconds, and launch count are sent. No paths, file names or job content. Turning it off stops collection immediately and clears the local record.',
-  'usage.installId': 'Install ID',
-  'usage.pending': 'Pending',
-  'usage.pendingValue': '{days} days',
-  'usage.lastSent': 'Last successful report',
-  'usage.neverSent': 'Not reported yet',
-  'usage.firstSeen': 'Earliest record',
-  'usage.reset': 'Reset install ID',
-  'usage.resetConfirm':
-    'Resetting switches to a new ID and clears local statistics. Server records can no longer be linked to this machine. Continue?',
-  'usage.resetDone': 'Install ID reset.',
+  /* ---------------- Privacy note ---------------- */
   'usage.policy': 'Privacy note',
-  'usage.saved': 'Updated'
+
+  /* ---------------- Account and sync ---------------- */
+  'account.login': 'Sign in',
+  'account.title': 'Account',
+  'account.intro': 'Sign in to sync settings across machines. Everything works without an account.',
+  'account.email': 'Email',
+  'account.emailPlaceholder': 'you@example.com',
+  'account.sendCode': 'Send code',
+  'account.code': 'Verification code',
+  'account.codePlaceholder': '6 digits',
+  'account.codeSent': 'Code sent. It is valid for 10 minutes.',
+  'account.verify': 'Sign in',
+  'account.loggedIn': 'Signed in',
+  'account.logout': 'Sign out',
+  'account.delete': 'Delete account',
+  'account.deleteConfirm':
+    'This deletes the account, the session and the device link immediately. Cloud settings are cleared within 7 days. Continue?',
+  'account.deleteDone': 'Account deleted.',
+  'account.syncNow': 'Sync now',
+  'account.syncing': 'Syncing…',
+  'account.lastSync': 'Last synced: {time}',
+  'account.neverSynced': 'Not synced yet',
+  'account.syncFailed': 'Sync failed',
+  'account.syncOk': 'Settings synced.',
+  'account.close': 'Close',
+  'account.cancel': 'Cancel',
+  'account.error.invalid_email': 'That email address looks wrong.',
+  'account.error.rate_limited': 'Too many requests. Try again later.',
+  'account.error.invalid_code': 'That code is not right.',
+  'account.error.code_expired': 'The code has expired. Request a new one.',
+  'account.error.unauthorized': 'Your session expired. Please sign in again.',
+  'account.error.network': 'Network unavailable. Try again later.',
+  'account.error.server': 'Service unavailable. Try again later.'
 }

@@ -2130,12 +2130,12 @@ table.data td.num {
   flex-shrink: 0;
 }
 
-/* ---------------- 首启「匿名使用统计」告知层 ----------------
+/* ---------------- 通用对话框（账号面板） ----------------
  *
- * 层级刻意高于 .dock(60)：告知层出现时，右下角的提示与视图切换器
+ * 层级刻意高于 .dock(60)：面板打开时，右下角的提示与视图切换器
  * 都不该被点到。遮罩用半透明黑而不是主题色，明暗两套皮肤下都成立。
  */
-.consent-overlay {
+.dialog-overlay {
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -2147,7 +2147,7 @@ table.data td.num {
   backdrop-filter: blur(3px);
 }
 
-.consent-panel {
+.dialog-panel {
   width: min(540px, 100%);
   padding: 24px 26px 20px;
   border: 1px solid var(--border);
@@ -2157,7 +2157,7 @@ table.data td.num {
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.32);
 }
 
-.consent-kicker {
+.dialog-kicker {
   display: block;
   margin-bottom: 8px;
   font-size: 10.5px;
@@ -2165,25 +2165,25 @@ table.data td.num {
   color: var(--text-faint);
 }
 
-.consent-panel h2 {
+.dialog-panel h2 {
   margin: 0 0 10px;
   font-size: 18px;
   letter-spacing: -0.01em;
 }
 
-.consent-panel p {
+.dialog-panel p {
   margin: 0 0 10px;
   font-size: 13.5px;
   line-height: 1.75;
   color: var(--text-muted);
 }
 
-.consent-panel p.consent-note {
+.dialog-panel p.dialog-note {
   margin-bottom: 12px;
   color: var(--text-faint);
 }
 
-.consent-link {
+.dialog-link {
   padding: 0;
   border: 0;
   background: none;
@@ -2195,9 +2195,46 @@ table.data td.num {
   cursor: pointer;
 }
 
-.consent-actions {
+.dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
+}
+
+/* 顶栏账号按钮：已登录时只显示一个首字母圆点 */
+.account-avatar {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-w) solid var(--hard-line);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.account-avatar:hover {
+  border-color: var(--accent);
+}
+
+.account-email {
+  margin: 0 0 6px;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.account-error {
+  margin: 8px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--danger-text, #c2564a);
+}
+
+.dialog-panel .field {
+  margin-top: 14px;
 }
