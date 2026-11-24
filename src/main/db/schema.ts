@@ -8,7 +8,7 @@
  *  - 报告修订用 UNIQUE(job_id, revision) 锁死，做到物理上不可能覆盖旧修订。
  */
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 /**
  * 兼容性判据：`jobs` 表必须同时具备这些列。
@@ -237,6 +237,28 @@ CREATE TABLE IF NOT EXISTS parent_projects (
   created_at TEXT NOT NULL,
   updated_at TEXT
 );
+
+/*
+ * 匿名使用统计：一个安装、一天一行。
+ *
+ * 存的是**累计绝对值**（不是增量），上报时服务端用 MAX() 合并，
+ * 于是重试、重复投递、离线补传全都天然幂等。
+ * 只加新表、不改老表 —— 对老库安全，不会触发隔离重建。
+ */
+CREATE TABLE IF NOT EXISTS usage_daily (
+  day             TEXT NOT NULL,
+  install_id      TEXT NOT NULL,
+  active_seconds  INTEGER NOT NULL DEFAULT 0,
+  alive_seconds   INTEGER NOT NULL DEFAULT 0,
+  launches        INTEGER NOT NULL DEFAULT 0,
+  dirty           INTEGER NOT NULL DEFAULT 1,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  updated_at      TEXT NOT NULL,
+  PRIMARY KEY (day, install_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_daily_dirty ON usage_daily (dirty, next_attempt_at);
 
 `
 

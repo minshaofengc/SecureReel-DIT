@@ -248,9 +248,19 @@ export const settingsPatchSchema = z
     /** 与设置页的 1–4 档保持一致 */
     proxyConcurrency: z.number().int().min(1).max(4),
     /** 0 = 不出候选静帧；与设置页的 0–4 档保持一致 */
-    stillFrameCount: z.number().int().min(0).max(4)
+    stillFrameCount: z.number().int().min(0).max(4),
+    /** 匿名使用统计开关（同意记录本身存在 settings_kv，不进 AppSettings） */
+    usageStatsEnabled: z.boolean()
   })
   .partial()
+
+export const usageSetEnabledSchema = z.strictObject({
+  enabled: z.boolean()
+})
+
+export const usageDecideSchema = z.strictObject({
+  decision: z.enum(['granted', 'declined'])
+})
 
 export const pathPickSchema = z.object({
   kind: z.enum(['directory', 'file']),

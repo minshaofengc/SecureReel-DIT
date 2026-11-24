@@ -273,7 +273,7 @@ export const zhCN = {
   'update.failed': '检查失败：网络不可用或无法访问更新服务器。稍后可以再试。',
   'update.autoCheck': '自动检查新版本',
   'update.autoCheckHint':
-    '每 7 天检查一次，有新版本时在顶部提示一次。这是本软件唯一主动发起的网络请求，只读取版本号，不上传任何本机信息。关掉后完全离线。',
+    '每 7 天检查一次，有新版本时在顶部提示一次。只读取版本号，不上传任何本机信息。关掉后不再检查更新；匿名使用统计是另一项独立开关，见设置页下方。',
   'update.lastChecked': '上次检查：{time}',
   'update.neverChecked': '尚未检查过。',
   'app.initFailed': '初始化失败：{reason}',
@@ -789,7 +789,32 @@ export const zhCN = {
     '本软件的解码能力来自 FFmpeg。某些编解码器（如 H.264 / HEVC）可能涉及第三方专利，本项目不提供任何专利许可，使用者应自行确认其使用场景的合规性。',
   'help.privacy': '隐私与免责',
   'help.privacyBody':
-    '本软件不上传任何数据、不格式化磁盘、不删除源素材。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。'
+    '本软件不上传素材与任务数据，不格式化磁盘，不删除源素材。软件会发送一组可关闭的匿名使用统计（随机安装 ID、版本、平台、每日活跃与在线秒数、启动次数），不含路径、文件名、任务内容或硬件信息，可随时在设置中关闭并清空本机记录。校验通过只能说明写入的副本与源盘读取内容一致；源盘本身的物理损坏无法靠哈希发现，请务必保留原始卡直到确认备份无误。',
+
+  /* ---------------- 匿名使用统计 ---------------- */
+  'usage.consentTitle': '匿名使用统计',
+  'usage.consentBody':
+    '为了知道软件有没有人真的在用，这一版开始收集一组最小的匿名数据：随机安装 ID、版本、平台、每天的前台活跃时长与进程在线时长、启动次数。不含素材路径、文件名、任务内容或硬件信息。',
+  'usage.consentNote': '不开启也能使用全部功能；开启后随时可以在设置里关掉。',
+  'usage.consentAgree': '同意并继续',
+  'usage.consentDecline': '暂不开启',
+  'usage.policyLink': '查看隐私说明',
+  'usage.cardTitle': '匿名使用统计',
+  'usage.enabled': '发送匿名使用统计',
+  'usage.enabledHint':
+    '只发送随机安装 ID、版本、平台、每日活跃与在线秒数、启动次数；不含路径、文件名与任务内容。关闭后立即停止并清空本机记录。',
+  'usage.installId': '安装 ID',
+  'usage.pending': '待发送',
+  'usage.pendingValue': '{days} 天',
+  'usage.lastSent': '上次成功上报',
+  'usage.neverSent': '尚未成功上报',
+  'usage.firstSeen': '最早记录',
+  'usage.reset': '重置安装 ID',
+  'usage.resetConfirm':
+    '重置后会换一个新 ID 并清空本机统计，服务端旧记录将无法再与这台机器关联。继续？',
+  'usage.resetDone': '已重置安装 ID。',
+  'usage.policy': '隐私说明',
+  'usage.saved': '已更新'
 } as const
 
 export type MessageKey = keyof typeof zhCN
@@ -1064,7 +1089,7 @@ export const en: Record<MessageKey, string> = {
   'update.failed': 'Check failed: no network or the update server is unreachable. Try again later.',
   'update.autoCheck': 'Check for new versions automatically',
   'update.autoCheckHint':
-    'Checks once every 7 days and shows a single banner when a new version exists. This is the only outbound request the app makes: it reads a version number and never uploads anything about this machine. Turn it off for fully offline use.',
+    'Checks once every 7 days and shows a single banner when a new version exists. It only reads a version number and never uploads anything about this machine. Turn it off to stop update checks; anonymous usage statistics is a separate switch further down.',
   'update.lastChecked': 'Last checked: {time}',
   'update.neverChecked': 'Not checked yet.',
   'app.initFailed': 'Initialization failed: {reason}',
@@ -1610,5 +1635,30 @@ export const en: Record<MessageKey, string> = {
     'Decoding is provided by FFmpeg. Some codecs (such as H.264 / HEVC) may be covered by third-party patents; this project grants no patent licence, and users should confirm compliance for their own use.',
   'help.privacy': 'Privacy & disclaimer',
   'help.privacyBody':
-    'No data is uploaded, no disk is formatted, no source media is deleted. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.'
+    'The app never uploads media or job data, never formats a disk, and never deletes source media. It does send a switchable set of anonymous usage statistics (a random install ID, version, platform, daily active and alive seconds, launch count). No paths, file names, job content or hardware details are included, and you can turn it off at any time in Settings, which also clears the local record. Passing verification only means the written copy matches what was read from the source. Physical damage on the source itself cannot be detected by hashing — always keep the original card until the backup is confirmed.',
+
+  /* ---------------- Anonymous usage statistics ---------------- */
+  'usage.consentTitle': 'Anonymous usage statistics',
+  'usage.consentBody':
+    'So the developer can tell whether anyone actually uses the app, this version collects a minimal anonymous set: a random install ID, version, platform, daily active and process-alive seconds, and launch count. No media paths, file names, job content or hardware details.',
+  'usage.consentNote': 'Everything works without it, and you can turn it off in Settings at any time.',
+  'usage.consentAgree': 'Agree and continue',
+  'usage.consentDecline': 'Not now',
+  'usage.policyLink': 'Read the privacy note',
+  'usage.cardTitle': 'Anonymous usage statistics',
+  'usage.enabled': 'Send anonymous usage statistics',
+  'usage.enabledHint':
+    'Only a random install ID, version, platform, daily active and alive seconds, and launch count are sent. No paths, file names or job content. Turning it off stops collection immediately and clears the local record.',
+  'usage.installId': 'Install ID',
+  'usage.pending': 'Pending',
+  'usage.pendingValue': '{days} days',
+  'usage.lastSent': 'Last successful report',
+  'usage.neverSent': 'Not reported yet',
+  'usage.firstSeen': 'Earliest record',
+  'usage.reset': 'Reset install ID',
+  'usage.resetConfirm':
+    'Resetting switches to a new ID and clears local statistics. Server records can no longer be linked to this machine. Continue?',
+  'usage.resetDone': 'Install ID reset.',
+  'usage.policy': 'Privacy note',
+  'usage.saved': 'Updated'
 }

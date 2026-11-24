@@ -2129,3 +2129,75 @@ table.data td.num {
   gap: 6px;
   flex-shrink: 0;
 }
+
+/* ---------------- 首启「匿名使用统计」告知层 ----------------
+ *
+ * 层级刻意高于 .dock(60)：告知层出现时，右下角的提示与视图切换器
+ * 都不该被点到。遮罩用半透明黑而不是主题色，明暗两套皮肤下都成立。
+ */
+.consent-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(3px);
+}
+
+.consent-panel {
+  width: min(540px, 100%);
+  padding: 24px 26px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.32);
+}
+
+.consent-kicker {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+}
+
+.consent-panel h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.consent-panel p {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+
+.consent-panel p.consent-note {
+  margin-bottom: 12px;
+  color: var(--text-faint);
+}
+
+.consent-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.consent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}

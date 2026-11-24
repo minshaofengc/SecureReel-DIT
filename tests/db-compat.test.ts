@@ -288,3 +288,39 @@ describe('损坏的数据库文件', () => {
     await expect(Store.open(dbPath)).rejects.toThrow()
   })
 })
+
+describe('2.0.11 新增的 usage_daily', () => {
+  const installId = 'inst_0123456789abcdef0123456789abcdef'
+
+  it('全新库直接带上这张表，老库打开时补建', async () => {
+    const first = await Store.open(dbPath)
+    // 表不存在时这条查询会抛 no such table —— 等于隐式断言
+    expect(first.listUsageRows(installId)).toEqual([])
+    first.close()
+
+    const second = await Store.open(dbPath)
+    expect(second.schemaVersion()).toBe(String(SCHEMA_VERSION))
+    second.close()
+  })
+
+  it('统计能跨重启保留，且不影响任务数据', async () => {
+    const first = await Store.open(dbPath)
+    first.accrueUsage({
+      installId,
+      day: '2026-11-24',
+      activeSeconds: 90,
+      aliveSeconds: 120,
+      launches: 1,
+      nowIso: '2026-11-24T10:00:00.000Z'
+    })
+    first.close()
+
+    const second = await Store.open(dbPath)
+    const rows = second.listUsageRows(installId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.activeSeconds).toBe(90)
+    expect(rows[0]?.aliveSeconds).toBe(120)
+    expect(second.listJobs()).toEqual([])
+    second.close()
+  })
+})

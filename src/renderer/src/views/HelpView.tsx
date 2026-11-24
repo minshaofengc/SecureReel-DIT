@@ -64,6 +64,15 @@ export function HelpView(): ReactNode {
 
       <Card title={t('help.privacy')}>
         <p>{t('help.privacyBody')}</p>
+        <div className="row-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => void window.securereel.usage.openPrivacyPolicy().catch(() => undefined)}
+          >
+            {t('usage.policy')}
+          </button>
+        </div>
       </Card>
 
       <Card title={t('help.about')}>

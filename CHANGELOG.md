@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2.0.11 — Anonymous usage statistics (opt-out) and a developer dashboard
+
+- Add a minimal, switchable usage report so the developer can tell whether the app is actually used: a random install ID, app version, platform and architecture, per-day foreground-active seconds and process-alive seconds, and launch count. It never includes media paths, file names, job content, hardware identifiers or an IP-derived location.
+- Ask once on first launch, after the window is ready. Both answers are real choices: "Not now" disables collection immediately and clears the local queue, and everything keeps working. The policy version is stored with the answer, so a future change to the privacy note asks again.
+- Add Settings → Anonymous usage statistics: a switch, the masked install ID, pending days, the last successful report, and "Reset install ID", which switches to a new random ID and clears local statistics so server records can no longer be linked to this machine.
+- Report in the background with the same rules as update checks: through the system proxy, 8-second timeout, silent retry with exponential backoff, never blocking or interrupting a copy. Offline days are queued and sent later; turning the switch off sends nothing.
+- Add a bilingual privacy note page and a developer dashboard at `/admin` (password-protected, server-rendered, no third-party scripts). Dashboard figures are labelled with their definitions, and the page states plainly that a client can forge them, so they are for product judgement only.
+- Align macOS and Windows display versions to 2.0.11. Android is unchanged in this release.
+
 ## 2.0.10 — Update checks, always-on verification, first-frame colour restoration
 
 - Check for a new version automatically once every 7 days and show a single banner at the top of the window. The check reads only a version number, prefers the project site manifest and falls back to the GitHub Releases API, never uploads anything about the machine, and can be turned off for fully offline work. "Check now" in Settings bypasses the 7-day window.

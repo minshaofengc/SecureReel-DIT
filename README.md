@@ -157,8 +157,11 @@ path or its command arguments to end users.
 
 The job database, structured logs, HDE results and the immutable report archive live in
 Electron's user-data directory (under `~/Library/Application Support/` on macOS and
-`%APPDATA%\` on Windows). SecureReel DIT uploads no telemetry, does not format drives
-and never deletes source media. Uninstalling the app does not delete your jobs or reports.
+`%APPDATA%\` on Windows). SecureReel DIT never uploads media or job data, does not format
+drives and never deletes source media. It can send a switchable set of anonymous usage
+statistics — a random install ID, version, platform, daily active/alive seconds and launch
+count — with no paths, file names or job content; turn it off in Settings and collection
+stops immediately. Uninstalling the app does not delete your jobs or reports.
 
 ### Contact
 
@@ -285,7 +288,9 @@ npm run dist:mac
 
 任务数据库、结构化日志、HDE 结果与不可变报告档案保存在 Electron 的用户数据目录里
 （macOS 在 `~/Library/Application Support/` 下，Windows 在 `%APPDATA%\` 下）。
-SecureReel DIT 不上传遥测，不格式化磁盘，不删除源素材。卸载应用不会删除你的任务与报告。
+SecureReel DIT 不上传素材与任务数据，不格式化磁盘，不删除源素材。软件会发送一组可关闭的
+匿名使用统计（随机安装 ID、版本、平台、每日活跃与在线秒数、启动次数），不含路径、文件名与
+任务内容；在设置里关掉后立即停止并清空本机记录。卸载应用不会删除你的任务与报告。
 
 ### 联系
 

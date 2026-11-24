@@ -46,7 +46,9 @@ import {
   titleBarOverlaySchema,
   updateParentProjectSchema,
   dataCategorySchema,
-  dataRelocateSchema
+  dataRelocateSchema,
+  usageSetEnabledSchema,
+  usageDecideSchema
 } from '@shared/schemas'
 import type { Store } from '@main/db/store'
 import type { Logger } from '@main/logger'
@@ -65,6 +67,7 @@ import { usageForTargets } from '@main/core/source-scan'
 import { createDiagnosticsZip } from '@main/diagnostics'
 import { DATA_CATEGORIES, readLocations } from '@main/core/data-locations'
 import { relocateCategory, resetCategory } from '@main/data-relocate-service'
+import type { UsageService } from '@main/usage'
 
 export interface Services {
   store: Store
@@ -79,6 +82,7 @@ export interface Services {
   getMainWindow: () => BrowserWindow | null
   /** 目标路径所在文件系统类型；拿不到返回 null（未知不拦） */
   fsTypeOf: (path: string) => Promise<string | null>
+  usage: UsageService
 }
 
 type Handler<T> = (payload: unknown) => Promise<T> | T
@@ -121,7 +125,7 @@ function newParentProjectId(): string {
 }
 
 export function registerIpcHandlers(services: Services): void {
-  const { store, paths, reportStore, jobManager, probeRunner, hde, logger } = services
+  const { store, paths, reportStore, jobManager, probeRunner, hde, logger, usage } = services
 
   /*
    * IPC 层的用户可见错误文案。
@@ -221,6 +225,27 @@ export function registerIpcHandlers(services: Services): void {
       openExternal: (url) => shell.openExternal(url)
     })
   )
+
+  /* ---------------- 匿名使用统计 ---------------- */
+
+  register(IPC.usageStatus, () => usage.status())
+
+  register(IPC.usageSetEnabled, (payload) => {
+    const { enabled } = parseOrThrow<{ enabled: boolean }>(usageSetEnabledSchema, payload)
+    return usage.setEnabled(enabled)
+  })
+
+  register(IPC.usageDecide, (payload) => {
+    const { decision } = parseOrThrow<{ decision: 'granted' | 'declined' }>(
+      usageDecideSchema,
+      payload
+    )
+    return usage.decideConsent(decision)
+  })
+
+  register(IPC.usageResetId, () => usage.resetInstallId())
+
+  register<boolean>(IPC.usageOpenPrivacy, () => usage.openPrivacyPolicy())
 
   /* ---------------- 卷 ---------------- */
 

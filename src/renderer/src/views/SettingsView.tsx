@@ -1,4 +1,5 @@
 import { MobileCompanionSettings } from './MobileCompanionSettings'
+import { UsageSettingsCard } from './UsageSettingsCard'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   FRAME_RESTORE_MODES,
@@ -867,6 +868,7 @@ export function SettingsView(): ReactNode {
           )}
         </Card>
       </BlockGrid>
+      <UsageSettingsCard />
       <MobileCompanionSettings />
     </div>
   )

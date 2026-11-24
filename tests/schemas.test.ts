@@ -25,7 +25,9 @@ import {
   projectInfoSchema,
   setJobParentSchema,
   settingsPatchSchema,
-  tailSchema
+  tailSchema,
+  usageDecideSchema,
+  usageSetEnabledSchema
 } from '../src/shared/schemas'
 
 describe('绝对路径校验', () => {
@@ -354,5 +356,26 @@ describe('日志读取校验', () => {
     expect(tailSchema.safeParse({}).success).toBe(true)
     expect(tailSchema.safeParse({ lines: 0 }).success).toBe(false)
     expect(tailSchema.safeParse({ lines: 99999 }).success).toBe(false)
+  })
+})
+
+describe('匿名使用统计的入参', () => {
+  it('设置补丁接受开关字段', () => {
+    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: true }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: false }).success).toBe(true)
+    expect(settingsPatchSchema.safeParse({ usageStatsEnabled: 'yes' }).success).toBe(false)
+  })
+
+  it('开关通道只接受布尔', () => {
+    expect(usageSetEnabledSchema.safeParse({ enabled: true }).success).toBe(true)
+    expect(usageSetEnabledSchema.safeParse({ enabled: 1 }).success).toBe(false)
+    expect(usageSetEnabledSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false)
+  })
+
+  it('同意通道只接受两种取值', () => {
+    expect(usageDecideSchema.safeParse({ decision: 'granted' }).success).toBe(true)
+    expect(usageDecideSchema.safeParse({ decision: 'declined' }).success).toBe(true)
+    expect(usageDecideSchema.safeParse({ decision: 'maybe' }).success).toBe(false)
+    expect(usageDecideSchema.safeParse({}).success).toBe(false)
   })
 })

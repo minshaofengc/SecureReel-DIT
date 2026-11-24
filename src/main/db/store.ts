@@ -1,4 +1,5 @@
 import type { TargetPreflightResult, PreflightConfirmation } from '@shared/storage-safety'
+import type { UsageDayRow } from '@shared/usage'
 /**
  * 任务数据库的门面。
  *
@@ -1299,5 +1300,107 @@ export class Store {
            created_at = excluded.created_at`
       )
       .run(jobId, manifestId, previousManifestId, new Date().toISOString())
+  }
+
+  /* ---------------- 匿名使用统计 ---------------- */
+
+  /**
+   * 给某一天累加秒数。
+   *
+   * 落库的是**累计绝对值**（不是增量），上报时服务端用 MAX() 合并，
+   * 于是重试、重复投递、离线补传全都天然幂等。
+   * 上限在 SQL 里也钳一遍：界面外被手改的库也写不出 25 小时的一天。
+   */
+  accrueUsage(input: {
+    installId: string
+    day: string
+    activeSeconds: number
+    aliveSeconds: number
+    launches: number
+    nowIso: string
+  }): void {
+    // 首次插入也要满足 alive >= active：只在 ON CONFLICT 里补是不够的。
+    const active = Math.max(0, Math.round(input.activeSeconds))
+    const alive = Math.max(active, Math.max(0, Math.round(input.aliveSeconds)))
+    this.db
+      .prepare(
+        `INSERT INTO usage_daily (day, install_id, active_seconds, alive_seconds, launches, dirty, attempts, next_attempt_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, 0, 0, ?)
+         ON CONFLICT (day, install_id) DO UPDATE SET
+           active_seconds  = MIN(86400, usage_daily.active_seconds + excluded.active_seconds),
+           alive_seconds   = MIN(86400, MAX(usage_daily.alive_seconds + excluded.alive_seconds,
+                                           MIN(86400, usage_daily.active_seconds + excluded.active_seconds))),
+           launches        = MIN(50, usage_daily.launches + excluded.launches),
+           dirty           = 1,
+           attempts        = 0,
+           next_attempt_at = 0,
+           updated_at      = excluded.updated_at`
+      )
+      .run(
+        input.day,
+        input.installId,
+        active,
+        alive,
+        Math.max(0, Math.round(input.launches)),
+        input.nowIso
+      )
+  }
+
+  listUsageRows(installId: string): UsageDayRow[] {
+    const rows = this.db
+      .prepare('SELECT * FROM usage_daily WHERE install_id = ? ORDER BY day ASC')
+      .all(installId)
+    return rows.map((row) => ({
+      day: asString(row.day),
+      activeSeconds: Number(row.active_seconds ?? 0),
+      aliveSeconds: Number(row.alive_seconds ?? 0),
+      launches: Number(row.launches ?? 0),
+      dirty: Number(row.dirty ?? 0) === 1,
+      attempts: Number(row.attempts ?? 0),
+      nextAttemptAt: Number(row.next_attempt_at ?? 0)
+    }))
+  }
+
+  markUsageSent(installId: string, days: string[]): void {
+    if (days.length === 0) return
+    const placeholders = days.map(() => '?').join(', ')
+    this.db
+      .prepare(
+        `UPDATE usage_daily SET dirty = 0, attempts = 0, next_attempt_at = 0
+         WHERE install_id = ? AND day IN (${placeholders})`
+      )
+      .run(installId, ...days)
+  }
+
+  markUsageFailed(installId: string, days: string[], nextAttemptAt: number): void {
+    if (days.length === 0) return
+    const placeholders = days.map(() => '?').join(', ')
+    this.db
+      .prepare(
+        `UPDATE usage_daily SET attempts = attempts + 1, next_attempt_at = ?
+         WHERE install_id = ? AND day IN (${placeholders})`
+      )
+      .run(nextAttemptAt, installId, ...days)
+  }
+
+  countPendingUsage(installId: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS c FROM usage_daily WHERE install_id = ? AND dirty = 1')
+      .get(installId)
+    return Number(row?.c ?? 0)
+  }
+
+  /** 重置安装 ID 时清空本机历史 —— 旧的 ID 与服务端记录从此无法关联。 */
+  clearUsage(): void {
+    this.db.prepare('DELETE FROM usage_daily').run()
+  }
+
+  usageTotals(installId: string): { days: number; activeSeconds: number } {
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS days, COALESCE(SUM(active_seconds), 0) AS active FROM usage_daily WHERE install_id = ?'
+      )
+      .get(installId)
+    return { days: Number(row?.days ?? 0), activeSeconds: Number(row?.active ?? 0) }
   }
 }

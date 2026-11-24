@@ -34,6 +34,12 @@ export const IPC = {
   updateCheck: 'update:check',
   /** 打开发布页（地址由主进程从上次结果里取，不接受渲染层传 URL） */
   updateOpenRelease: 'update:open-release',
+  /** 匿名使用统计：状态 / 开关 / 重置安装 ID / 打开隐私说明 */
+  usageStatus: 'usage:status',
+  usageSetEnabled: 'usage:set-enabled',
+  usageDecide: 'usage:decide',
+  usageResetId: 'usage:reset-id',
+  usageOpenPrivacy: 'usage:open-privacy',
   companionStatus: 'companion:status',
   companionStart: 'companion:start',
   companionStop: 'companion:stop',
@@ -235,6 +241,30 @@ export interface DataRelocateRequest {
   path: string
 }
 
+/**
+ * 匿名使用统计的界面可见状态。
+ *
+ * 刻意**不含**逐日数据：渲染层只需要知道"开没开、要不要弹层、发出去多少天"，
+ * 拿不到具体某天用了多久 —— 那是主进程与数据库的事。
+ */
+export interface UsageStatus {
+  /** 只有「已同意 + 设置开着」才为真 */
+  enabled: boolean
+  /** null = 从未征求过 */
+  consent: 'granted' | 'declined' | null
+  policyVersion: number
+  /** 首次启动、或政策版本升级后为真 */
+  needsConsent: boolean
+  /** 随机安装 ID，界面自行掩码显示 */
+  installId: string
+  /** 待发送的天数 */
+  pendingDays: number
+  /** 上次成功上报时间（ISO）；从未成功为 null */
+  lastSentAt: string | null
+  /** 本机最早一条统计的日期；没有为 null */
+  firstSeenDay: string | null
+}
+
 /** 预加载脚本暴露给渲染进程的 API 形状。 */
 export interface SecureReelApi {
   companion: {
@@ -261,6 +291,18 @@ export interface SecureReelApi {
     check(force?: boolean): Promise<IpcResult<UpdateCheckResult>>
     /** 打开发布页；没有可用的发布地址时返回 false */
     openRelease(): Promise<IpcResult<boolean>>
+  }
+  usage: {
+    /** 当前统计状态（开关、同意、待发送天数） */
+    status(): Promise<IpcResult<UsageStatus>>
+    /** 打开/关闭匿名统计；关闭会清空本机历史 */
+    setEnabled(enabled: boolean): Promise<IpcResult<UsageStatus>>
+    /** 首启弹层的两个出口 */
+    decide(decision: 'granted' | 'declined'): Promise<IpcResult<UsageStatus>>
+    /** 重置安装 ID（断开关联，清空本机历史） */
+    resetInstallId(): Promise<IpcResult<UsageStatus>>
+    /** 打开隐私说明；地址由主进程写死并过白名单 */
+    openPrivacyPolicy(): Promise<IpcResult<boolean>>
   }
   media: {
     /** 本机可用的代理编码器；首次调用会跑一遍试编码探测（结果会缓存） */

@@ -4,7 +4,7 @@
  * 职责边界很清楚：**只做装配**。
  * 建窗口、装服务、注册 IPC，业务逻辑一律不在这个文件里。
  */
-import { app, BrowserWindow, dialog, powerSaveBlocker, shell } from 'electron'
+import { app, BrowserWindow, dialog, powerMonitor, powerSaveBlocker, shell } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { join, isAbsolute } from 'node:path'
@@ -31,6 +31,7 @@ import { registerCompanionIpc } from './mobile-companion/ipc'
 import { ensureDir } from './fs-utils'
 import { IS_MAC, IS_WINDOWS, TITLE_BAR_HEIGHT, USE_OVERLAY_TITLEBAR } from './platform'
 import { registerFrameProtocol, registerFrameScheme } from './protocol'
+import { UsageService } from './usage'
 
 app.setName(APP_NAME)
 
@@ -53,6 +54,8 @@ if (smokeMode && smokeUserDataDir !== undefined && isAbsolute(smokeUserDataDir))
 if (smokeMode) app.disableHardwareAcceleration()
 
 let mainWindow: BrowserWindow | null = null
+/** 退出前要 flush 一次；正常启动失败时为 null。 */
+let usageService: UsageService | null = null
 let logger: Logger | null = null
 let store: Store | null = null
 
@@ -405,6 +408,32 @@ async function bootstrap(): Promise<void> {
   let settings = store.getSettings()
   if (Object.keys(settings).length === 0) settings = { ...DEFAULT_SETTINGS }
 
+  /*
+   * 设置读写收成两个函数：IPC 层与使用统计服务都走同一份，
+   * 避免出现"设置页改了但统计服务还看着旧值"的两份状态。
+   */
+  const getSettings = (): AppSettings => store?.getSettings() ?? settings
+  const saveSettings = (next: AppSettings): AppSettings => {
+    const saved = store?.saveSettings(next) ?? next
+    settings = saved
+    return saved
+  }
+
+  const usage = new UsageService({
+    store,
+    logger,
+    getSettings,
+    saveSettings,
+    getMainWindow: () => mainWindow,
+    isFocused: () => mainWindow?.isFocused() ?? false,
+    getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    appVersion: APP_VERSION,
+    // 开发模式与冒烟验证不往生产库写假安装；要联调时显式给端点。
+    allowNetwork: app.isPackaged || Boolean(process.env['SECUREREEL_USAGE_ENDPOINT']),
+    openExternal: (url) => shell.openExternal(url)
+  })
+  usageService = usage
+
   const probeRunner = new FfprobeRunner({
     logger,
     userDir: settings.ffmpegDir,
@@ -459,17 +488,27 @@ async function bootstrap(): Promise<void> {
     jobManager,
     probeRunner,
     hde,
-    getSettings: () => store?.getSettings() ?? settings,
-    saveSettings: (next) => {
-      const saved = store?.saveSettings(next) ?? next
-      settings = saved
-      return saved
-    },
+    getSettings,
+    saveSettings,
     getMainWindow: () => mainWindow,
-    fsTypeOf
+    fsTypeOf,
+    usage
   })
 
   mainWindow = createWindow(settings)
+
+  /*
+   * 使用统计从窗口建好之后才开始：心跳要读"窗口是否聚焦"，
+   * 早于窗口创建启动只会白记一段"未聚焦"的存活时间。
+   */
+  usage.start()
+  powerMonitor.on('lock-screen', () => usage.setLocked(true))
+  powerMonitor.on('unlock-screen', () => usage.setLocked(false))
+  powerMonitor.on('suspend', () => usage.setLocked(true))
+  powerMonitor.on('resume', () => {
+    usage.setLocked(false)
+    usage.resetClock()
+  })
 
   // 上次异常退出留下的任务：不自动重启，只在界面里提示用户决定
   const recoverable = store.listResumableJobs()
@@ -516,6 +555,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // 先把内存里的统计落库，再关库 —— 顺序反了会丢最后几十秒。
+  usageService?.stop()
   void logger?.flush()
   try {
     store?.close()

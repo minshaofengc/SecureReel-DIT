@@ -865,8 +865,9 @@ export interface AppSettings {
   /**
    * 自动检查新版本。
    *
-   * 默认开启，但**可以关**：这是本项目唯一主动发起的网络请求，
-   * 现场离线作业的人有权让它完全不联网。关掉后连手动检查都不发请求。
+   * 默认开启，但**可以关**：这是本项目两处主动发起的网络请求之一
+   * （另一处是可关闭的匿名使用统计）。现场离线作业的人有权让它完全不联网，
+   * 关掉后连手动检查都不发请求。
    */
   autoCheckUpdates: boolean
   /** 同时写入的目标数量上限（1–8） */
@@ -978,6 +979,14 @@ export interface AppSettings {
    * 供筛选精彩画面用。0 表示不出（只保留原有首尾帧）。
    */
   stillFrameCount: number
+  /**
+   * 匿名使用统计开关。
+   *
+   * 默认 `true`，但**只有首启明确同意之后才会真正上报** ——
+   * 同意记录存在 `settings_kv`（`usage.consent`），不在这里。
+   * 关掉后停止累加、清空本机历史、一个包都不发。
+   */
+  usageStatsEnabled: boolean
 }
 
 /** ProRes 代理规格。数值对应 ffmpeg `-profile:v`。 */
@@ -1086,7 +1095,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyCodec: 'prores',
   proxyLutPath: null,
   proxyConcurrency: 1,
-  stillFrameCount: 0
+  stillFrameCount: 0,
+  usageStatsEnabled: true
 }
 
 /* ------------------------------------------------------------------ *
